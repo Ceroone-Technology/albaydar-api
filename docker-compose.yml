@@ -1,0 +1,25 @@
+# Entorno local: PostgreSQL + Mailpit (captura los correos en http://localhost:8025)
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: albaydar
+      POSTGRES_PASSWORD: albaydar
+      POSTGRES_DB: albaydar
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U albaydar"]
+      interval: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web
+
+volumes:
+  pgdata:
