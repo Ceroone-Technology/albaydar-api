@@ -26,7 +26,9 @@ async function main() {
   const adminPass = process.env.SEED_ADMIN_PASSWORD ?? 'CambiaEsto-2026!';
   await usuario(process.env.SEED_ADMIN_EMAIL ?? 'admin@albaydar.org', 'Administración del sistema', ['ADMIN'], adminPass);
 
-  if (env.NODE_ENV === 'production') {
+  // En producción solo se crea el administrador, salvo que se pida explícitamente la demo
+  // (SEED_DEMO=true, lo usa el docker compose local).
+  if (env.NODE_ENV === 'production' && process.env.SEED_DEMO !== 'true') {
     console.log('Producción: solo se crea el administrador.');
     return;
   }

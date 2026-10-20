@@ -1,25 +1,86 @@
-# Entorno local: PostgreSQL + Mailpit (captura los correos en http://localhost:8025)
+# ─────────────────────────────────────────────────────────────────────────────
+#  Albaydar · entorno completo con Docker
+#
+#    docker compose up -d --build
+#
+#  API ........ http://localhost:3000   (salud: /health)
+#  PostgreSQL . localhost:5432          (albaydar / albaydar)
+#  Correos .... http://localhost:8025   (Mailpit: aquí llegan todos los emails)
+#
+#  Al arrancar, la API aplica las migraciones y siembra usuarios, vías y
+#  solicitudes de ejemplo. Los valores se pueden cambiar en el archivo .env
+#  junto a este (ver .env.docker.example). Las direcciones internas de la red
+#  de Docker (base de datos y SMTP) no se toman del .env de desarrollo.
+# ─────────────────────────────────────────────────────────────────────────────
+name: albaydar
+
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: albaydar
-      POSTGRES_PASSWORD: albaydar
-      POSTGRES_DB: albaydar
+      POSTGRES_USER: ${POSTGRES_USER:-albaydar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-albaydar}
+      POSTGRES_DB: ${POSTGRES_DB:-albaydar}
+      TZ: Europe/Madrid
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U albaydar"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
-      retries: 10
+      timeout: 3s
+      retries: 20
 
   mailpit:
     image: axllent/mailpit:latest
+    restart: unless-stopped
     ports:
-      - "1025:1025" # SMTP
-      - "8025:8025" # Web
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_WEB_PORT:-8025}:8025"
+
+  api:
+    build: .
+    image: albaydar-api:local
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    ports:
+      - "${API_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-albaydar}:${POSTGRES_PASSWORD:-albaydar}@db:5432/${POSTGRES_DB:-albaydar}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:4200}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:4200}
+      # Solo para local. En cualquier servidor real, pon uno propio en .env.
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-solo-para-desarrollo-local-cambiar-en-servidor-0123456789}
+      # En local es http: la cookie no puede ser Secure.
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
+      # Prefijo DOCKER_ para no heredar SMTP_HOST=localhost del .env de desarrollo:
+      # dentro del contenedor, "localhost" es la propia API, no Mailpit.
+      SMTP_HOST: ${DOCKER_SMTP_HOST:-mailpit}
+      SMTP_PORT: ${DOCKER_SMTP_PORT:-1025}
+      SMTP_SECURE: ${DOCKER_SMTP_SECURE:-false}
+      SMTP_USER: ${DOCKER_SMTP_USER:-}
+      SMTP_PASS: ${DOCKER_SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-Centro Educativo Albaydar <admisiones@albaydar.org>}
+      MAIL_SECRETARIA: ${MAIL_SECRETARIA:-secretaria@albaydar.org}
+      WORKERS_ENABLED: "true"
+      RUN_MIGRATIONS: "true"
+      RUN_SEED: ${RUN_SEED:-true}
+      SEED_DEMO: ${SEED_DEMO:-true}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@albaydar.org}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-CambiaEsto-2026!}
+    volumes:
+      - uploads:/app/storage/uploads
 
 volumes:
   pgdata:
+  uploads:
