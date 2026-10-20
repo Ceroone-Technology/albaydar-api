@@ -20,13 +20,19 @@ sequenceDiagram
     API-->>F: correo con enlace /solicitud/completar/:token
     F->>API: PATCH /public/solicitudes/completar/:token
   end
-  S->>API: POST /solicitudes/:id/citar (1 a 3 huecos)
+  S->>API: GET /agenda/disponibilidad (jornada L–V 8–18 menos lo ocupado)
+  S->>API: POST /solicitudes/:id/citar (1 a 3 fechas, 45 o 60 min)
+  Note over API: las fechas quedan RESERVADAS para esta familia
   API-->>F: correo con enlace /cita/:token
-  W-->>F: si no responde en 3 días, recordatorio
+  W-->>F: si no elige en 3 días, un recordatorio
   alt Elige fecha
     F->>API: POST /public/citas/:token/elegir
-    API-->>F: correo "Cita confirmada" + .ics
+    Note over API: la elegida se confirma, las otras se liberan
+    API-->>F: correo "Confirmación de entrevista" + .ics
     Note over API: la entrevista aparece sola en el calendario
+    opt Dentro de las 24 h siguientes
+      F->>API: elegir otra fecha / otra franja
+    end
     F->>API: POST /public/citas/:token/notas (boletín)
     W-->>F: recordatorio el día antes
   else Ninguna encaja
@@ -79,62 +85,78 @@ La bandeja de admisión muestra RECIBIDA, EN_REVISION, PENDIENTE_COMPLETAR, CITA
 
 ## Reglas de negocio implementadas
 
-| Regla | Dónde |
+| Regla (validada con el cliente) | Dónde |
 |---|---|
+| Formulario web: todos los campos obligatorios salvo la modalidad | `solicitudes.schemas.ts` |
 | Solicitud completa = alumna, tutor, correo válido, teléfono y centro de procedencia | `revision.ts` |
 | No se puede citar una solicitud incompleta | `citacion.service.ts › proponer` |
-| De 1 a 3 huecos, libres y futuros; ocupados y bloqueados no se pueden proponer | `proponer` |
+| Agenda = jornada laboral (L–V 8:00–18:00, configurable) menos lo ocupado; la disponibilidad se reduce sola | `agenda.service.ts › disponibilidad` |
+| La entrevista dura 45 o 60 minutos | ajuste `agenda.duraciones` |
+| Se proponen de 1 a 3 fechas dentro de la jornada | `proponer` |
+| Las fechas propuestas quedan **reservadas** hasta que la familia elige; nadie más puede ocuparlas | franjas `RESERVADA` + restricción `EXCLUDE` en BD |
+| Al elegir, la elegida se confirma y las otras vuelven a estar libres | `elegir` |
+| La familia solo puede cambiar la fecha durante las 24 h siguientes a aceptarla (el plazo no se renueva al cambiar) | `HORAS_PARA_CAMBIAR`, `propuestas_cita.confirmada_en` |
 | Entrevista siempre presencial, con el equipo directivo, en la sala de reuniones de Dirección | `CENTRO` en `config/env.ts` + `CHECK` en BD |
-| Un hueco solo puede tener una entrevista, aunque dos familias elijan a la vez | `UPDATE … WHERE estado='LIBRE'` atómico + `UNIQUE(hueco_id)` |
 | La cita confirmada aparece sola en el calendario | `elegir` crea la entrevista |
-| Recordatorio si no responde en 3 días (uno solo) | `jobs/recordatorios.ts` (`RECORDATORIO_CITA_DIAS`) |
-| Recordatorio el día antes, a partir de las 10:00 | `recordatoriosEntrevista` |
-| La familia puede cambiar la fecha o pedir otra franja hasta 24 h antes | `HORAS_LIMITE_CAMBIO` |
-| Notas: se suben desde el enlace de la cita, hasta el día de la entrevista | `publico.routes.ts` |
-| Proponer nuevas fechas anula la propuesta anterior y su enlace | `proponer` |
+| Un único recordatorio si no elige fecha en 3 días, con plantilla HTML | `jobs/recordatorios.ts` |
+| Recordatorio el día antes de la entrevista, con plantilla HTML | `recordatoriosEntrevista` |
+| Las notas se piden con la cita (se suben desde el mismo enlace) | `publico.routes.ts` |
+| Si las fechas pasan sin respuesta, la propuesta caduca, se liberan y la solicitud vuelve a revisión | `caducarPropuestas` |
+| Proponer nuevas fechas anula la propuesta anterior, libera sus horas y su enlace | `proponer` |
 | Plazas libres = plazas − (admitidas + reservadas + matriculadas); GS concertado: cupo de la Junta | `comun.ts`, `revision.ts` |
+| Cuatro perfiles: Dirección (superadmin), Administración, Secretaría y Comercial; permisos ver/editar por módulo editables | `permisos/` |
+| Solo Dirección registra la decisión de admisión (por defecto) | permiso `evaluacion.editar` |
+| Todos los correos salen de plantillas HTML editables por evento | `correo/`, `comunicaciones/` |
 
 ## Modelo de datos
 
 ```mermaid
 erDiagram
+  roles ||--o{ usuarios : "códigos en usuarios.roles"
   usuarios ||--o{ refresh_tokens : "sesiones"
   usuarios ||--o{ solicitudes : "responsable"
   vias ||--o{ solicitudes : ""
   familias ||--o{ solicitudes : "vinculada"
   solicitudes ||--o{ solicitud_eventos : "historial"
   solicitudes ||--o{ propuestas_cita : ""
-  propuestas_cita ||--|{ propuesta_huecos : "1 a 3"
-  huecos_agenda ||--o{ propuesta_huecos : ""
+  propuestas_cita ||--|{ franjas_agenda : "1 a 3 reservadas"
   solicitudes ||--o{ entrevistas : ""
   propuestas_cita ||--o| entrevistas : "confirmada"
-  huecos_agenda ||--o| entrevistas : "ocupa"
+  franjas_agenda ||--o| entrevistas : "ocupa"
   solicitudes ||--o{ tokens_publicos : "enlaces"
   solicitudes ||--o{ documentos : "boletín de notas"
+  plantillas_correo ||--o{ correos_salientes : "generó"
   solicitudes ||--o{ correos_salientes : "trazabilidad"
 ```
 
 | Tabla | Para qué |
 |---|---|
-| `usuarios`, `refresh_tokens` | Personal del centro, roles y sesiones con rotación |
+| `roles` | Los cuatro perfiles y sus permisos (`solicitudes.ver`, `cobros.editar`…). Dirección es superadmin. |
+| `usuarios`, `refresh_tokens` | Personal del centro, sus roles y sesiones con rotación |
+| `ajustes` | Configuración editable: horario de la agenda (jornada, duraciones, días no lectivos) |
 | `vias` | Familia (Bachillerato, CC GM, CC GS, CP GS) + curso, por curso escolar, con plazas |
 | `familias` | Familias conocidas, para "familia ya vinculada" hasta que exista Alumnado |
 | `solicitudes` | Expediente de admisión (alumna, contacto, origen, gestión interna, última revisión) |
 | `solicitud_eventos` | Historial auditable: quién hizo qué y cuándo (usuario, familia o sistema) |
-| `huecos_agenda` | Agenda del equipo directivo (LIBRE / OCUPADO / BLOQUEADO) |
-| `propuestas_cita`, `propuesta_huecos` | Cada envío de fechas a una familia |
+| `franjas_agenda` | Lo que ocupa la agenda: `RESERVADA` (propuesta), `CONFIRMADA` (entrevista), `BLOQUEADA` (manual), `LIBERADA` (histórico). Restricción `EXCLUDE`: dos franjas activas nunca se solapan. |
+| `propuestas_cita` | Cada envío de fechas a una familia, con su duración y cuándo aceptó (`confirmada_en`) |
 | `entrevistas` | Citas confirmadas (calendario) |
 | `tokens_publicos` | Enlaces personales sin cuenta; solo se guarda el hash |
-| `documentos` | Boletín de notas (fichero en disco/S3, metadatos aquí) |
-| `correos_salientes` | Cola de correo (outbox) y trazabilidad de envíos |
+| `documentos` | Boletín de notas (fichero en la carpeta de uploads, metadatos aquí) |
+| `plantillas_correo` | Plantillas HTML por evento; una activada por evento (índice único parcial) |
+| `correos_salientes` | Cola de correo (outbox) e histórico de envíos |
 | `secuencias` | Contador del código `SOL-AAAA-NNNN` |
 
-El SQL completo está en `drizzle/0000_inicial.sql`.
+El SQL está en `drizzle/0000_inicial.sql` y `drizzle/0001_agenda_sin_solapes.sql`.
 
 ## Decisiones técnicas
 
-- **Correo con outbox.** El correo se guarda en la misma transacción que el cambio (p. ej. la cita confirmada). Un worker lo envía con reintentos exponenciales. Si el SMTP cae, no se pierde ni la cita ni el aviso, y la ficha muestra el estado de cada envío.
-- **Varias instancias.** Los workers usan `pg_try_advisory_lock` y `FOR UPDATE SKIP LOCKED`: se puede escalar la API sin duplicar correos ni recordatorios. También se pueden sacar a un proceso aparte con `WORKERS_ENABLED=false` en la API.
+- **Agenda sin huecos precreados.** No hay que "generar" la agenda: la disponibilidad se calcula cada vez a partir de la jornada y de lo que ya está ocupado. Cambiar el horario no requiere migrar datos.
+- **Sin dobles reservas, garantizado por la BD.** La restricción `EXCLUDE USING gist` sobre el rango horario impide que dos franjas activas se solapen, aunque dos personas pulsen a la vez. La API traduce ese rechazo a un 409 con mensaje claro.
+- **Correo con outbox.** El correo se guarda en la misma transacción que el cambio (p. ej. la cita confirmada). Un worker lo envía cada 15 s con reintentos exponenciales. Si el SMTP cae, no se pierde ni la cita ni el aviso, y el histórico muestra el estado de cada envío.
+- **Plantillas seguras.** El HTML que escribe el centro se sanea al guardar; las variables de texto se escapan al enviar; los bloques que genera el sistema (lista de fechas, botón) se insertan tal cual.
+- **Permisos en caliente.** Se leen de la BD en cada petición (con caché de 10 s), así que un cambio en la matriz aplica sin cerrar sesiones.
+- **Varias instancias.** Los workers usan `pg_try_advisory_lock` y `FOR UPDATE SKIP LOCKED`: se puede escalar la API sin duplicar correos ni recordatorios.
 - **Horas.** En BD todo es `timestamptz` (UTC); la conversión a hora de Madrid, con cambio de horario, se hace solo en `lib/fechas.ts`.
-- **Enlaces públicos.** Tokens de 256 bits; en BD solo su SHA-256. El de la cita es reutilizable hasta el día después de la entrevista (elegir, cambiar, subir notas); el de completar es de un solo uso.
-- **Ficheros.** Se valida el tipo real por la firma del fichero, no por la extensión. El almacenamiento está detrás de una interfaz (`lib/storage.ts`) para pasar a S3 sin tocar servicios.
+- **Enlaces públicos.** Tokens de 256 bits; en BD solo su SHA-256. El de la cita vale hasta el día después de la entrevista (elegir, cambiar, subir notas); el de completar es de un solo uso.
+- **Ficheros.** Se valida el tipo real por la firma del fichero, no por la extensión. Hoy se guardan en una carpeta de tu equipo; el almacenamiento está detrás de una interfaz (`lib/storage.ts`) para pasar a la nube sin tocar los servicios.

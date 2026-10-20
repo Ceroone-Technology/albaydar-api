@@ -35,7 +35,7 @@ function ponerCookie(res: Response, s: auth.Sesion) {
     expires: s.refreshExpira,
   });
 }
-const respuesta = (s: auth.Sesion) => ({ accessToken: s.accessToken, usuario: s.usuario });
+const respuesta = async (s: auth.Sesion) => ({ accessToken: s.accessToken, usuario: await auth.conPermisos(s.usuario) });
 
 /**
  * Las rutas que leen la cookie solo aceptan peticiones desde los orígenes del front.
@@ -62,7 +62,7 @@ authRouter.post('/login', limiteLogin, validate({ body: loginBody }), async (req
   const { email, password } = v<typeof loginBody>(req, 'body');
   const s = await auth.login(email, password, ctx(req));
   ponerCookie(res, s);
-  res.json(respuesta(s));
+  res.json(await respuesta(s));
 });
 
 /** POST /api/auth/refresh → rota el refresh token y devuelve un access token nuevo */
@@ -71,7 +71,7 @@ authRouter.post('/refresh', async (req, res) => {
   try {
     const s = await auth.refrescar(req.cookies?.[COOKIE_REFRESH], ctx(req));
     ponerCookie(res, s);
-    res.json(respuesta(s));
+    res.json(await respuesta(s));
   } catch (e) {
     res.clearCookie(COOKIE_REFRESH, { path: COOKIE_PATH, domain: env.COOKIE_DOMAIN });
     throw e;
@@ -93,5 +93,5 @@ authRouter.post('/cambiar-password', requireAuth, validate({ body: cambiarBody }
   const { actual, nueva } = v<typeof cambiarBody>(req, 'body');
   const s = await auth.cambiarPassword(req.user!.id, actual, nueva, ctx(req));
   ponerCookie(res, s);
-  res.json(respuesta(s));
+  res.json(await respuesta(s));
 });

@@ -24,25 +24,18 @@ export const telefono = z
   .trim()
   .regex(/^\+?[\d\s().-]{9,20}$/, 'Teléfono no válido.');
 
-/** Campos que rellena la familia (formulario público y "completar"). */
+/**
+ * Campos de la solicitud (los del mockup). Todos obligatorios salvo la modalidad.
+ */
 export const camposFamilia = {
   viaId: z.string().uuid('Elige la etapa y el curso.'),
   alumnaNombre: texto(),
   alumnaApellidos: texto(),
-  alumnaFechaNacimiento: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha con formato AAAA-MM-DD.')
-    .optional()
-    .nullable(),
-  alumnaDni: textoOpc(20),
-  centroProcedencia: textoOpc(),
-  cursoAnterior: textoOpc(),
+  centroProcedencia: texto(200),
   modalidadInteres: textoOpc(),
   tutorNombre: texto(160),
   email,
   telefono,
-  comentariosFamilia: textoOpc(2000),
-  datosExtra: z.record(z.string(), z.unknown()).optional().nullable(),
 };
 
 /** Formulario público "Albaydar Solicitud". */
@@ -56,8 +49,9 @@ export const solicitudPublicaBody = z.object({
 /** Alta interna (solicitud por teléfono, presencial, puertas abiertas o SNEC). */
 export const solicitudInternaBody = z.object({
   ...camposFamilia,
-  // Por teléfono puede no haber correo todavía: se pide completar después.
+  // Por teléfono pueden faltar el correo o el centro: la revisión lo marca y se pide completar después.
   email: email.or(z.literal('')).transform((v) => v || ''),
+  centroProcedencia: textoOpc(200),
   canal: z.enum(canalSolicitudEnum.enumValues).default('TELEFONO'),
   asignadaSnec: z.boolean().default(false),
   esAlumnaNueva: z.boolean().default(true),

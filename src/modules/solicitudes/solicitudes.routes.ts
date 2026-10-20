@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireRol } from '../../middleware/auth';
+import { requirePermiso } from '../../middleware/auth';
+import { forbidden } from '../../lib/errors';
+import { permisosDe } from '../permisos/permisos.service';
 import { v, validate } from '../../middleware/validate';
 import * as citacion from '../citacion/citacion.service';
 import * as documentosSrv from '../documentos/documentos.service';
@@ -16,24 +18,31 @@ import {
 } from './solicitudes.schemas';
 
 const citarBody = z.object({
-  huecoIds: z.array(z.string().uuid()).min(1, 'Selecciona al menos un hueco.').max(3, 'Máximo 3 huecos.'),
+  /** Horas de inicio elegidas en la disponibilidad (ISO 8601). */
+  inicios: z.array(z.iso.datetime({ offset: true, error: 'Fecha y hora no válidas.' })).min(1, 'Selecciona al menos una fecha.').max(3, 'Máximo 3 fechas.'),
+  /** 45 o 60 minutos (según la configuración de la agenda). */
+  duracion: z.number().int().optional(),
   mensaje: z.string().trim().max(1000).optional().nullable(),
 });
 
+/** Decidir la admisión es un permiso aparte ("Registrar decisión de admisión" en el mockup). */
+const DECISIONES = ['ADMITIDA', 'NO_ADMITIDA', 'EN_ESPERA'];
+
 export const solicitudesRouter = Router();
-const gestion = requireRol('SECRETARIA', 'DIRECCION');
+const ver = requirePermiso('solicitudes.ver');
+const gestion = requirePermiso('solicitudes.editar');
 
 /** Lista con filtros. ?vista=bandeja para la bandeja de admisión; ?columna=… para paginar el kanban. */
-solicitudesRouter.get('/', validate({ query: listarQuery }), async (req, res) => {
+solicitudesRouter.get('/', ver, validate({ query: listarQuery }), async (req, res) => {
   res.json(await srv.listar(v<typeof listarQuery>(req, 'query')));
 });
 
 /** Kanban: totales y primeras tarjetas por columna. */
-solicitudesRouter.get('/pipeline', validate({ query: pipelineQuery }), async (req, res) => {
+solicitudesRouter.get('/pipeline', ver, validate({ query: pipelineQuery }), async (req, res) => {
   res.json(await srv.pipeline(v<typeof pipelineQuery>(req, 'query')));
 });
 
-solicitudesRouter.get('/contadores', async (_req, res) => {
+solicitudesRouter.get('/contadores', ver, async (_req, res) => {
   res.json(await srv.contadores());
 });
 
@@ -42,7 +51,7 @@ solicitudesRouter.post('/', gestion, validate({ body: solicitudInternaBody }), a
   res.status(201).json(await srv.crearInterna(v<typeof solicitudInternaBody>(req, 'body'), req.user!.id));
 });
 
-solicitudesRouter.get('/:id', validate({ params: idParam }), async (req, res) => {
+solicitudesRouter.get('/:id', ver, validate({ params: idParam }), async (req, res) => {
   res.json(await srv.detalle(v<typeof idParam>(req, 'params').id));
 });
 
@@ -64,16 +73,20 @@ solicitudesRouter.post('/:id/pedir-completar', gestion, validate({ params: idPar
 /** "Citar a entrevista": propone de 1 a 3 huecos y envía el enlace a la familia. */
 solicitudesRouter.post('/:id/citar', gestion, validate({ params: idParam, body: citarBody }), async (req, res) => {
   const b = v<typeof citarBody>(req, 'body');
-  res.status(201).json(await citacion.proponer(v<typeof idParam>(req, 'params').id, b.huecoIds, b.mensaje, req.user!.id));
+  res.status(201).json(await citacion.proponer(v<typeof idParam>(req, 'params').id, { inicios: b.inicios, duracion: b.duracion, mensaje: b.mensaje }, req.user!.id));
 });
 
 /** Mover de columna / decisión. Si el destino requiere una acción, responde 409 ACCION_REQUERIDA. */
 solicitudesRouter.patch('/:id/estado', gestion, validate({ params: idParam, body: cambiarEstadoBody }), async (req, res) => {
+  if (DECISIONES.includes(v<typeof cambiarEstadoBody>(req, 'body').estado)) {
+    const ef = await permisosDe(req.user!.roles);
+    if (!ef.superadmin && !ef.permisos.includes('evaluacion.editar')) throw forbidden('Registrar la decisión de admisión requiere el permiso de Evaluación.');
+  }
   res.json(await srv.cambiarEstadoManual(v<typeof idParam>(req, 'params').id, v<typeof cambiarEstadoBody>(req, 'body'), req.user!.id));
 });
 
 const docParams = z.object({ id: z.string().uuid(), docId: z.string().uuid() });
-solicitudesRouter.get('/:id/documentos/:docId', validate({ params: docParams }), async (req, res) => {
+solicitudesRouter.get('/:id/documentos/:docId', ver, validate({ params: docParams }), async (req, res) => {
   const p = v<typeof docParams>(req, 'params');
   const { doc, datos } = await documentosSrv.descargar(p.id, p.docId);
   res.setHeader('Content-Type', doc.mime);

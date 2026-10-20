@@ -1,7 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
-import type { Rol } from '../db/schema';
 import { forbidden, unauthorized } from '../lib/errors';
 import { verificarAccess } from '../modules/auth/auth.tokens';
+import type { Permiso } from '../modules/permisos/catalogo';
+import { permisosDe } from '../modules/permisos/permisos.service';
 
 /**
  * Exige `Authorization: Bearer <accessToken>`.
@@ -21,11 +22,19 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   }
 }
 
-/** Permite el paso si el usuario tiene AL MENOS uno de los roles. ADMIN siempre pasa. */
-export const requireRol =
-  (...roles: Rol[]) =>
-  (req: Request, _res: Response, next: NextFunction) => {
-    const r = req.user?.roles ?? [];
-    if (r.includes('ADMIN') || roles.some((x) => r.includes(x))) return next();
-    next(forbidden());
+/**
+ * Exige un permiso de la matriz (p. ej. "solicitudes.editar").
+ * Los permisos se leen de la BD, así que un cambio en la matriz aplica enseguida.
+ * Con varios, basta con tener uno.
+ */
+export const requirePermiso =
+  (...permisos: Permiso[]) =>
+  async (req: Request, _res: Response, next: NextFunction) => {
+    try {
+      const ef = await permisosDe(req.user?.roles ?? []);
+      if (ef.superadmin || permisos.some((p) => ef.permisos.includes(p))) return next();
+      next(forbidden());
+    } catch (e) {
+      next(e);
+    }
   };

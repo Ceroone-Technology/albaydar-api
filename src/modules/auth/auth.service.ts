@@ -8,6 +8,7 @@ import { AppError, unauthorized } from '../../lib/errors';
 import { hashToken, nuevoToken } from '../../lib/crypto';
 import { logger } from '../../lib/logger';
 import { firmarAccess } from './auth.tokens';
+import { permisosDe } from '../permisos/permisos.service';
 
 const MAX_INTENTOS = 5;
 const BLOQUEO_MIN = 15;
@@ -31,6 +32,12 @@ export interface Sesion {
 
 export type UsuarioPublico = Pick<Usuario, 'id' | 'email' | 'nombre' | 'roles'>;
 export const publico = (u: Usuario): UsuarioPublico => ({ id: u.id, email: u.email, nombre: u.nombre, roles: u.roles });
+
+/** Usuario con sus permisos efectivos: el front los usa para mostrar u ocultar vistas y botones. */
+export async function conPermisos(u: UsuarioPublico) {
+  const ef = await permisosDe(u.roles);
+  return { ...u, superadmin: ef.superadmin, permisos: ef.permisos };
+}
 
 async function emitirSesion(u: Usuario, familia: string, ctx: Contexto): Promise<Sesion & { refreshId: string }> {
   const refreshToken = nuevoToken(48);
@@ -157,8 +164,8 @@ export async function cambiarPassword(usuarioId: string, actual: string, nueva: 
   return emitirSesion(actualizado!, randomUUID(), ctx);
 }
 
-export async function obtenerUsuario(id: string): Promise<UsuarioPublico> {
+export async function obtenerUsuario(id: string) {
   const [u] = await db.select().from(usuarios).where(eq(usuarios.id, id)).limit(1);
   if (!u || !u.activo) throw unauthorized();
-  return publico(u);
+  return conPermisos(publico(u));
 }

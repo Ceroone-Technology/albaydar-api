@@ -1,33 +1,52 @@
-# Preguntas abiertas para validar con el cliente
+# Decisiones y preguntas abiertas
 
-Decisiones que he tomado para poder avanzar y que conviene confirmar en la reunión. Cada una indica qué hace hoy la API y cuánto costaría cambiarla.
+## Decidido (reunión del 20 de octubre de 2026)
 
-## Citación y entrevista
+| # | Tema | Decisión | Cómo está en la API |
+|---|---|---|---|
+| 1 | Agenda | Jornada laboral de lunes a viernes, de 8:00 a 18:00; la disponibilidad se reduce según se ocupan horas | Disponibilidad calculada; horario editable en `PUT /agenda/configuracion` |
+| 2 | Entrevista | Siempre presencial, con el equipo directivo | Fijo, con `CHECK` en BD |
+| 3 | Recordatorio sin respuesta | Uno solo, con plantilla HTML | A los 3 días, plantilla `CITACION_RECORDATORIO` |
+| 4 | Recordatorio del día antes | Plantilla HTML editable desde Comunicaciones | Plantilla `ENTREVISTA_RECORDATORIO`; CRUD completo de plantillas |
+| 5 | Cambiar la cita | Solo durante las 24 h siguientes a aceptarla | `cambioHasta` en la página de cita; después, 409 |
+| 6 | Duración | 45 a 60 minutos | Secretaría elige 45 o 60 al citar |
+| 7 | Fechas propuestas | Se reservan hasta que la familia elige | Franjas `RESERVADA`; nadie más puede ocuparlas |
+| 8 | Fechas pasadas sin respuesta | La propuesta caduca y vuelve a revisión | Las horas se liberan |
+| 10–11 | Campos de la solicitud | Los del mockup; todos obligatorios salvo la modalidad | Validado en el formulario web |
+| 12 | Notas del último curso | Se piden con la cita | Se suben desde el enlace de la cita |
+| 14 | Cupo SNEC | Se queda informativo | Sin cambios |
+| 15 | Plazas ocupadas | Las admitidas ya cuentan | Sin cambios |
+| 16 | Columnas del kanban | Bien como están | Sin cambios |
+| 18 | Correo de demostración | Gmail personal con contraseña de aplicación | Ver `docs/gmail.md`; `MAIL_DESVIO` para no escribir a familias de ejemplo |
+| 19 | Ficheros | En tu equipo por ahora; en la nube cuando haya servidor | Carpeta `storage/uploads` del proyecto; interfaz lista para cambiar a la nube |
+| 21 | Acceso del personal | Usuario y contraseña, con módulo de usuarios y roles | Usuarios, roles y matriz de permisos editables |
+| — | Perfiles (reunión del 5 de octubre) | Dirección (superadministrador), Administración, Secretaría y Comercial/Promoción | Cuatro roles de serie; Dirección activa o desactiva ver/editar por módulo |
 
-1. **¿Quién propone los huecos?** El diagrama lo deja "a validar" (paso 7): secretaría propone de 1 a 3, o la plataforma asigna el primero libre. **Hoy:** secretaría propone. Cambiarlo es añadir un endpoint, sin tocar el modelo.
-2. **Con quién es la entrevista.** El prompt dice "siempre con el equipo directivo, en la sala de reuniones de Dirección". Pero los datos de ejemplo del mockup (calendario de Entrevistas y página de cita) mencionan Jefatura de Estudios, Orientación, Jefatura de FP y salas 1, 2 y 4, y el panel de citar tiene chips Presencial/Telefónica/Videollamada. **Hoy:** fijo a equipo directivo y sala de Dirección (con `CHECK` en BD para presencial). Si hiciera falta varias agendas, se añade una columna `agenda` a `huecos_agenda`.
-3. **Recordatorio "a los 3 días".** Lo he interpretado como el texto del mockup: "si no responde en 3 días, se le envía un recordatorio". Uno solo. ¿Hace falta un segundo aviso, o una llamada de secretaría?
-4. **Recordatorio el día antes.** La página de cita promete "un recordatorio el día antes". **Hoy:** se envía a partir de las 10:00 del día anterior.
-5. **Plazo para cambiar la cita.** **Hoy:** la familia puede cambiar o pedir otra franja hasta 24 h antes; después, el mensaje le pide llamar a secretaría.
-6. **Duración y franjas.** **Hoy:** 45 min; plantilla por defecto L–V a las 09:00, 10:00, 12:30 y 17:00 (las del mockup). ¿Son las reales? ¿Hay festivos o periodos sin entrevistas?
-7. **¿Puede proponerse el mismo hueco a varias familias?** **Hoy:** sí; la primera que elige se lo queda y a las demás les aparece como no disponible. La agenda indica en cuántas propuestas pendientes está cada hueco. La alternativa es reservarlo provisionalmente al proponerlo, pero bloquearía la agenda mientras las familias no contestan.
-8. **Fechas que caducan sin respuesta.** **Hoy:** cuando pasa el último hueco propuesto sin respuesta, la propuesta caduca y la solicitud vuelve a "En revisión".
-9. **Calendario.** El diagrama pregunta: ¿agenda propia con invitación .ics (lo que hay ahora), o sincronización con Google o Microsoft?
+## Pendiente de validar
 
-## Solicitud
+**Agenda y citas**
 
-10. **Campos exactos del formulario público.** No tengo el mockup `Albaydar solicitud`. He tomado los campos de la bandeja: alumna, tutor, correo, teléfono, centro de procedencia, modalidad de interés y origen. Los que falten entran en `datosExtra` (JSON) sin romper nada; cuando se validen, se pasan a columnas.
-11. **Datos obligatorios.** El mockup considera completa la solicitud con correo válido y centro de procedencia. **Hoy:** además nombre y apellidos de la alumna, nombre del tutor y teléfono. ¿Es correcto?
-12. **Notas del último curso.** El diagrama dice que se piden con la cita, no con la solicitud (paso 9). **Hoy:** así. ¿Bloquean algo si no llegan antes de la entrevista? Hoy no bloquean.
-13. **"Familia ya vinculada".** Hasta que exista el módulo de Alumnado, sale de la tabla `familias` (con un texto de vínculo, p. ej. "Hermana en 2º Bachillerato") y de otras solicitudes con el mismo correo o teléfono. ¿Qué se considera "vinculada" exactamente?
-14. **Cupo SNEC.** **Hoy:** es informativo ("comprobar el cupo de la resolución"), no bloquea. ¿Hay que registrar el número de la resolución de la Junta?
-15. **Plazas libres.** **Hoy:** plazas de la vía − (admitidas + plaza reservada + matriculadas). ¿Las admitidas ya cuentan como plaza ocupada, o solo al pagar la reserva?
-16. **Columna "Solicitud revisada" del kanban.** El título dice "revisada", pero las tarjetas de ejemplo dicen "pendiente de revisar". **Hoy:** agrupa recibidas, en revisión y pendientes de completar. Y "Entrevista programada" incluye también "esperando a la familia" y "pide otra franja". Confirmar.
-17. **Curso escolar.** El seed crea las vías de 2027-2028. ¿El formulario abre todo el año para el curso siguiente?
+1. **Reservas sin respuesta.** Las fechas propuestas quedan bloqueadas hasta que la familia elige. Si no contesta, siguen bloqueadas hasta que pasan (con un recordatorio a los 3 días). ¿Liberamos las reservas automáticamente pasados X días sin respuesta? Por ejemplo, a los 5 días, junto con un aviso a secretaría.
+2. **Plazo de 24 h.** Hoy cuenta desde la primera vez que la familia acepta. Si cambia de fecha dentro de ese plazo, no se le da otro plazo de 24 h. ¿Es así?
+3. **Detalles del horario.** Las entrevistas pueden empezar cada 30 minutos (8:00, 8:30…) y no se ofrecen horas con menos de 2 horas de antelación. ¿Os parece bien? ¿Hay festivos o semanas sin entrevistas que debamos cargar ya? Se pueden añadir como días no lectivos.
+4. **Una o varias agendas.** Hoy hay una sola agenda: la del equipo directivo como conjunto. Si más adelante varios directivos entrevistan a la vez en salas distintas, habría que tener una agenda por persona o sala. ¿Hace falta?
+5. **Calendario.** Hoy se envía una invitación (.ics) que la familia añade a su calendario. ¿Hace falta además sincronizar con el Google Calendar o el Outlook del equipo directivo? Pendiente de decidir (punto 9).
 
-## Técnicas
+**Solicitud**
 
-18. **Proveedor de correo** (SMTP del centro, Microsoft 365, SendGrid…) y dominio remitente, para configurar SPF/DKIM y que no acabe en spam.
-19. **Dónde se guardan los ficheros:** disco del servidor (hoy) o almacenamiento en la nube.
-20. **RGPD:** plazo de conservación de solicitudes no admitidas y de los boletines de notas; texto exacto de la casilla de privacidad del formulario.
-21. **Acceso del personal:** ¿usuario y contraseña propios (hoy) o inicio de sesión con la cuenta de Google o Microsoft del centro?
+6. **Familia ya vinculada** (punto 13, explicado de otra forma). Es una de las cinco comprobaciones que ve secretaría al revisar una solicitud: avisa de que esa familia ya tiene relación con el centro, por ejemplo una hermana ya matriculada, para tenerlo en cuenta. Hoy salta si hay otra solicitud con el mismo correo o teléfono. Cuando exista el módulo de Alumnado también se comprobará contra las alumnas matriculadas. ¿Os vale así?
+7. **Curso escolar** (punto 17, explicado de otra forma). Si una familia rellena hoy el formulario (octubre de 2026), ¿la plaza es siempre para el curso siguiente (2027-2028)? ¿O también se admiten solicitudes para incorporarse al curso que ya está en marcha?
+
+**Permisos**
+
+8. **Perfil Comercial.** Por defecto ve el dashboard, el alumnado y las entrevistas, y puede gestionar solicitudes (moverlas en el kanban, citar). No ve cobros, configuración ni plantillas. ¿Es correcto? Dirección lo puede cambiar desde la matriz en cualquier momento.
+
+**Datos personales** (punto 20, explicado de otra forma)
+
+9. ¿Cuánto tiempo guardamos los datos y el boletín de notas de una alumna que **no** entra en el centro? Hace falta saberlo para borrarlos automáticamente pasado ese plazo, como exige el RGPD.
+10. Texto exacto de la casilla de privacidad del formulario web: lo tiene que dar el centro o su delegado de protección de datos.
+
+**Técnicas, para más adelante**
+
+11. **Correo en producción:** un remitente del propio centro (p. ej. `admisiones@albaydar.org`) con su servidor de correo, para que no acabe en spam. Gmail sirve solo para la demo.
+12. **Nube para los ficheros:** qué proveedor (S3, Azure, Google Cloud) y en qué región (los datos de menores deberían quedarse en la UE).

@@ -1,16 +1,17 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireRol } from '../../middleware/auth';
+import { requirePermiso } from '../../middleware/auth';
 import { v, validate } from '../../middleware/validate';
 import * as srv from './entrevistas.service';
 
 const idParam = z.object({ id: z.string().uuid() });
 
 export const entrevistasRouter = Router();
-const gestion = requireRol('SECRETARIA', 'DIRECCION');
+const ver = requirePermiso('entrevistas.ver');
+const gestion = requirePermiso('entrevistas.editar');
 
 /** Calendario semanal y lista: GET /api/entrevistas?desde=…&hasta=…&familiaVia=BACHILLERATO&q=… */
-entrevistasRouter.get('/', validate({ query: srv.listarEntrevistasQuery }), async (req, res) => {
+entrevistasRouter.get('/', ver, validate({ query: srv.listarEntrevistasQuery }), async (req, res) => {
   res.json(await srv.listar(v<typeof srv.listarEntrevistasQuery>(req, 'query')));
 });
 

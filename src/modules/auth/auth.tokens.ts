@@ -1,12 +1,11 @@
 import jwt, { type SignOptions } from 'jsonwebtoken';
 import { env } from '../../config/env';
-import type { Rol } from '../../db/schema';
 
 export interface AccessPayload {
   sub: string;
   email: string;
   nombre: string;
-  roles: Rol[];
+  roles: string[];
 }
 
 const ISSUER = 'albaydar-api';

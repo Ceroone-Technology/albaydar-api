@@ -111,3 +111,62 @@ describe('tipo real de los ficheros subidos', () => {
     expect(tipoReal(Buffer.from('MZ ejecutable'))).toBeNull();
   });
 });
+
+describe('motor de plantillas de correo', async () => {
+  const { renderizar, sanear, variablesDesconocidas, htmlATexto, lista } = await import('../src/correo/plantillas');
+  const { evento, EVENTOS } = await import('../src/correo/eventos');
+
+  it('escapa las variables de texto y respeta las de tipo HTML', () => {
+    const c = renderizar({
+      evento: 'COMPLETAR_SOLICITUD',
+      asunto: 'Hola {{tutor}}',
+      cuerpoHtml: '<p>{{alumna}}</p>{{campos}}',
+      vars: { tutor: 'Ana', alumna: '<b>Lucía</b>', campos: lista(['Centro']) },
+    });
+    expect(c.asunto).toBe('Hola Ana');
+    expect(c.html).toContain('&lt;b&gt;Lucía&lt;/b&gt;');
+    expect(c.html).toContain('<li style="margin:5px 0">Centro</li>');
+    expect(c.texto).toContain('- Centro');
+  });
+
+  it('quita párrafos de variables opcionales vacías', () => {
+    const c = renderizar({ evento: 'COMPLETAR_SOLICITUD', asunto: 'x', cuerpoHtml: '<p>a</p><p>{{mensaje}}</p>', vars: { mensaje: '' } });
+    expect(c.html).not.toMatch(/<p[^>]*>\s*<\/p>/);
+  });
+
+  it('detecta variables mal escritas', () => {
+    expect(variablesDesconocidas(evento('CITA_CONFIRMADA')!, 'Hola {{alumna}} {{alumno}}')).toEqual(['alumno']);
+  });
+
+  it('las plantillas predeterminadas solo usan variables de su evento', () => {
+    for (const e of EVENTOS) expect(variablesDesconocidas(e, e.predeterminada.asunto, e.predeterminada.cuerpoHtml), e.clave).toEqual([]);
+  });
+
+  it('el saneado quita scripts y manejadores pero conserva {{enlace}} en href', () => {
+    const h = sanear('<p onclick="x()" style="color:red">a</p><script>alert(1)</script><a href="{{enlace}}">b</a><a href="javascript:alert(1)">c</a>');
+    expect(h).toBe('<p style="color:red">a</p><a href="{{enlace}}">b</a><a>c</a>');
+  });
+
+  it('texto plano con los enlaces visibles', () => {
+    expect(htmlATexto('<p>Hola</p><a href="https://x.es/a">Elegir</a>')).toBe('Hola\nElegir (https://x.es/a)');
+  });
+});
+
+describe('agenda: jornada laboral', async () => {
+  const { dentroDeJornada } = await import('../src/modules/agenda/agenda.service');
+  const { AGENDA_POR_DEFECTO: cfg } = await import('../src/modules/ajustes/ajustes.service');
+  const f = (d: string, h: string, min: number) => {
+    const i = horaLocalAUtc(d, h);
+    return [i, new Date(i.getTime() + min * 60_000)] as const;
+  };
+  it('lunes a viernes de 8:00 a 18:00', () => {
+    expect(dentroDeJornada(...f('2026-11-02', '08:00', 60), cfg)).toBeNull();
+    expect(dentroDeJornada(...f('2026-11-02', '17:00', 60), cfg)).toBeNull();
+    expect(dentroDeJornada(...f('2026-11-02', '17:30', 60), cfg)).toMatch(/Fuera del horario/);
+    expect(dentroDeJornada(...f('2026-11-02', '07:30', 45), cfg)).toMatch(/Fuera del horario/);
+    expect(dentroDeJornada(...f('2026-11-07', '10:00', 45), cfg)).toMatch(/no hay entrevistas/); // sábado
+  });
+  it('respeta los días no lectivos', () => {
+    expect(dentroDeJornada(...f('2026-12-08', '10:00', 45), { ...cfg, diasNoLectivos: ['2026-12-08'] })).toMatch(/no lectivo/);
+  });
+});

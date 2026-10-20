@@ -1,6 +1,9 @@
 node_modules/
 dist/
-storage/
+storage/*
+!storage/uploads/
+storage/uploads/*
+!storage/uploads/.gitkeep
 .env
 *.log
 coverage/

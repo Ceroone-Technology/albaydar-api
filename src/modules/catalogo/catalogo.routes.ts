@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { familiaViaEnum, vias } from '../../db/schema';
 import { db } from '../../lib/db';
 import { notFound } from '../../lib/errors';
-import { requireRol } from '../../middleware/auth';
+import { requirePermiso } from '../../middleware/auth';
 import { v, validate } from '../../middleware/validate';
 import { plazasOcupadas } from '../solicitudes/comun';
 import { ETAPA, ETIQUETA_FAMILIA_VIA } from '../solicitudes/dominio';
@@ -33,6 +33,16 @@ const viaBody = z.object({
   activa: z.boolean().default(true),
 });
 
+/** Edición parcial sin valores por defecto (Zod 4 los conservaría con .partial()). */
+const viaEditarBody = z
+  .object({
+    nombre: viaBody.shape.nombre.optional(),
+    plazas: viaBody.shape.plazas.optional(),
+    plazasAsignadasPorJunta: z.boolean().optional(),
+    activa: z.boolean().optional(),
+  })
+  .refine((o) => Object.values(o).some((x) => x !== undefined), 'Nada que actualizar.');
+
 export const catalogoRouter = Router();
 
 /** Vías con plazas libres (Configuración y comprobación de plazas). */
@@ -48,18 +58,18 @@ catalogoRouter.get('/vias', async (_req, res) => {
   });
 });
 
-catalogoRouter.post('/vias', requireRol('ADMIN'), validate({ body: viaBody }), async (req, res) => {
+catalogoRouter.post('/vias', requirePermiso('configuracion.editar'), validate({ body: viaBody }), async (req, res) => {
   const [x] = await db.insert(vias).values(v<typeof viaBody>(req, 'body')).returning();
   res.status(201).json(x);
 });
 
 catalogoRouter.patch(
   '/vias/:id',
-  requireRol('ADMIN'),
-  validate({ params: z.object({ id: z.string().uuid() }), body: viaBody.partial() }),
+  requirePermiso('configuracion.editar'),
+  validate({ params: z.object({ id: z.string().uuid() }), body: viaEditarBody }),
   async (req, res) => {
     const { id } = v<z.ZodObject<{ id: z.ZodString }>>(req, 'params');
-    const [x] = await db.update(vias).set(v<typeof viaBody>(req, 'body')).where(and(eq(vias.id, id))).returning();
+    const [x] = await db.update(vias).set(v<typeof viaEditarBody>(req, 'body')).where(and(eq(vias.id, id))).returning();
     if (!x) throw notFound('Vía no encontrada.');
     res.json(x);
   },

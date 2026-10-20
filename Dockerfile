@@ -21,7 +21,9 @@ COPY --chown=node:node package.json ./
 COPY --chown=node:node drizzle ./drizzle
 COPY --chown=node:node docker/entrypoint.sh /usr/local/bin/albaydar-entrypoint
 RUN chmod +x /usr/local/bin/albaydar-entrypoint && mkdir -p /app/storage/uploads && chown -R node:node /app/storage
-USER node
+# Arranca como root solo para ajustar los permisos de la carpeta de ficheros
+# (montada desde tu equipo); el servidor pasa enseguida al usuario sin privilegios "node".
+ENV RUN_AS_USER=node
 EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=5 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

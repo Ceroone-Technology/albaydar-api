@@ -1,8 +1,11 @@
 # Albaydar API
 
-API de la plataforma de gestión académica del Centro Educativo Albaydar. Esta primera fase cubre **autenticación** y la primera parte del flujo de admisión:
+API de la plataforma de gestión académica del Centro Educativo Albaydar. Esta primera fase cubre:
 
-> solicitud web → revisión (5 comprobaciones) → pedir que complete → citación (1 a 3 huecos) → la familia elige fecha → entrevista en el calendario, con correos, invitación .ics y recordatorios.
+- **Acceso:** usuarios con contraseña, cuatro perfiles (Dirección superadministrador, Administración, Secretaría, Comercial) y matriz de permisos ver/editar por módulo.
+- **Admisión:** solicitud web → revisión (5 comprobaciones) → pedir que complete → citación.
+- **Citación:** agenda por jornada laboral (L–V 8:00–18:00); 1 a 3 fechas que quedan reservadas hasta que la familia elige; cambio solo en las 24 h siguientes; entrevista en el calendario con invitación .ics.
+- **Comunicaciones:** todos los correos salen de plantillas HTML editables (crear, editar, eliminar, vista previa, prueba e histórico), incluidos los dos recordatorios.
 
 Node.js 20+ · TypeScript · Express 5 · PostgreSQL 16 · Drizzle ORM · Zod · JWT · Nodemailer.
 
@@ -19,12 +22,21 @@ docker compose up -d --build
 | API | http://localhost:3000 (salud: `/health`) |
 | PostgreSQL | `localhost:5432`, usuario y contraseña `albaydar` |
 | Correos (Mailpit) | http://localhost:8025 |
+| Ficheros subidos | carpeta `storage/uploads` del proyecto (en tu equipo) |
 
-Al arrancar, la API espera a PostgreSQL, aplica las migraciones y siembra usuarios, vías y solicitudes de ejemplo (es idempotente: reiniciar no duplica nada). Los datos viven en volúmenes de Docker y sobreviven a `docker compose down`; para empezar de cero: `docker compose down -v`.
+Al arrancar, la API espera a PostgreSQL, aplica las migraciones y carga roles, plantillas de correo, horario de la agenda, usuarios, vías y solicitudes de ejemplo. Es idempotente: reiniciar no duplica nada. Los datos de la base viven en un volumen de Docker y sobreviven a `docker compose down`; para empezar de cero: `docker compose down -v`.
 
-Usuarios de demo (contraseña `Albaydar-2026`): `maria.reyes@albaydar.org`, `juan.diaz@albaydar.org`, `dolores.ruiz@albaydar.org` (Secretaría), `direccion@albaydar.org` (Dirección), `administracion@albaydar.org`. Administrador: `admin@albaydar.org` / `CambiaEsto-2026!`.
+| Usuario | Perfil | Contraseña |
+|---|---|---|
+| `admin@albaydar.org` | Dirección (superadministrador) | `CambiaEsto-2026!` |
+| `direccion@albaydar.org` | Dirección | `Albaydar-2026` |
+| `maria.reyes@albaydar.org`, `juan.diaz@albaydar.org`, `dolores.ruiz@albaydar.org` | Secretaría | `Albaydar-2026` |
+| `administracion@albaydar.org` | Administración | `Albaydar-2026` |
+| `comercial@albaydar.org` | Comercial / Promoción | `Albaydar-2026` |
 
-Para cambiar puertos, contraseñas o el SMTP, copia `.env.docker.example` como `.env`. Comandos útiles:
+**Correos reales con Gmail:** copia `.env.docker.example` como `.env`, rellena el bloque de Gmail y sigue `docs/gmail.md`.
+
+Comandos útiles:
 
 ```bash
 docker compose logs -f api                                  # ver la API
@@ -49,33 +61,37 @@ npm run dev                     # http://localhost:3000
 npm test                        # usa la BD albaydar_test que crea el contenedor de PostgreSQL
 ```
 
-- `tests/reglas.test.ts`: las cinco comprobaciones, fechas en hora de Madrid (incluido el cambio de hora), .ics, kanban.
-- `tests/flujo-admision.test.ts`: el flujo entero por HTTP contra PostgreSQL real, con login y rotación de sesión, enlaces de un solo uso, dos familias eligiendo el mismo hueco a la vez, cambio de fecha, subida de notas, "ninguna me encaja" y los dos recordatorios.
+- `tests/reglas.test.ts`: las cinco comprobaciones, fechas en hora de Madrid (incluido el cambio de hora), jornada laboral, .ics, kanban y el motor de plantillas (escapado, saneado, variables).
+- `tests/flujo-admision.test.ts`: todo por HTTP contra PostgreSQL real: perfiles y permisos (incluido el cambio en caliente), usuarios, solicitud, reserva de fechas, dos secretarias citando la misma hora a la vez, elegir, cambiar en 24 h y bloqueo después, notas, recordatorios, "ninguna me encaja" y el CRUD de plantillas.
 
 ## Estructura
 
 ```
 src/
   config/env.ts            variables de entorno validadas + datos fijos del centro
-  db/schema.ts             esquema (fuente de verdad) · migrate.ts · seed.ts
-  lib/                     db, fechas (Europe/Madrid), errores, tokens, almacenamiento
-  middleware/              auth (JWT + roles), validación Zod, errores
-  correo/                  plantillas, .ics, cola de envío (outbox)
-  jobs/                    recordatorios y worker de correo
+  db/schema.ts             esquema (fuente de verdad) · migrate.ts · seed.ts · datos-base.ts
+  lib/                     db, fechas (Europe/Madrid), errores, tokens, almacenamiento de ficheros
+  middleware/              autenticación, permisos, validación Zod, errores
+  correo/                  eventos y plantillas predeterminadas, motor de plantillas, .ics, cola de envío
+  jobs/                    recordatorios, caducidad de propuestas y worker de correo
   modules/
     auth/                  login, refresh con rotación, logout, cambiar contraseña
+    usuarios/              alta, edición, baja, restablecer contraseña
+    permisos/              roles, catálogo de permisos y matriz
+    ajustes/               horario de la agenda
+    agenda/                disponibilidad, ocupación y bloqueos
     solicitudes/           alta, bandeja, kanban, revisión, pedir que complete, estados
-    citacion/              proponer huecos y página pública de cita
-    agenda/                huecos del equipo directivo
+    citacion/              proponer fechas y página pública de cita
     entrevistas/           calendario y lista
-    documentos/            boletín de notas
-    publico/               rutas sin login
-    usuarios/ catalogo/
-drizzle/0000_inicial.sql   migración SQL del esquema
+    comunicaciones/        plantillas de correo, vista previa, prueba e histórico
+    documentos/ publico/ catalogo/
+drizzle/                   migraciones SQL
+docker/                    arranque del contenedor e inicialización de PostgreSQL
 docs/
   api.md                   contrato para el front Angular
   flujo-y-datos.md         estados, reglas, modelo de datos y decisiones
-  preguntas-abiertas.md    lo que hay que validar con el cliente
+  gmail.md                 configurar Gmail para la demo
+  preguntas-abiertas.md    decisiones tomadas y lo que falta validar
 ```
 
 ## Cambiar el esquema
@@ -91,4 +107,4 @@ docs/
 - `NODE_ENV=production`, `COOKIE_SECURE=true`, `TRUST_PROXY=true` detrás de un proxy, y un `JWT_ACCESS_SECRET` aleatorio.
 - Si front y API están en dominios distintos: `COOKIE_SAMESITE=none` (requiere HTTPS) y añade el dominio del front a `CORS_ORIGINS`.
 - Los workers (correo y recordatorios) corren dentro de la API. Con varias réplicas no se duplican. Para separarlos, pon `WORKERS_ENABLED=false` en las réplicas web.
-- En producción `db:seed` solo crea el administrador.
+- En producción `db:seed` solo crea los datos base (roles, plantillas, horario) y el usuario de Dirección.

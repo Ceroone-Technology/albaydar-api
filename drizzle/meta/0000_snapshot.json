@@ -1,9 +1,61 @@
 {
-  "id": "4f27aa72-0057-47d5-98a3-c311130fd25e",
+  "id": "62bd15d7-6bca-461c-beef-9ea37cbc07cd",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
+    "public.ajustes": {
+      "name": "ajustes",
+      "schema": "",
+      "columns": {
+        "clave": {
+          "name": "clave",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "valor": {
+          "name": "valor",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actualizado_por_id": {
+          "name": "actualizado_por_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "ajustes_actualizado_por_id_usuarios_id_fk": {
+          "name": "ajustes_actualizado_por_id_usuarios_id_fk",
+          "tableFrom": "ajustes",
+          "tableTo": "usuarios",
+          "columnsFrom": [
+            "actualizado_por_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.correos_salientes": {
       "name": "correos_salientes",
       "schema": "",
@@ -20,6 +72,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "plantilla_id": {
+          "name": "plantilla_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "para": {
           "name": "para",
@@ -129,6 +187,19 @@
         }
       },
       "foreignKeys": {
+        "correos_salientes_plantilla_id_plantillas_correo_id_fk": {
+          "name": "correos_salientes_plantilla_id_plantillas_correo_id_fk",
+          "tableFrom": "correos_salientes",
+          "tableTo": "plantillas_correo",
+          "columnsFrom": [
+            "plantilla_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
         "correos_salientes_solicitud_id_solicitudes_id_fk": {
           "name": "correos_salientes_solicitud_id_solicitudes_id_fk",
           "tableFrom": "correos_salientes",
@@ -291,8 +362,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "hueco_id": {
-          "name": "hueco_id",
+        "franja_id": {
+          "name": "franja_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
@@ -429,12 +500,12 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "entrevistas_hueco_id_huecos_agenda_id_fk": {
-          "name": "entrevistas_hueco_id_huecos_agenda_id_fk",
+        "entrevistas_franja_id_franjas_agenda_id_fk": {
+          "name": "entrevistas_franja_id_franjas_agenda_id_fk",
           "tableFrom": "entrevistas",
-          "tableTo": "huecos_agenda",
+          "tableTo": "franjas_agenda",
           "columnsFrom": [
-            "hueco_id"
+            "franja_id"
           ],
           "columnsTo": [
             "id"
@@ -452,11 +523,11 @@
             "propuesta_id"
           ]
         },
-        "entrevistas_hueco_id_unique": {
-          "name": "entrevistas_hueco_id_unique",
+        "entrevistas_franja_id_unique": {
+          "name": "entrevistas_franja_id_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "hueco_id"
+            "franja_id"
           ]
         }
       },
@@ -535,8 +606,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.huecos_agenda": {
-      "name": "huecos_agenda",
+    "public.franjas_agenda": {
+      "name": "franjas_agenda",
       "schema": "",
       "columns": {
         "id": {
@@ -558,20 +629,30 @@
           "primaryKey": false,
           "notNull": true
         },
-        "lugar": {
-          "name": "lugar",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'Sala de reuniones de Dirección'"
-        },
         "estado": {
           "name": "estado",
-          "type": "estado_hueco",
+          "type": "estado_franja",
           "typeSchema": "public",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'LIBRE'"
+          "notNull": true
+        },
+        "propuesta_id": {
+          "name": "propuesta_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "orden": {
+          "name": "orden",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "motivo": {
+          "name": "motivo",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "creado_por_id": {
           "name": "creado_por_id",
@@ -595,17 +676,26 @@
         }
       },
       "indexes": {
-        "huecos_inicio_estado_idx": {
-          "name": "huecos_inicio_estado_idx",
+        "franjas_inicio_idx": {
+          "name": "franjas_inicio_idx",
           "columns": [
             {
               "expression": "inicio",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
-            },
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "franjas_propuesta_idx": {
+          "name": "franjas_propuesta_idx",
+          "columns": [
             {
-              "expression": "estado",
+              "expression": "propuesta_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -618,9 +708,22 @@
         }
       },
       "foreignKeys": {
-        "huecos_agenda_creado_por_id_usuarios_id_fk": {
-          "name": "huecos_agenda_creado_por_id_usuarios_id_fk",
-          "tableFrom": "huecos_agenda",
+        "franjas_agenda_propuesta_id_propuestas_cita_id_fk": {
+          "name": "franjas_agenda_propuesta_id_propuestas_cita_id_fk",
+          "tableFrom": "franjas_agenda",
+          "tableTo": "propuestas_cita",
+          "columnsFrom": [
+            "propuesta_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "franjas_agenda_creado_por_id_usuarios_id_fk": {
+          "name": "franjas_agenda_creado_por_id_usuarios_id_fk",
+          "tableFrom": "franjas_agenda",
           "tableTo": "usuarios",
           "columnsFrom": [
             "creado_por_id"
@@ -633,69 +736,139 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "huecos_inicio_lugar_uq": {
-          "name": "huecos_inicio_lugar_uq",
-          "nullsNotDistinct": false,
-          "columns": [
-            "inicio",
-            "lugar"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "huecos_rango_chk": {
-          "name": "huecos_rango_chk",
-          "value": "\"huecos_agenda\".\"fin\" > \"huecos_agenda\".\"inicio\""
+        "franjas_rango_chk": {
+          "name": "franjas_rango_chk",
+          "value": "\"franjas_agenda\".\"fin\" > \"franjas_agenda\".\"inicio\""
         }
       },
       "isRLSEnabled": false
     },
-    "public.propuesta_huecos": {
-      "name": "propuesta_huecos",
+    "public.plantillas_correo": {
+      "name": "plantillas_correo",
       "schema": "",
       "columns": {
-        "propuesta_id": {
-          "name": "propuesta_id",
+        "id": {
+          "name": "id",
           "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "evento": {
+          "name": "evento",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "hueco_id": {
-          "name": "hueco_id",
-          "type": "uuid",
+        "nombre": {
+          "name": "nombre",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "orden": {
-          "name": "orden",
-          "type": "integer",
+        "asunto": {
+          "name": "asunto",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "cuerpo_html": {
+          "name": "cuerpo_html",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "estado": {
+          "name": "estado",
+          "type": "estado_plantilla",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'BORRADOR'"
+        },
+        "creado_por_id": {
+          "name": "creado_por_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actualizado_por_id": {
+          "name": "actualizado_por_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "plantillas_evento_idx": {
+          "name": "plantillas_evento_idx",
+          "columns": [
+            {
+              "expression": "evento",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "plantillas_una_activa_por_evento_uq": {
+          "name": "plantillas_una_activa_por_evento_uq",
+          "columns": [
+            {
+              "expression": "evento",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"plantillas_correo\".\"estado\" = 'ACTIVADA'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
-        "propuesta_huecos_propuesta_id_propuestas_cita_id_fk": {
-          "name": "propuesta_huecos_propuesta_id_propuestas_cita_id_fk",
-          "tableFrom": "propuesta_huecos",
-          "tableTo": "propuestas_cita",
+        "plantillas_correo_creado_por_id_usuarios_id_fk": {
+          "name": "plantillas_correo_creado_por_id_usuarios_id_fk",
+          "tableFrom": "plantillas_correo",
+          "tableTo": "usuarios",
           "columnsFrom": [
-            "propuesta_id"
+            "creado_por_id"
           ],
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "propuesta_huecos_hueco_id_huecos_agenda_id_fk": {
-          "name": "propuesta_huecos_hueco_id_huecos_agenda_id_fk",
-          "tableFrom": "propuesta_huecos",
-          "tableTo": "huecos_agenda",
+        "plantillas_correo_actualizado_por_id_usuarios_id_fk": {
+          "name": "plantillas_correo_actualizado_por_id_usuarios_id_fk",
+          "tableFrom": "plantillas_correo",
+          "tableTo": "usuarios",
           "columnsFrom": [
-            "hueco_id"
+            "actualizado_por_id"
           ],
           "columnsTo": [
             "id"
@@ -704,15 +877,7 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {
-        "propuesta_huecos_propuesta_id_hueco_id_pk": {
-          "name": "propuesta_huecos_propuesta_id_hueco_id_pk",
-          "columns": [
-            "propuesta_id",
-            "hueco_id"
-          ]
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -768,8 +933,21 @@
           "notNull": true,
           "default": false
         },
+        "duracion_min": {
+          "name": "duracion_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 45
+        },
         "respondida_en": {
           "name": "respondida_en",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirmada_en": {
+          "name": "confirmada_en",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -994,6 +1172,65 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.roles": {
+      "name": "roles",
+      "schema": "",
+      "columns": {
+        "codigo": {
+          "name": "codigo",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "nombre": {
+          "name": "nombre",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "descripcion": {
+          "name": "descripcion",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "es_superadmin": {
+          "name": "es_superadmin",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "permisos": {
+          "name": "permisos",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "orden": {
+          "name": "orden",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.secuencias": {
       "name": "secuencias",
       "schema": "",
@@ -1190,26 +1427,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "alumna_fecha_nacimiento": {
-          "name": "alumna_fecha_nacimiento",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "alumna_dni": {
-          "name": "alumna_dni",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "centro_procedencia": {
           "name": "centro_procedencia",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "curso_anterior": {
-          "name": "curso_anterior",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -1259,18 +1478,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "datos_extra": {
-          "name": "datos_extra",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "comentarios_familia": {
-          "name": "comentarios_familia",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "consentimiento_privacidad": {
           "name": "consentimiento_privacidad",
@@ -1622,11 +1829,10 @@
         },
         "roles": {
           "name": "roles",
-          "type": "rol[]",
-          "typeSchema": "public",
+          "type": "text[]",
           "primaryKey": false,
           "notNull": true,
-          "default": "'{}'::rol[]"
+          "default": "'{}'::text[]"
         },
         "activo": {
           "name": "activo",
@@ -1803,13 +2009,22 @@
         "CANCELADA"
       ]
     },
-    "public.estado_hueco": {
-      "name": "estado_hueco",
+    "public.estado_franja": {
+      "name": "estado_franja",
       "schema": "public",
       "values": [
-        "LIBRE",
-        "OCUPADO",
-        "BLOQUEADO"
+        "RESERVADA",
+        "CONFIRMADA",
+        "BLOQUEADA",
+        "LIBERADA"
+      ]
+    },
+    "public.estado_plantilla": {
+      "name": "estado_plantilla",
+      "schema": "public",
+      "values": [
+        "ACTIVADA",
+        "BORRADOR"
       ]
     },
     "public.estado_propuesta": {
@@ -1858,17 +2073,6 @@
       "values": [
         "ELEGIR_CITA",
         "COMPLETAR_SOLICITUD"
-      ]
-    },
-    "public.rol": {
-      "name": "rol",
-      "schema": "public",
-      "values": [
-        "ADMIN",
-        "DIRECCION",
-        "SECRETARIA",
-        "ADMINISTRACION",
-        "PROFESORADO"
       ]
     },
     "public.tipo_documento": {

@@ -12,6 +12,8 @@ import { errorHandler, notFoundHandler } from './middleware/error-handler';
 import { agendaRouter } from './modules/agenda/agenda.routes';
 import { authRouter } from './modules/auth/auth.routes';
 import { catalogoRouter } from './modules/catalogo/catalogo.routes';
+import { comunicacionesRouter } from './modules/comunicaciones/comunicaciones.routes';
+import { rolesRouter } from './modules/permisos/permisos.routes';
 import { entrevistasRouter } from './modules/entrevistas/entrevistas.routes';
 import { publicoRouter } from './modules/publico/publico.routes';
 import { solicitudesRouter } from './modules/solicitudes/solicitudes.routes';
@@ -51,6 +53,8 @@ export function crearApp() {
   privado.use('/agenda', agendaRouter);
   privado.use('/entrevistas', entrevistasRouter);
   privado.use('/usuarios', usuariosRouter);
+  privado.use('/roles', rolesRouter);
+  privado.use('/comunicaciones', comunicacionesRouter);
   privado.use('/catalogo', catalogoRouter);
   api.use(privado);
 

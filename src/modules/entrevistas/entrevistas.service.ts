@@ -6,8 +6,7 @@ import {
   entrevistas,
   estadoEntrevistaEnum,
   familiaViaEnum,
-  huecosAgenda,
-  propuestaHuecos,
+  franjasAgenda,
   propuestasCita,
   solicitudes,
   vias,
@@ -15,12 +14,11 @@ import {
 } from '../../db/schema';
 import { db } from '../../lib/db';
 import { conflict, notFound } from '../../lib/errors';
-import { diaLargo, franja, horaLocalAUtc } from '../../lib/fechas';
-import { encolarCorreo } from '../../correo/outbox';
-import * as plantillas from '../../correo/plantillas';
+import { diaLargo, franja, hora, horaLocalAUtc } from '../../lib/fechas';
+import { enviarEvento } from '../../correo/enviar';
 import { cambiarEstado, datosCorreo, obtenerSolicitud, registrarEvento } from '../solicitudes/comun';
 import { ETIQUETA_FAMILIA_VIA } from '../solicitudes/dominio';
-import { icsEntrevista } from '../citacion/citacion.service';
+import { adjuntoIcs, cancelarEntrevista, liberarFranjas } from '../citacion/citacion.service';
 
 const fecha = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const lista = <T extends readonly [string, ...string[]]>(v: T) =>
@@ -122,14 +120,13 @@ export async function listar(q: z.infer<typeof listarEntrevistasQuery>) {
   let pendientes: unknown[] = [];
   if (q.incluirPendientes && !q.estado?.length) {
     const ps = await db
-      .select({ hueco: huecosAgenda, p: propuestasCita, s: solicitudes, via: vias })
-      .from(propuestaHuecos)
-      .innerJoin(propuestasCita, eq(propuestasCita.id, propuestaHuecos.propuestaId))
-      .innerJoin(huecosAgenda, eq(huecosAgenda.id, propuestaHuecos.huecoId))
+      .select({ hueco: franjasAgenda, p: propuestasCita, s: solicitudes, via: vias })
+      .from(franjasAgenda)
+      .innerJoin(propuestasCita, eq(propuestasCita.id, franjasAgenda.propuestaId))
       .innerJoin(solicitudes, eq(solicitudes.id, propuestasCita.solicitudId))
       .innerJoin(vias, eq(vias.id, solicitudes.viaId))
-      .where(and(eq(propuestasCita.estado, 'PENDIENTE'), eq(huecosAgenda.estado, 'LIBRE'), gte(huecosAgenda.inicio, ini), lt(huecosAgenda.inicio, fin), ...filtrosSolicitud))
-      .orderBy(asc(huecosAgenda.inicio));
+      .where(and(eq(franjasAgenda.estado, 'RESERVADA'), eq(propuestasCita.estado, 'PENDIENTE'), gte(franjasAgenda.inicio, ini), lt(franjasAgenda.inicio, fin), ...filtrosSolicitud))
+      .orderBy(asc(franjasAgenda.inicio));
     pendientes = ps.map(({ hueco, p, s, via }) => ({
       id: `${p.id}:${hueco.id}`,
       tipo: 'propuesta' as const,
@@ -138,13 +135,13 @@ export async function listar(q: z.infer<typeof listarEntrevistasQuery>) {
       dia: diaLargo(hueco.inicio),
       franja: franja(hueco.inicio, hueco.fin),
       estado: 'SIN_CONFIRMAR',
-      estadoEtiqueta: 'Sin confirmar',
+      estadoEtiqueta: 'Sin confirmar · reservada',
       alumna: `${s.alumnaNombre} ${s.alumnaApellidos}`,
       familia: s.tutorNombre,
       via: ETIQUETA_FAMILIA_VIA[via.familia],
       curso: `${via.curso}º`,
       con: CENTRO.entrevista.con,
-      lugar: hueco.lugar,
+      lugar: CENTRO.entrevista.lugar,
       solicitud: { id: s.id, codigo: s.codigo, estado: s.estado },
     }));
   }
@@ -183,9 +180,12 @@ export async function cancelar(id: string, d: z.infer<typeof cancelarBody>, usua
     if (!['PROGRAMADA', 'REPROGRAMADA'].includes(e.estado)) throw conflict('NO_CANCELABLE', 'Solo se pueden cancelar entrevistas pendientes.');
     const { s, via } = await obtenerSolicitud(tx, e.solicitudId, true);
 
-    await tx.update(entrevistas).set({ estado: 'CANCELADA', huecoId: null, secuenciaIcs: e.secuenciaIcs + 1, notas: d.motivo ?? e.notas }).where(eq(entrevistas.id, id));
-    if (e.huecoId) await tx.update(huecosAgenda).set({ estado: 'LIBRE' }).where(eq(huecosAgenda.id, e.huecoId));
-    if (e.propuestaId) await tx.update(propuestasCita).set({ estado: 'ANULADA' }).where(eq(propuestasCita.id, e.propuestaId));
+    const cancelada = await cancelarEntrevista(tx, e);
+    if (d.motivo) await tx.update(entrevistas).set({ notas: d.motivo }).where(eq(entrevistas.id, id));
+    if (e.propuestaId) {
+      await liberarFranjas(tx, e.propuestaId);
+      await tx.update(propuestasCita).set({ estado: 'ANULADA' }).where(eq(propuestasCita.id, e.propuestaId));
+    }
     await tx.execute(sql`update tokens_publicos set revocado_en = now() where solicitud_id = ${s.id} and proposito = 'ELEGIR_CITA' and revocado_en is null`);
 
     const actor = { tipo: 'usuario' as const, usuarioId };
@@ -194,11 +194,10 @@ export async function cancelar(id: string, d: z.infer<typeof cancelarBody>, usua
 
     if (d.notificar) {
       const datos = datosCorreo(s, via);
-      await encolarCorreo(tx, {
-        plantilla: 'cita-cancelada',
+      await enviarEvento(tx, 'CITA_CANCELADA', {
         para: s.email,
-        correo: plantillas.citaCancelada({ ...datos, dia: diaLargo(e.inicio), franja: franja(e.inicio, e.fin), motivo: d.motivo }),
-        adjuntos: [{ filename: 'entrevista-albaydar.ics', content: icsEntrevista({ ...e, secuenciaIcs: e.secuenciaIcs + 1 }, datos.alumna, true), contentType: 'text/calendar; charset=utf-8; method=CANCEL' }],
+        vars: { ...datos, fecha_entrevista: diaLargo(e.inicio), hora: hora(e.inicio), motivo: d.motivo ?? '' },
+        adjuntos: [adjuntoIcs(cancelada, datos.alumna, true)],
         solicitudId: s.id,
       });
     }

@@ -1,6 +1,9 @@
 /**
- * Datos iniciales: administrador, equipo de secretaría/dirección del mockup,
- * las vías del curso que viene y las solicitudes de ejemplo de la bandeja.
+ * Datos iniciales.
+ *  - Siempre: roles, plantillas de correo, horario de la agenda y el usuario
+ *    de Dirección (superadministrador) inicial.
+ *  - Solo en desarrollo o con SEED_DEMO=true: usuarios de ejemplo, vías y
+ *    las solicitudes de la bandeja del mockup.
  * Es idempotente: se puede ejecutar varias veces.
  */
 import 'dotenv/config';
@@ -8,12 +11,13 @@ import { eq } from 'drizzle-orm';
 import { env } from '../config/env';
 import { db, pool } from '../lib/db';
 import { hashPassword } from '../modules/auth/auth.service';
-import { familias, solicitudes, usuarios, vias, type Rol } from './schema';
+import { familias, solicitudes, usuarios, vias } from './schema';
+import { sembrarBase } from './datos-base';
 import { siguienteCodigo, registrarEvento } from '../modules/solicitudes/comun';
 
 const CURSO_ESCOLAR = process.env.SEED_CURSO_ESCOLAR ?? '2027-2028';
 
-async function usuario(email: string, nombre: string, roles: Rol[], password: string) {
+async function usuario(email: string, nombre: string, roles: string[], password: string) {
   const [u] = await db.select().from(usuarios).where(eq(usuarios.email, email));
   if (u) return u;
   const [n] = await db.insert(usuarios).values({ email, nombre, roles, passwordHash: await hashPassword(password) }).returning();
@@ -23,13 +27,15 @@ async function usuario(email: string, nombre: string, roles: Rol[], password: st
 
 async function main() {
   console.log('Sembrando datos…');
+  await sembrarBase(db);
+  console.log('  roles, plantillas de correo y horario de la agenda');
   const adminPass = process.env.SEED_ADMIN_PASSWORD ?? 'CambiaEsto-2026!';
-  await usuario(process.env.SEED_ADMIN_EMAIL ?? 'admin@albaydar.org', 'Administración del sistema', ['ADMIN'], adminPass);
+  await usuario(process.env.SEED_ADMIN_EMAIL ?? 'admin@albaydar.org', 'Dirección (administrador)', ['DIRECCION'], adminPass);
 
-  // En producción solo se crea el administrador, salvo que se pida explícitamente la demo
+  // En producción solo se crean los datos base, salvo que se pida explícitamente la demo
   // (SEED_DEMO=true, lo usa el docker compose local).
   if (env.NODE_ENV === 'production' && process.env.SEED_DEMO !== 'true') {
-    console.log('Producción: solo se crea el administrador.');
+    console.log('Producción: solo datos base y usuario de Dirección.');
     return;
   }
 
@@ -40,6 +46,7 @@ async function main() {
   await usuario('dolores.ruiz@albaydar.org', 'Dolores Ruiz', ['SECRETARIA'], demoPass);
   await usuario('direccion@albaydar.org', 'Equipo directivo', ['DIRECCION'], demoPass);
   await usuario('administracion@albaydar.org', 'Administración', ['ADMINISTRACION'], demoPass);
+  await usuario('comercial@albaydar.org', 'Promoción y marketing', ['COMERCIAL'], demoPass);
 
   // Vías: plazas de ejemplo para que la comprobación devuelva los textos del mockup
   // ("6 plazas libres", "3 plazas libres", "cupo asignado por la Junta", "9 plazas libres").
@@ -83,7 +90,7 @@ async function main() {
       });
     }
   }
-  console.log(`Listo. Usuarios de demo: contraseña "${demoPass}". Admin: ${process.env.SEED_ADMIN_EMAIL ?? 'admin@albaydar.org'}.`);
+  console.log(`Listo. Usuarios de demo: contraseña "${demoPass}". Dirección (superadmin): ${process.env.SEED_ADMIN_EMAIL ?? 'admin@albaydar.org'}.`);
 }
 
 main()

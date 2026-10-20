@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
-import { AppError } from '../lib/errors';
+import { AppError, codigoPg } from '../lib/errors';
 import { logger } from '../lib/logger';
 
 /** Forma única de error para el front: { error: { code, message, details? } } */
@@ -18,9 +18,12 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     return res.status(err.status).json({ error: { code: err.code, message: err.message, details: err.details } });
   }
   // Violaciones de unicidad que se escapen de las comprobaciones previas (carreras).
-  const pg = err as { code?: string; constraint?: string };
-  if (pg?.code === '23505') {
-    return res.status(409).json({ error: { code: 'CONFLICTO', message: 'El recurso ya existe o acaba de cambiar.', details: pg.constraint } });
+  const codigo = codigoPg(err);
+  if (codigo === '23P01') {
+    return res.status(409).json({ error: { code: 'FRANJA_OCUPADA', message: 'Esa franja de la agenda se acaba de ocupar. Actualiza y elige otra.' } });
+  }
+  if (codigo === '23505') {
+    return res.status(409).json({ error: { code: 'CONFLICTO', message: 'El recurso ya existe o acaba de cambiar.' } });
   }
   const tipo = (err as { type?: string })?.type;
   if (tipo === 'entity.parse.failed') {

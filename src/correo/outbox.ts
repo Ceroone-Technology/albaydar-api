@@ -20,10 +20,11 @@ export interface Adjunto {
  */
 export async function encolarCorreo(
   tx: Tx,
-  o: { plantilla: string; para: string; correo: Correo; solicitudId?: string; adjuntos?: Adjunto[]; programadoPara?: Date },
+  o: { plantilla: string; plantillaId?: string | null; para: string; correo: Correo; solicitudId?: string; adjuntos?: Adjunto[]; programadoPara?: Date },
 ) {
   await tx.insert(correosSalientes).values({
     plantilla: o.plantilla,
+    plantillaId: o.plantillaId ?? null,
     para: o.para,
     asunto: o.correo.asunto,
     html: o.correo.html,
@@ -74,10 +75,12 @@ export async function procesarOutbox(lote = 20): Promise<{ enviados: number; fal
   let fallidos = 0;
   for (const c of reclamados) {
     try {
+      // Modo demostración: todo va a un único buzón y el asunto dice a quién iba.
+      const desvio = env.MAIL_DESVIO;
       await getTransporter().sendMail({
         from: env.MAIL_FROM,
-        to: c.para,
-        subject: c.asunto,
+        to: desvio ?? c.para,
+        subject: desvio ? `[Para: ${c.para}] ${c.asunto}` : c.asunto,
         html: c.html,
         text: c.texto,
         attachments: c.adjuntos?.map((a) => ({ filename: a.filename, content: Buffer.from(a.content, 'base64'), contentType: a.contentType })),

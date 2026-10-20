@@ -12,16 +12,15 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
-  date,
   index,
   integer,
   jsonb,
   pgEnum,
   pgTable,
-  primaryKey,
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -34,14 +33,6 @@ const actualizado = () =>
     .$onUpdate(() => new Date());
 
 // ── Enumerados ──────────────────────────────────────────────────────────────
-
-export const rolEnum = pgEnum('rol', [
-  'ADMIN', //          configuración y gestión de usuarios
-  'DIRECCION', //      equipo directivo, dueño de la agenda de entrevistas
-  'SECRETARIA', //     bandeja de admisión y citación
-  'ADMINISTRACION', // cobros y facturación (fase posterior)
-  'PROFESORADO', //    evaluación (fase posterior)
-]);
 
 export const familiaViaEnum = pgEnum('familia_via', [
   'BACHILLERATO',
@@ -77,7 +68,18 @@ export const canalSolicitudEnum = pgEnum('canal_solicitud', [
 
 export const tipoDocumentoEnum = pgEnum('tipo_documento', ['BOLETIN_NOTAS']);
 
-export const estadoHuecoEnum = pgEnum('estado_hueco', ['LIBRE', 'OCUPADO', 'BLOQUEADO']);
+/**
+ * Estado de una franja ocupada en la agenda del equipo directivo.
+ * La disponibilidad no se guarda: es la jornada laboral menos las franjas activas.
+ */
+export const estadoFranjaEnum = pgEnum('estado_franja', [
+  'RESERVADA', //  propuesta a una familia; bloqueada hasta que elija (o caduque)
+  'CONFIRMADA', // la familia la eligió: es una entrevista
+  'BLOQUEADA', //  bloqueo manual (reunión, festivo…)
+  'LIBERADA', //   ya no ocupa la agenda (histórico)
+]);
+
+export const estadoPlantillaEnum = pgEnum('estado_plantilla', ['ACTIVADA', 'BORRADOR']);
 
 export const estadoPropuestaEnum = pgEnum('estado_propuesta', [
   'PENDIENTE',
@@ -107,12 +109,37 @@ export const usuarios = pgTable('usuarios', {
   email: text('email').notNull().unique(),
   nombre: text('nombre').notNull(),
   passwordHash: text('password_hash').notNull(),
-  roles: rolEnum('roles').array().notNull().default(sql`'{}'::rol[]`),
+  /** Códigos de la tabla `roles` (DIRECCION, ADMINISTRACION, SECRETARIA, COMERCIAL). */
+  roles: text('roles').array().notNull().default(sql`'{}'::text[]`),
   activo: boolean('activo').notNull().default(true),
   ultimoAcceso: ts('ultimo_acceso'),
   intentosFallidos: integer('intentos_fallidos').notNull().default(0),
   bloqueadoHasta: ts('bloqueado_hasta'),
   createdAt: creado(),
+  updatedAt: actualizado(),
+});
+
+/**
+ * Roles del centro. Los cuatro perfiles acordados con el cliente vienen de serie;
+ * Dirección es superadministrador y puede cambiar los permisos del resto.
+ */
+export const roles = pgTable('roles', {
+  codigo: text('codigo').primaryKey(),
+  nombre: text('nombre').notNull(),
+  descripcion: text('descripcion'),
+  /** Tiene todos los permisos y no se le pueden quitar. */
+  esSuperadmin: boolean('es_superadmin').notNull().default(false),
+  /** Claves del catálogo de permisos (p. ej. "solicitudes.editar"). */
+  permisos: text('permisos').array().notNull().default(sql`'{}'::text[]`),
+  orden: integer('orden').notNull().default(0),
+  updatedAt: actualizado(),
+});
+
+/** Ajustes editables desde Configuración (horario de la agenda, etc.). */
+export const ajustes = pgTable('ajustes', {
+  clave: text('clave').primaryKey(),
+  valor: jsonb('valor').notNull(),
+  actualizadoPorId: uuid('actualizado_por_id').references(() => usuarios.id),
   updatedAt: actualizado(),
 });
 
@@ -195,10 +222,8 @@ export const solicitudes = pgTable(
     // Alumna
     alumnaNombre: text('alumna_nombre').notNull(),
     alumnaApellidos: text('alumna_apellidos').notNull(),
-    alumnaFechaNacimiento: date('alumna_fecha_nacimiento', { mode: 'string' }),
-    alumnaDni: text('alumna_dni'),
+    /** Obligatorio en el formulario web; puede faltar en altas telefónicas. */
     centroProcedencia: text('centro_procedencia'),
-    cursoAnterior: text('curso_anterior'),
     /** "Modalidad que le interesa" (Ciencias, Marketing y publicidad…). */
     modalidadInteres: text('modalidad_interes'),
     esAlumnaNueva: boolean('es_alumna_nueva').notNull().default(true),
@@ -213,9 +238,6 @@ export const solicitudes = pgTable(
     email: text('email').notNull(),
     telefono: text('telefono').notNull(),
 
-    /** Campos del formulario público aún sin columna propia (hasta validarlo con el cliente). */
-    datosExtra: jsonb('datos_extra').$type<Record<string, unknown>>(),
-    comentariosFamilia: text('comentarios_familia'),
     consentimientoPrivacidad: boolean('consentimiento_privacidad').notNull(),
     consentimientoEn: ts('consentimiento_en').notNull(),
 
@@ -263,26 +285,6 @@ export const solicitudEventos = pgTable(
 
 // ── Agenda del equipo directivo y citación ──────────────────────────────────
 
-export const huecosAgenda = pgTable(
-  'huecos_agenda',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    inicio: ts('inicio').notNull(),
-    fin: ts('fin').notNull(),
-    /** La entrevista es siempre presencial en la sala de reuniones de Dirección. */
-    lugar: text('lugar').notNull().default('Sala de reuniones de Dirección'),
-    estado: estadoHuecoEnum('estado').notNull().default('LIBRE'),
-    creadoPorId: uuid('creado_por_id').references(() => usuarios.id),
-    createdAt: creado(),
-    updatedAt: actualizado(),
-  },
-  (t) => [
-    unique('huecos_inicio_lugar_uq').on(t.inicio, t.lugar),
-    index('huecos_inicio_estado_idx').on(t.inicio, t.estado),
-    check('huecos_rango_chk', sql`${t.fin} > ${t.inicio}`),
-  ],
-);
-
 /** Propuesta de cita: de 1 a 3 huecos enviados a la familia de una solicitud. */
 export const propuestasCita = pgTable(
   'propuestas_cita',
@@ -297,7 +299,11 @@ export const propuestasCita = pgTable(
     /** "Ninguna me encaja": franja que propone la familia y si prefiere que la llamen. */
     franjaSolicitada: text('franja_solicitada'),
     prefiereLlamada: boolean('prefiere_llamada').notNull().default(false),
+    /** Duración de cada franja propuesta: 45 o 60 minutos. */
+    duracionMin: integer('duracion_min').notNull().default(45),
     respondidaEn: ts('respondida_en'),
+    /** Momento en que la familia aceptó una franja: puede cambiarla durante las 24 h siguientes. */
+    confirmadaEn: ts('confirmada_en'),
     /** Recordatorio "si no responde en 3 días". */
     recordatorioEnviadoEn: ts('recordatorio_enviado_en'),
     expiraEn: ts('expira_en').notNull(),
@@ -309,18 +315,32 @@ export const propuestasCita = pgTable(
   ],
 );
 
-export const propuestaHuecos = pgTable(
-  'propuesta_huecos',
+/**
+ * Franjas ocupadas de la agenda del equipo directivo.
+ * Restricción EXCLUDE (en la migración): dos franjas activas nunca se solapan,
+ * así que es imposible dar la misma hora a dos familias aunque lo intenten a la vez.
+ */
+export const franjasAgenda = pgTable(
+  'franjas_agenda',
   {
-    propuestaId: uuid('propuesta_id')
-      .notNull()
-      .references(() => propuestasCita.id, { onDelete: 'cascade' }),
-    huecoId: uuid('hueco_id')
-      .notNull()
-      .references(() => huecosAgenda.id),
-    orden: integer('orden').notNull(),
+    id: uuid('id').primaryKey().defaultRandom(),
+    inicio: ts('inicio').notNull(),
+    fin: ts('fin').notNull(),
+    estado: estadoFranjaEnum('estado').notNull(),
+    /** Si viene de una propuesta, a cuál pertenece y en qué orden se mostró. */
+    propuestaId: uuid('propuesta_id').references(() => propuestasCita.id, { onDelete: 'cascade' }),
+    orden: integer('orden'),
+    /** Bloqueos manuales: motivo visible en la agenda. */
+    motivo: text('motivo'),
+    creadoPorId: uuid('creado_por_id').references(() => usuarios.id),
+    createdAt: creado(),
+    updatedAt: actualizado(),
   },
-  (t) => [primaryKey({ columns: [t.propuestaId, t.huecoId] })],
+  (t) => [
+    index('franjas_inicio_idx').on(t.inicio),
+    index('franjas_propuesta_idx').on(t.propuestaId),
+    check('franjas_rango_chk', sql`${t.fin} > ${t.inicio}`),
+  ],
 );
 
 export const entrevistas = pgTable(
@@ -333,10 +353,10 @@ export const entrevistas = pgTable(
     propuestaId: uuid('propuesta_id')
       .unique()
       .references(() => propuestasCita.id),
-    /** unique: un hueco solo puede tener una entrevista (garantía contra dobles reservas). */
-    huecoId: uuid('hueco_id')
+    /** Franja de la agenda que ocupa. Se suelta (null) si la entrevista se cancela. */
+    franjaId: uuid('franja_id')
       .unique()
-      .references(() => huecosAgenda.id),
+      .references(() => franjasAgenda.id),
     inicio: ts('inicio').notNull(),
     fin: ts('fin').notNull(),
     lugar: text('lugar').notNull(),
@@ -407,6 +427,34 @@ export const documentos = pgTable(
   (t) => [index('documentos_solicitud_idx').on(t.solicitudId, t.tipo)],
 );
 
+// ── Plantillas de correo (módulo Comunicaciones) ────────────────────────────
+
+/**
+ * Plantillas HTML editables, vinculadas a un evento del sistema.
+ * Solo puede haber una ACTIVADA por evento (índice único parcial en la migración).
+ */
+export const plantillasCorreo = pgTable(
+  'plantillas_correo',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Clave del catálogo de eventos (p. ej. "CITA_CONFIRMADA"). */
+    evento: text('evento').notNull(),
+    nombre: text('nombre').notNull(),
+    asunto: text('asunto').notNull(),
+    /** HTML con variables {{alumna}}, {{enlace}}… Se inserta dentro del diseño común. */
+    cuerpoHtml: text('cuerpo_html').notNull(),
+    estado: estadoPlantillaEnum('estado').notNull().default('BORRADOR'),
+    creadoPorId: uuid('creado_por_id').references(() => usuarios.id),
+    actualizadoPorId: uuid('actualizado_por_id').references(() => usuarios.id),
+    createdAt: creado(),
+    updatedAt: actualizado(),
+  },
+  (t) => [
+    index('plantillas_evento_idx').on(t.evento),
+    uniqueIndex('plantillas_una_activa_por_evento_uq').on(t.evento).where(sql`${t.estado} = 'ACTIVADA'`),
+  ],
+);
+
 // ── Correo saliente (patrón outbox) ─────────────────────────────────────────
 
 /**
@@ -417,7 +465,9 @@ export const correosSalientes = pgTable(
   'correos_salientes',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    /** Evento que lo generó (o "PRUEBA"). */
     plantilla: text('plantilla').notNull(),
+    plantillaId: uuid('plantilla_id').references(() => plantillasCorreo.id, { onDelete: 'set null' }),
     para: text('para').notNull(),
     asunto: text('asunto').notNull(),
     html: text('html').notNull(),
@@ -446,10 +496,11 @@ export type Usuario = typeof usuarios.$inferSelect;
 export type Via = typeof vias.$inferSelect;
 export type Solicitud = typeof solicitudes.$inferSelect;
 export type NuevaSolicitud = typeof solicitudes.$inferInsert;
-export type HuecoAgenda = typeof huecosAgenda.$inferSelect;
+export type FranjaAgenda = typeof franjasAgenda.$inferSelect;
+export type Rol = typeof roles.$inferSelect;
+export type PlantillaCorreo = typeof plantillasCorreo.$inferSelect;
 export type PropuestaCita = typeof propuestasCita.$inferSelect;
 export type Entrevista = typeof entrevistas.$inferSelect;
-export type Rol = (typeof rolEnum.enumValues)[number];
 export type EstadoSolicitud = (typeof estadoSolicitudEnum.enumValues)[number];
 export type FamiliaVia = (typeof familiaViaEnum.enumValues)[number];
 export type CanalSolicitud = (typeof canalSolicitudEnum.enumValues)[number];

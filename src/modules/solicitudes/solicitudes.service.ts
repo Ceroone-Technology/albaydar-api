@@ -5,8 +5,7 @@ import {
   correosSalientes,
   documentos,
   entrevistas,
-  huecosAgenda,
-  propuestaHuecos,
+  franjasAgenda,
   propuestasCita,
   solicitudEventos,
   solicitudes,
@@ -21,8 +20,8 @@ import { db, type Tx } from '../../lib/db';
 import { badRequest, conflict, gone, notFound } from '../../lib/errors';
 import { hashToken } from '../../lib/crypto';
 import { sumarDias } from '../../lib/fechas';
-import { encolarCorreo } from '../../correo/outbox';
-import * as plantillas from '../../correo/plantillas';
+import { enviarEvento } from '../../correo/enviar';
+import { boton, lista } from '../../correo/plantillas';
 import {
   calcularRevision,
   cambiarEstado,
@@ -79,30 +78,20 @@ export async function crearDesdeWeb(d: z.infer<typeof solicitudPublicaBody>, ip?
         viaId: via.id,
         alumnaNombre: d.alumnaNombre,
         alumnaApellidos: d.alumnaApellidos,
-        alumnaFechaNacimiento: d.alumnaFechaNacimiento ?? null,
-        alumnaDni: d.alumnaDni,
         centroProcedencia: d.centroProcedencia,
-        cursoAnterior: d.cursoAnterior,
         modalidadInteres: d.modalidadInteres,
         esAlumnaNueva: true,
         canal: 'SOLICITUD_WEB',
         tutorNombre: d.tutorNombre,
         email: d.email,
         telefono: d.telefono,
-        comentariosFamilia: d.comentariosFamilia,
-        datosExtra: d.datosExtra ?? null,
         consentimientoPrivacidad: true,
         consentimientoEn: ahora,
         ipOrigen: ip,
       })
       .returning();
     await registrarEvento(tx, s!.id, { tipo: 'familia' }, 'CREADA', { aEstado: 'RECIBIDA', detalle: { canal: 'SOLICITUD_WEB' } });
-    await encolarCorreo(tx, {
-      plantilla: 'solicitud-recibida',
-      para: s!.email,
-      correo: plantillas.solicitudRecibida(datosCorreo(s!, via)),
-      solicitudId: s!.id,
-    });
+    await enviarEvento(tx, 'SOLICITUD_RECIBIDA', { para: s!.email, vars: datosCorreo(s!, via), solicitudId: s!.id });
     return { codigo: s!.codigo };
   });
 }
@@ -119,10 +108,7 @@ export async function crearInterna(d: z.infer<typeof solicitudInternaBody>, usua
         viaId: via.id,
         alumnaNombre: d.alumnaNombre,
         alumnaApellidos: d.alumnaApellidos,
-        alumnaFechaNacimiento: d.alumnaFechaNacimiento ?? null,
-        alumnaDni: d.alumnaDni,
         centroProcedencia: d.centroProcedencia,
-        cursoAnterior: d.cursoAnterior,
         modalidadInteres: d.modalidadInteres,
         esAlumnaNueva: d.esAlumnaNueva,
         canal: d.canal,
@@ -130,8 +116,6 @@ export async function crearInterna(d: z.infer<typeof solicitudInternaBody>, usua
         tutorNombre: d.tutorNombre,
         email: d.email,
         telefono: d.telefono,
-        comentariosFamilia: d.comentariosFamilia,
-        datosExtra: d.datosExtra ?? null,
         consentimientoPrivacidad: true,
         consentimientoEn: ahora,
         responsableId: d.responsableId ?? usuarioId,
@@ -316,11 +300,10 @@ export async function detalle(id: string) {
     .limit(1);
   const huecos = propuesta
     ? await db
-        .select({ id: huecosAgenda.id, inicio: huecosAgenda.inicio, fin: huecosAgenda.fin, estado: huecosAgenda.estado, orden: propuestaHuecos.orden })
-        .from(propuestaHuecos)
-        .innerJoin(huecosAgenda, eq(huecosAgenda.id, propuestaHuecos.huecoId))
-        .where(eq(propuestaHuecos.propuestaId, propuesta.id))
-        .orderBy(asc(huecosAgenda.inicio))
+        .select({ id: franjasAgenda.id, inicio: franjasAgenda.inicio, fin: franjasAgenda.fin, estado: franjasAgenda.estado, orden: franjasAgenda.orden })
+        .from(franjasAgenda)
+        .where(eq(franjasAgenda.propuestaId, propuesta.id))
+        .orderBy(asc(franjasAgenda.inicio))
     : [];
 
   const [entrevista] = await db
@@ -424,10 +407,10 @@ export async function pedirQueComplete(id: string, d: z.infer<typeof pedirComple
     if (reenvio) await registrarEvento(tx, id, actor, 'COMPLETAR_REENVIADO', { detalle: { campos } });
     else await cambiarEstado(tx, s, 'PENDIENTE_COMPLETAR', actor, 'COMPLETAR_SOLICITADO', { campos, mensaje: d.mensaje });
 
-    await encolarCorreo(tx, {
-      plantilla: 'completar-solicitud',
+    const enlace = urlCompletar(token);
+    await enviarEvento(tx, 'COMPLETAR_SOLICITUD', {
       para: s.email,
-      correo: plantillas.completarSolicitud({ ...datosCorreo(s, via), campos, mensaje: d.mensaje, enlace: urlCompletar(token), reenvio }),
+      vars: { ...datosCorreo(s, via), campos: lista(campos), mensaje: d.mensaje ?? '', enlace, boton: boton(enlace, 'Completar la solicitud') },
       solicitudId: id,
     });
     return { campos, reenvio };
@@ -467,16 +450,11 @@ async function tokenCompletar(tx: Tx, token: string) {
 const CAMPOS_EDITABLES = [
   'alumnaNombre',
   'alumnaApellidos',
-  'alumnaFechaNacimiento',
-  'alumnaDni',
   'centroProcedencia',
-  'cursoAnterior',
   'modalidadInteres',
   'tutorNombre',
   'email',
   'telefono',
-  'comentariosFamilia',
-  'datosExtra',
 ] as const;
 
 export async function verCompletar(token: string) {

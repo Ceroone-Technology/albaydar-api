@@ -14,7 +14,6 @@ import {
 import type { Tx } from '../../lib/db';
 import { conflict, notFound } from '../../lib/errors';
 import { hashToken, nuevoToken } from '../../lib/crypto';
-import type { DatosBase } from '../../correo/plantillas';
 import { nombrePila, nombreVia } from './dominio';
 import { revisar, type ResultadoRevision } from './revision';
 
@@ -81,7 +80,8 @@ export async function obtenerSolicitud(tx: Tx, id: string, bloquear = false) {
   return r;
 }
 
-export function datosCorreo(s: Solicitud, via: Via): DatosBase {
+/** Variables comunes de los correos a la familia: {{alumna}}, {{tutor}}, {{codigo}}, {{curso}}. */
+export function datosCorreo(s: Solicitud, via: Via) {
   return {
     codigo: s.codigo,
     tutor: nombrePila(s.tutorNombre),

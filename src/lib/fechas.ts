@@ -69,3 +69,6 @@ export function* diasEntre(desde: string, hasta: string): Generator<{ fecha: str
     yield { fecha: f, diaSemana: dow };
   }
 }
+
+/** "miércoles 28 de octubre a las 10:15" (para frases). */
+export const fechaHoraFrase = (d: Date) => `${diaLargo(d).toLowerCase()} a las ${hora(d)}`;

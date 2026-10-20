@@ -6,6 +6,9 @@
 #  API ........ http://localhost:3000   (salud: /health)
 #  PostgreSQL . localhost:5432          (albaydar / albaydar)
 #  Correos .... http://localhost:8025   (Mailpit: aquí llegan todos los emails)
+#  Ficheros ... ./storage/uploads        (carpeta de tu equipo; ver UPLOADS_HOST_DIR)
+#
+#  Para enviar correos reales con Gmail, mira .env.docker.example y docs/gmail.md.
 #
 #  Al arrancar, la API aplica las migraciones y siembra usuarios, vías y
 #  solicitudes de ejemplo. Los valores se pueden cambiar en el archivo .env
@@ -72,6 +75,8 @@ services:
       SMTP_PASS: ${DOCKER_SMTP_PASS:-}
       MAIL_FROM: ${MAIL_FROM:-Centro Educativo Albaydar <admisiones@albaydar.org>}
       MAIL_SECRETARIA: ${MAIL_SECRETARIA:-secretaria@albaydar.org}
+      MAIL_DESVIO: ${MAIL_DESVIO:-}
+      UPLOADS_DIR: /app/storage/uploads
       WORKERS_ENABLED: "true"
       RUN_MIGRATIONS: "true"
       RUN_SEED: ${RUN_SEED:-true}
@@ -79,8 +84,9 @@ services:
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@albaydar.org}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-CambiaEsto-2026!}
     volumes:
-      - uploads:/app/storage/uploads
+      # Los boletines de notas se guardan en una carpeta de TU equipo (no dentro de Docker),
+      # para verlos y respaldarlos fácilmente. En el servidor se cambiará por la nube.
+      - ${UPLOADS_HOST_DIR:-./storage/uploads}:/app/storage/uploads
 
 volumes:
   pgdata:
-  uploads:
