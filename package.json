@@ -5,7 +5,7 @@
   "description": "API de la plataforma de gestión académica del Centro Educativo Albaydar — admisión y citación",
   "type": "commonjs",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
