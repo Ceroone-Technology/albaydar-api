@@ -6,7 +6,7 @@
  *  cambio dentro de 24 h / bloqueado después → notas → recordatorios con plantillas HTML →
  *  ninguna me encaja → nuevas fechas → plantillas editables (CRUD, borrador, prueba, histórico)
  */
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import type { Transporter } from 'nodemailer';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -14,7 +14,8 @@ import { and, eq, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { crearApp } from '../src/app';
 import { db, pool } from '../src/lib/db';
-import { correosSalientes, entrevistas, franjasAgenda, propuestasCita, usuarios, vias } from '../src/db/schema';
+import { correosSalientes, entrevistas, franjasAgenda, propuestasCita, reservas, solicitudes, usuarios, vias } from '../src/db/schema';
+import { recordatoriosPago, vencerReservas } from '../src/modules/reservas/reservas.service';
 import { sembrarBase } from '../src/db/datos-base';
 import { procesarOutbox, setTransporter } from '../src/correo/outbox';
 import { recordatoriosEntrevista, recordatoriosPropuesta } from '../src/jobs/recordatorios';
@@ -396,10 +397,14 @@ describe('Plantillas de correo (Comunicaciones)', () => {
   let idPropuesta = '';
   let idRecordatorio = '';
 
-  it('lista una plantilla por evento, con las del mockup en borrador', async () => {
+  it('lista una plantilla por evento, con las de fases futuras en borrador', async () => {
     const r = await request(app).get('/api/comunicaciones/plantillas').set(auth());
     const porEvento = Object.fromEntries(r.body.items.map((p: { evento: string; estado: string }) => [p.evento, p.estado]));
-    expect(porEvento).toMatchObject({ CITA_CONFIRMADA: 'ACTIVADA', CITACION_RECORDATORIO: 'ACTIVADA', ENTREVISTA_RECORDATORIO: 'ACTIVADA', ADMITIDA: 'BORRADOR', RECORDATORIO_PAGO: 'BORRADOR' });
+    expect(porEvento).toMatchObject({
+      CITA_CONFIRMADA: 'ACTIVADA', CITACION_RECORDATORIO: 'ACTIVADA', ENTREVISTA_RECORDATORIO: 'ACTIVADA',
+      ADMITIDA: 'ACTIVADA', EN_ESPERA: 'ACTIVADA', NO_ADMITIDA: 'ACTIVADA', RECORDATORIO_PAGO: 'ACTIVADA', RESERVA_VENCIDA: 'ACTIVADA',
+      MATRICULA_CONFIRMADA: 'BORRADOR',
+    });
     idPropuesta = r.body.items.find((p: { evento: string }) => p.evento === 'CITACION_PROPUESTA').id;
     idRecordatorio = r.body.items.find((p: { evento: string }) => p.evento === 'CITACION_RECORDATORIO').id;
     const ev = await request(app).get('/api/comunicaciones/eventos').set(auth());
@@ -469,5 +474,373 @@ describe('Plantillas de correo (Comunicaciones)', () => {
     expect(res.body.porcentajeEntrega).toBe(100);
     const pend = await db.select().from(correosSalientes).where(eq(correosSalientes.estado, 'PENDIENTE'));
     expect(pend).toHaveLength(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Contrato con el front: bandeja, kanban y avisos', () => {
+  let ana = '';
+  let elena = '';
+  let tokenAna = '';
+  const pdf = Buffer.from('%PDF-1.7\n%prueba\n');
+
+  it('una ruta inexistente responde 404 (no 401, que cerraría la sesión)', async () => {
+    expect((await request(app).post(`/api/public/citas/${'x'.repeat(40)}/reopen`)).status).toBe(404);
+    expect((await request(app).get('/api/no-existe')).status).toBe(404);
+    expect((await request(app).get('/api/solicitudes')).status).toBe(401);
+  });
+
+  it('el formulario público acepta "Asignada por la Junta (SNEC)"', async () => {
+    const r = await request(app).post('/api/public/solicitudes').send({
+      viaId: viaBach, alumnaNombre: 'Ana', alumnaApellidos: 'Ruiz Campos', centroProcedencia: 'IES Bécquer', tutorNombre: 'Pilar Campos Ortega',
+      email: 'pcampos@correo.es', telefono: '+34 655 210 334', consentimientoPrivacidad: true, asignadaSnec: true, website: '',
+    });
+    expect(r.status).toBe(201);
+    const [item] = (await request(app).get('/api/solicitudes?q=Ana Ruiz').set(auth())).body.items;
+    ana = item.id;
+    expect(item).toMatchObject({ asignadaSnec: true, origen: 'Asignada por la Junta (SNEC)', propuesta: null, entrevista: null, notasSubidas: false });
+    expect(item.revision.checks.find((c: { id: string }) => c.id === 'snec').resultado).toBe('aviso');
+    expect(item.siguientes).toContainEqual({ estado: 'CITACION_ENVIADA', columna: 'entrevista', accion: 'CITAR_A_ENTREVISTA' });
+  });
+
+  it('bandeja: cada solicitud trae sus comprobaciones y la propuesta vigente', async () => {
+    await request(app).post(`/api/solicitudes/${ana}/citar`).set(auth()).send({ inicios: [iso(dia(7), '10:00'), iso(dia(8), '10:00')], duracion: 45 });
+    const bandeja = await request(app).get('/api/solicitudes?vista=bandeja&pageSize=200').set(auth());
+    expect(bandeja.body.items.every((i: { revision: unknown }) => i.revision !== null)).toBe(true);
+    const item = bandeja.body.items.find((i: { id: string }) => i.id === ana);
+    expect(item.propuesta).toMatchObject({ estado: 'PENDIENTE', duracion: 45 });
+    expect(item.propuesta.fechas.map((f: { franja: string; estado: string }) => [f.franja, f.estado])).toEqual([
+      ['10:00 – 10:45', 'RESERVADA'],
+      ['10:00 – 10:45', 'RESERVADA'],
+    ]);
+    await enviarCorreos();
+    tokenAna = tokenDe(ultimoPara('pcampos@correo.es').text, '/cita');
+  });
+
+  it('elegir devuelve la cita completa, como GET /citas/:token', async () => {
+    const pagina = await request(app).get(`/api/public/citas/${tokenAna}`);
+    const r = await request(app).post(`/api/public/citas/${tokenAna}/elegir`).send({ huecoId: pagina.body.slots[0].id });
+    expect(r.body).toMatchObject({ ref: pagina.body.ref, estado: 'elegida', cambio: false, puedeCambiar: true });
+    expect(r.body.slots[0]).toMatchObject({ elegido: true });
+    expect(r.body.elegida.time).toBe('10:00 – 10:45');
+  });
+
+  it('kanban: "Entrevista sin notas", con fecha de la entrevista, total y coincidencias', async () => {
+    const k = await request(app).get('/api/solicitudes/pipeline?notasPendientes=true').set(auth());
+    const tarjetas = k.body.columnas.flatMap((c: { items: unknown[] }) => c.items);
+    const tarjeta = tarjetas.find((i: { id: string }) => i.id === ana);
+    expect(tarjeta).toMatchObject({ estado: 'ENTREVISTA_PROGRAMADA', notasSubidas: false, entrevista: { franja: '10:00 – 10:45', estadoEtiqueta: 'Confirmada' } });
+    expect(tarjetas.every((i: { estado: string }) => i.estado === 'ENTREVISTA_PROGRAMADA')).toBe(true);
+    expect(k.body.coinciden).toBe(tarjetas.length);
+    expect(k.body.total).toBeGreaterThanOrEqual(k.body.coinciden);
+
+    await request(app).post(`/api/public/citas/${tokenAna}/notas`).attach('archivo', pdf, 'boletin.pdf');
+    const k2 = await request(app).get('/api/solicitudes/pipeline?notasPendientes=true').set(auth());
+    expect(k2.body.columnas.flatMap((c: { items: { id: string }[] }) => c.items).map((i: { id: string }) => i.id)).not.toContain(ana);
+  });
+
+  it('kanban: "Familia ya vinculada" usa la misma regla que la revisión', async () => {
+    const r = await request(app).post('/api/solicitudes').set(auth()).send({
+      viaId: viaBach, alumnaNombre: 'Elena', alumnaApellidos: 'Ruiz Campos', tutorNombre: 'Pilar Campos Ortega', email: '',
+      telefono: '+34 655 210 334', centroProcedencia: 'IES Bécquer', canal: 'HERMANA_EN_EL_CENTRO', consentimientoPrivacidad: true,
+    });
+    elena = r.body.id;
+    const k = await request(app).get('/api/solicitudes/pipeline?familiaVinculada=true').set(auth());
+    const ids = k.body.columnas.flatMap((c: { items: { id: string }[] }) => c.items).map((i: { id: string }) => i.id);
+    expect(ids).toEqual(expect.arrayContaining([ana, elena]));
+    const ficha = await request(app).get(`/api/solicitudes/${elena}`).set(auth());
+    expect(ficha.body.revision.checks.find((c: { id: string }) => c.id === 'familia').resultado).toBe('aviso');
+
+    // Dos altas telefónicas sin correo no son la misma familia.
+    const sinCorreo = (nombre: string, tel: string) =>
+      request(app).post('/api/solicitudes').set(auth()).send({
+        viaId: viaBach, alumnaNombre: nombre, alumnaApellidos: 'Prueba Sin Correo', tutorNombre: 'Tutor', email: '', telefono: tel,
+        centroProcedencia: 'IES Murillo', canal: 'TELEFONO', consentimientoPrivacidad: true,
+      });
+    const a = await sinCorreo('Irene', '+34 600 000 001');
+    await sinCorreo('Rocío', '+34 600 000 002');
+    const fa = await request(app).get(`/api/solicitudes/${a.body.id}`).set(auth());
+    expect(fa.body.revision.checks.find((c: { id: string }) => c.id === 'familia').resultado).toBe('ok');
+  });
+
+  it('las transiciones de cada tarjeta dependen de los permisos del usuario', async () => {
+    await db.update(solicitudes).set({ estado: 'ENTREVISTA_REALIZADA' }).where(eq(solicitudes.id, elena));
+    const sec = await request(app).get(`/api/solicitudes/${elena}`).set(auth('secretaria'));
+    expect(sec.body.siguientes).toEqual([]);
+    const dir = await request(app).get(`/api/solicitudes/${elena}`).set(auth('direccion'));
+    expect(dir.body.siguientes.map((s: { estado: string }) => s.estado)).toEqual(['ADMITIDA', 'EN_ESPERA', 'NO_ADMITIDA']);
+  });
+
+  it('aviso "la familia ya eligió": una vez por usuario', async () => {
+    const r = await request(app).get('/api/solicitudes/respuestas-familia').set(auth('secretaria'));
+    const aviso = r.body.items.find((i: { solicitud: { id: string } }) => i.solicitud.id === ana);
+    expect(aviso).toMatchObject({ tipo: 'CITA_CONFIRMADA', solicitud: { alumna: 'Ana Ruiz Campos' }, cita: { franja: '10:00 – 10:45' } });
+
+    const visto = await request(app)
+      .post('/api/solicitudes/respuestas-familia/visto')
+      .set(auth('secretaria'))
+      .send({ eventoIds: [aviso.eventoId, '00000000-0000-4000-8000-000000000000'] });
+    expect(visto.status).toBe(204);
+    const despues = await request(app).get('/api/solicitudes/respuestas-familia').set(auth('secretaria'));
+    expect(despues.body.items.map((i: { eventoId: string }) => i.eventoId)).not.toContain(aviso.eventoId);
+    // Otra secretaria todavía no lo ha visto.
+    const otra = await request(app).get('/api/solicitudes/respuestas-familia').set(auth('secretaria2'));
+    expect(otra.body.items.map((i: { eventoId: string }) => i.eventoId)).toContain(aviso.eventoId);
+  });
+
+  it('entrevistas: cada ítem trae su nota', async () => {
+    const cal = await request(app).get(`/api/entrevistas?desde=${dia(7)}&hasta=${dia(8)}`).set(auth());
+    const e = cal.body.items.find((i: { solicitud: { id: string } }) => i.solicitud.id === ana);
+    expect(e.notas).toBeNull();
+    await request(app).patch(`/api/entrevistas/${e.id}`).set(auth()).send({ notas: 'Interesada en el bachillerato de Ciencias.' });
+    const cal2 = await request(app).get(`/api/entrevistas?desde=${dia(7)}&hasta=${dia(8)}`).set(auth());
+    expect(cal2.body.items.find((i: { id: string }) => i.id === e.id).notas).toBe('Interesada en el bachillerato de Ciencias.');
+  });
+
+  it('responsables: solo quien puede gestionar solicitudes', async () => {
+    const r = await request(app).get('/api/usuarios/responsables').set(auth());
+    const nombres = r.body.items.map((u: { nombre: string }) => u.nombre);
+    expect(nombres).toEqual(expect.arrayContaining(['María Reyes', 'Juan Díaz', 'Equipo directivo', 'Promoción']));
+    expect(nombres).not.toContain('Administración');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
+  const IBAN = 'ES91 2100 0418 4502 0005 1332';
+  let sara = { id: '', email: '' };
+  let lucas = { id: '', email: '' };
+  let primerCobro = '';
+  let telefono = 0;
+
+  /** Solicitud con la entrevista ya hecha, lista para decidir (alta interna: no gasta el límite del formulario público). */
+  async function evaluada(nombre: string) {
+    const email = `${nombre.toLowerCase()}.f3@correo.es`;
+    const r = await request(app)
+      .post('/api/solicitudes')
+      .set(auth())
+      .send({
+        viaId: viaBach, alumnaNombre: nombre, alumnaApellidos: 'Fase Tres', tutorNombre: `Familia de ${nombre}`, email,
+        telefono: `+34 611 300 ${String(++telefono).padStart(3, '0')}`, centroProcedencia: 'IES Bécquer', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
+      });
+    await db.update(solicitudes).set({ estado: 'ENTREVISTA_REALIZADA' }).where(eq(solicitudes.id, r.body.id));
+    return { id: r.body.id as string, email };
+  }
+  const decidir = (id: string, body: Record<string, unknown>, quien = 'direccion') => request(app).post(`/api/solicitudes/${id}/decision`).set(auth(quien)).send(body);
+  const cobrar = (body: Record<string, unknown>, quien = 'administracion') => request(app).post('/api/cobros').set(auth(quien)).send(body);
+  const ficha = async (id: string) => (await request(app).get(`/api/solicitudes/${id}`).set(auth('direccion'))).body;
+
+  it('las decisiones no se hacen arrastrando la tarjeta: van por "Registrar decisión"', async () => {
+    sara = await evaluada('Sara');
+    const r = await request(app).patch(`/api/solicitudes/${sara.id}/estado`).set(auth('direccion')).send({ estado: 'ADMITIDA' });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatchObject({ code: 'ACCION_REQUERIDA', details: { accion: 'DECIDIR' } });
+    expect((await decidir(sara.id, { decision: 'ADMITIDA' }, 'secretaria')).status).toBe(403);
+  });
+
+  it('admitir crea la reserva de 300 € a 15 días y envía el IBAN a la familia', async () => {
+    const r = await decidir(sara.id, { decision: 'ADMITIDA', notificar: true });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ estado: 'ADMITIDA', notificada: true });
+    expect(r.body.reserva).toMatchObject({ importe: 30000, pendiente: 30000, estado: 'PENDIENTE', diasRestantes: 15, fechaLimite: fechaLocal(sumarDias(new Date(), 15)) });
+    await enviarCorreos();
+    const m = ultimoPara(sara.email);
+    expect(m.subject).toMatch(/^Plaza admitida para Sara Fase Tres · reserva antes del /);
+    expect(m.html).toContain(IBAN);
+    expect(m.html).toContain('300,00');
+    expect(m.html).toContain('transferencia o en efectivo');
+    const f = await ficha(sara.id);
+    expect(f.reserva).toMatchObject({ estado: 'PENDIENTE', importe: 30000 });
+    expect(f.siguientes).toContainEqual({ estado: 'PLAZA_RESERVADA', columna: 'reserva', accion: 'REGISTRAR_COBRO' });
+  });
+
+  it('cobro parcial: la reserva sigue pendiente y no se puede cobrar más de lo que falta', async () => {
+    expect((await cobrar({ solicitudId: sara.id, importe: 10000, metodo: 'EFECTIVO' }, 'secretaria')).status).toBe(403);
+    const r = await cobrar({ solicitudId: sara.id, importe: 10000, metodo: 'EFECTIVO' });
+    expect(r.status).toBe(201);
+    expect(r.body.cobro).toMatchObject({ importe: 10000, metodo: 'EFECTIVO', conceptoEtiqueta: 'Reserva de plaza', registradoPor: { nombre: 'Administración' } });
+    expect(r.body.cobro.reciboNumero).toMatch(/^R-\d{4}-0001$/);
+    expect(r.body.reserva).toMatchObject({ estado: 'PENDIENTE', pagado: 10000, pendiente: 20000 });
+    primerCobro = r.body.cobro.id;
+    expect((await ficha(sara.id)).estado).toBe('ADMITIDA');
+    const demasiado = await cobrar({ solicitudId: sara.id, importe: 25000, metodo: 'TRANSFERENCIA' });
+    expect(demasiado.body.error).toMatchObject({ code: 'IMPORTE_SUPERIOR_AL_PENDIENTE', details: { pendiente: 20000 } });
+  });
+
+  it('al completar el pago la plaza queda reservada', async () => {
+    const r = await cobrar({ solicitudId: sara.id, importe: 20000, metodo: 'TRANSFERENCIA', observaciones: 'Transferencia del 20/10' });
+    expect(r.body.reserva).toMatchObject({ estado: 'PAGADA', pendiente: 0 });
+    expect(r.body.cobro.reciboNumero).toMatch(/^R-\d{4}-0002$/);
+    expect((await ficha(sara.id)).estado).toBe('PLAZA_RESERVADA');
+    const pagos = await request(app).get(`/api/cobros?solicitudId=${sara.id}`).set(auth('administracion'));
+    expect(pagos.body).toMatchObject({ total: 2, suma: 30000 });
+  });
+
+  it('anular un cobro reabre la reserva y la plaza vuelve a "Admitida"', async () => {
+    const segundo = (await request(app).get(`/api/cobros?solicitudId=${sara.id}`).set(auth('administracion'))).body.items.find((c: { id: string }) => c.id !== primerCobro);
+    expect((await request(app).post(`/api/cobros/${segundo.id}/anular`).set(auth('administracion')).send({})).status).toBe(400); // sin motivo
+    const r = await request(app).post(`/api/cobros/${segundo.id}/anular`).set(auth('administracion')).send({ motivo: 'Transferencia devuelta por el banco' });
+    expect(r.body.cobro.anulado).toMatchObject({ motivo: 'Transferencia devuelta por el banco', por: 'Administración' });
+    expect(r.body.reserva).toMatchObject({ estado: 'PENDIENTE', pagado: 10000 });
+    expect((await ficha(sara.id)).estado).toBe('ADMITIDA');
+    expect((await request(app).post(`/api/cobros/${segundo.id}/anular`).set(auth('administracion')).send({ motivo: 'otra vez' })).body.error.code).toBe('COBRO_YA_ANULADO');
+    expect((await request(app).get(`/api/cobros?solicitudId=${sara.id}`).set(auth('administracion'))).body.suma).toBe(10000);
+  });
+
+  it('cambiar la decisión de una admitida con cobros exige anularlos antes', async () => {
+    const r = await decidir(sara.id, { decision: 'EN_ESPERA' });
+    expect(r.body.error.code).toBe('RESERVA_CON_COBROS');
+  });
+
+  it('recordatorio de pago a 3 días del plazo, una sola vez', async () => {
+    lucas = await evaluada('Lucas');
+    await decidir(lucas.id, { decision: 'ADMITIDA', notificar: false });
+    await db.update(reservas).set({ fechaLimite: fechaLocal(sumarDias(new Date(), 2)) }).where(eq(reservas.solicitudId, lucas.id));
+    const mediodia = horaLocalAUtc(fechaLocal(new Date()), '12:00');
+    expect(await recordatoriosPago(mediodia)).toBeGreaterThanOrEqual(1);
+    expect(await recordatoriosPago(mediodia)).toBe(0);
+    await enviarCorreos();
+    const m = ultimoPara(lucas.email);
+    expect(m.subject).toBe('Recordatorio: la reserva de plaza de Lucas Fase Tres');
+    expect(m.html).toContain(IBAN);
+    expect((await request(app).get('/api/reservas?porVencer=true').set(auth('administracion'))).body.items.map((x: { solicitud: { id: string } }) => x.solicitud.id)).toContain(lucas.id);
+  });
+
+  it('pasado el plazo: reserva vencida, aviso a secretaría y administración, y aún se puede pagar', async () => {
+    await db.update(reservas).set({ fechaLimite: fechaLocal(sumarDias(new Date(), -1)) }).where(eq(reservas.solicitudId, lucas.id));
+    expect(await vencerReservas()).toBe(1);
+    await enviarCorreos();
+    expect(ultimoPara('secretaria@albaydar.org').subject).toBe(`Reserva vencida sin pagar · Lucas Fase Tres · ${(await ficha(lucas.id)).codigo}`);
+    expect(ultimoPara('administracion@albaydar.org').subject).toMatch(/^Reserva vencida sin pagar · Lucas/);
+    const k = await request(app).get('/api/solicitudes/pipeline?reservaPorVencer=true').set(auth('direccion'));
+    const tarjeta = k.body.columnas.flatMap((c: { items: { id: string }[] }) => c.items).find((i: { id: string }) => i.id === lucas.id);
+    expect(tarjeta.reserva).toMatchObject({ estado: 'VENCIDA', diasRestantes: -1 });
+    // La plaza no se libera sola: si la familia paga tarde, se registra igual.
+    const r = await cobrar({ solicitudId: lucas.id, importe: 30000, metodo: 'TRANSFERENCIA' });
+    expect(r.body.reserva.estado).toBe('PAGADA');
+    expect((await ficha(lucas.id)).estado).toBe('PLAZA_RESERVADA');
+  });
+
+  it('lista de espera: posición por vía y correo con la posición', async () => {
+    const primera = await evaluada('Irene');
+    const segunda = await evaluada('Berta');
+    expect((await decidir(primera.id, { decision: 'EN_ESPERA' })).body.posicionEspera).toBe(1);
+    const r = await decidir(segunda.id, { decision: 'EN_ESPERA', motivo: 'El grupo está completo.' });
+    expect(r.body).toMatchObject({ estado: 'EN_ESPERA', posicionEspera: 2, notificada: true });
+    await enviarCorreos();
+    const m = ultimoPara(segunda.email);
+    expect(m.html).toContain('posición <strong>2</strong>');
+    expect(m.html).toContain('El grupo está completo.');
+    // Se libera una plaza: la primera pasa a admitida y la segunda sube al puesto 1.
+    const admitida = await decidir(primera.id, { decision: 'ADMITIDA', notificar: false });
+    expect(admitida.body.reserva.estado).toBe('PENDIENTE');
+    expect((await ficha(segunda.id)).posicionEspera).toBe(1);
+    // Descartar una admitida sin cobros anula su reserva.
+    await request(app).patch(`/api/solicitudes/${primera.id}/estado`).set(auth('direccion')).send({ estado: 'DESCARTADA' });
+    const anuladas = await request(app).get('/api/reservas?estado=ANULADA').set(auth('administracion'));
+    expect(anuladas.body.items.map((x: { solicitud: { id: string } }) => x.solicitud.id)).toContain(primera.id);
+  });
+
+  it('no admitida: correo con el motivo', async () => {
+    const carlos = await evaluada('Carla');
+    const r = await decidir(carlos.id, { decision: 'NO_ADMITIDA', motivo: 'No quedan plazas en la vía solicitada.' });
+    expect(r.body).toMatchObject({ estado: 'NO_ADMITIDA', reserva: null, notificada: true });
+    await enviarCorreos();
+    const m = ultimoPara(carlos.email);
+    expect(m.subject).toBe(`Resolución de la solicitud de Carla Fase Tres · ${(await ficha(carlos.id)).codigo}`);
+    expect(m.html).toContain('No quedan plazas en la vía solicitada.');
+  });
+
+  it('configuración de la reserva: IBAN validado e importe por vía', async () => {
+    const cfg = await request(app).get('/api/reservas/configuracion').set(auth('administracion'));
+    expect(cfg.body).toMatchObject({ importe: 30000, iban: 'ES9121000418450200051332', plazoDias: 15, metodos: ['TRANSFERENCIA', 'EFECTIVO'] });
+    expect((await request(app).put('/api/reservas/configuracion').set(auth('administracion')).send(cfg.body)).status).toBe(403);
+    const mal = await request(app).put('/api/reservas/configuracion').set(auth('direccion')).send({ ...cfg.body, iban: 'ES92 2100 0418 4502 0005 1332' });
+    expect(mal.body.error.details[0]).toMatchObject({ campo: 'iban' });
+    const ok = await request(app).put('/api/reservas/configuracion').set(auth('direccion')).send({ ...cfg.body, importesPorVia: { BACHILLERATO: 25000 } });
+    expect(ok.status).toBe(200);
+    const dani = await evaluada('Daniela');
+    expect((await decidir(dani.id, { decision: 'ADMITIDA', notificar: false })).body.reserva.importe).toBe(25000);
+  });
+
+  // ── Lo que pidió el front al conectar la fase 03 ──
+  let nora = { id: '', email: '' };
+  let reservaNora = '';
+
+  it('vista previa de la decisión con los datos reales de la familia, sin cambiar nada', async () => {
+    nora = await evaluada('Nora');
+    const previa = (body: Record<string, unknown>, quien = 'direccion') => request(app).post(`/api/solicitudes/${nora.id}/decision/previsualizar`).set(auth(quien)).send(body);
+    const r = await previa({ decision: 'ADMITIDA' });
+    expect(r.body).toMatchObject({ para: nora.email, seEnviaria: true });
+    expect(r.body.asunto).toMatch(/^Plaza admitida para Nora Fase Tres · reserva antes del /);
+    expect(r.body.html).toContain(IBAN);
+    expect(r.body.html).toContain('250,00'); // importe de su vía (excepción configurada arriba)
+    const espera = await previa({ decision: 'EN_ESPERA', motivo: 'Grupo completo.' }, 'secretaria'); // Secretaría ve Evaluación
+    expect(espera.body.html).toContain('posición <strong>2</strong>'); // Berta ya está la 1.ª
+    expect((await previa({ decision: 'ADMITIDA' }, 'comercial')).status).toBe(403);
+    // Nada ha cambiado.
+    expect(await ficha(nora.id)).toMatchObject({ estado: 'ENTREVISTA_REALIZADA', reserva: null });
+    const recibida = (await request(app).post('/api/solicitudes').set(auth()).send({
+      viaId: viaBach, alumnaNombre: 'Sin', alumnaApellidos: 'Entrevista', tutorNombre: 'Tutor', email: 'sin.entrevista@correo.es',
+      telefono: '+34 611 399 999', centroProcedencia: 'IES Bécquer', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
+    })).body;
+    expect((await request(app).post(`/api/solicitudes/${recibida.id}/decision/previsualizar`).set(auth('direccion')).send({ decision: 'ADMITIDA' })).body.error.code).toBe('TRANSICION_NO_PERMITIDA');
+  });
+
+  it('"Recordar": envía ya el recordatorio, no se repite en una hora y el automático ya no sale', async () => {
+    reservaNora = (await decidir(nora.id, { decision: 'ADMITIDA', notificar: false })).body.reserva.id;
+    const r = await request(app).post(`/api/reservas/${reservaNora}/recordar`).set(auth('secretaria'));
+    expect(r.status).toBe(200);
+    expect(r.body.recordatorioEnviadoEn).not.toBeNull();
+    await enviarCorreos();
+    expect(ultimoPara(nora.email).subject).toBe('Recordatorio: la reserva de plaza de Nora Fase Tres');
+    expect((await request(app).post(`/api/reservas/${reservaNora}/recordar`).set(auth('administracion'))).body.error.code).toBe('RECORDATORIO_RECIENTE');
+    await db.update(reservas).set({ fechaLimite: fechaLocal(sumarDias(new Date(), 2)) }).where(eq(reservas.id, reservaNora));
+    expect(await recordatoriosPago(horaLocalAUtc(fechaLocal(new Date()), '12:00'))).toBe(0);
+  });
+
+  it('resumen de Cobros: cobrado, pendiente y pagos parciales', async () => {
+    // Cobrado: Sara 100 € (el cobro de 200 € está anulado) + Lucas 300 €. Pendiente: Sara 200 €, Daniela 250 €, Nora 250 €.
+    const r = await request(app).get('/api/cobros/resumen').set(auth('administracion'));
+    expect(r.body).toMatchObject({ cobrado: 40000, pendiente: 70000, reservasPendientes: 3, parcial: { familias: 1, cobrado: 10000, pendiente: 20000 } });
+    expect(r.body.cobradoTexto).toBe('400,00 €');
+    expect((await request(app).get('/api/cobros/resumen').set(auth('secretaria'))).status).toBe(403);
+  });
+
+  it('recibo imprimible: escapa lo que escribe el usuario y marca los anulados', async () => {
+    const pago = await cobrar({ solicitudId: nora.id, importe: 25000, metodo: 'EFECTIVO', observaciones: '<script>alert(1)</script>' });
+    const r = await request(app).get(`/api/cobros/${pago.body.cobro.id}/recibo`).set(auth('administracion'));
+    expect(r.headers['content-type']).toMatch(/^text\/html/);
+    expect(r.text).toContain(pago.body.cobro.reciboNumero);
+    expect(r.text).toContain('250,00');
+    expect(r.text).toContain('exenta de IVA');
+    expect(r.text).toContain('&lt;script&gt;');
+    expect(r.text).not.toContain('<script>');
+    const anulado = (await request(app).get(`/api/cobros?solicitudId=${sara.id}`).set(auth('administracion'))).body.items.find((c: { anulado: unknown }) => c.anulado);
+    expect((await request(app).get(`/api/cobros/${anulado.id}/recibo`).set(auth('administracion'))).text).toContain('RECIBO ANULADO');
+    expect((await request(app).get(`/api/cobros/${anulado.id}/recibo`).set(auth('secretaria'))).status).toBe(403);
+  });
+
+  it('la ficha y el listado traen la nota de la entrevista', async () => {
+    const [item] = (await request(app).get('/api/solicitudes?q=Ana Ruiz').set(auth())).body.items;
+    expect(item.entrevista.notas).toBe('Interesada en el bachillerato de Ciencias.');
+    expect((await ficha(item.id)).entrevista.notas).toBe('Interesada en el bachillerato de Ciencias.');
+  });
+
+  it('migración 0004: las admitidas sin reserva reciben la suya (sin correo) y ya se les puede cobrar', async () => {
+    const olga = await evaluada('Olga');
+    await db.update(solicitudes).set({ estado: 'ADMITIDA' }).where(eq(solicitudes.id, olga.id)); // como con el PATCH antiguo
+    expect((await ficha(olga.id)).siguientes.map((s: { estado: string }) => s.estado)).not.toContain('PLAZA_RESERVADA');
+    const correosAntes = buzon.length;
+    await db.execute(sql.raw(await readFile('./drizzle/0004_reservas_admitidas_antiguas.sql', 'utf8')));
+    const f = await ficha(olga.id);
+    expect(f.reserva).toMatchObject({ estado: 'PENDIENTE', importe: 25000, diasRestantes: 15 });
+    expect(f.siguientes).toContainEqual({ estado: 'PLAZA_RESERVADA', columna: 'reserva', accion: 'REGISTRAR_COBRO' });
+    expect(f.eventos.map((e: { tipo: string }) => e.tipo)).toContain('RESERVA_CREADA');
+    await enviarCorreos();
+    expect(buzon.length).toBe(correosAntes);
+    // Es idempotente: volver a ejecutarla no crea otra.
+    await db.execute(sql.raw(await readFile('./drizzle/0004_reservas_admitidas_antiguas.sql', 'utf8')));
+    expect((await db.select().from(reservas).where(eq(reservas.solicitudId, olga.id))).length).toBe(1);
   });
 });

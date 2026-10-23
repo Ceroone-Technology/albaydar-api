@@ -1,11 +1,14 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { requirePermiso } from '../../middleware/auth';
 import { forbidden } from '../../lib/errors';
+import type { Permiso } from '../permisos/catalogo';
 import { permisosDe } from '../permisos/permisos.service';
 import { v, validate } from '../../middleware/validate';
 import * as citacion from '../citacion/citacion.service';
 import * as documentosSrv from '../documentos/documentos.service';
+import { decidir, decisionBody, previaDecisionBody, previsualizar } from '../evaluacion/evaluacion.service';
+import { DECISIONES_ADMISION } from './dominio';
 import * as srv from './solicitudes.service';
 import {
   cambiarEstadoBody,
@@ -14,6 +17,7 @@ import {
   listarQuery,
   pedirCompletarBody,
   pipelineQuery,
+  respuestasVistasBody,
   solicitudInternaBody,
 } from './solicitudes.schemas';
 
@@ -25,25 +29,39 @@ const citarBody = z.object({
   mensaje: z.string().trim().max(1000).optional().nullable(),
 });
 
-/** Decidir la admisión es un permiso aparte ("Registrar decisión de admisión" en el mockup). */
-const DECISIONES = ['ADMITIDA', 'NO_ADMITIDA', 'EN_ESPERA'];
-
 export const solicitudesRouter = Router();
 const ver = requirePermiso('solicitudes.ver');
 const gestion = requirePermiso('solicitudes.editar');
 
+/** Qué puede hacer el usuario: decide las transiciones que se ofrecen en cada tarjeta (`siguientes`). */
+async function permisos(req: Request): Promise<srv.Permisos> {
+  const ef = await permisosDe(req.user!.roles);
+  const tiene = (p: Permiso) => ef.superadmin || ef.permisos.includes(p);
+  return { editar: tiene('solicitudes.editar'), evaluar: tiene('evaluacion.editar'), cobrar: tiene('cobros.editar') };
+}
+
 /** Lista con filtros. ?vista=bandeja para la bandeja de admisión; ?columna=… para paginar el kanban. */
 solicitudesRouter.get('/', ver, validate({ query: listarQuery }), async (req, res) => {
-  res.json(await srv.listar(v<typeof listarQuery>(req, 'query')));
+  res.json(await srv.listar(v<typeof listarQuery>(req, 'query'), await permisos(req)));
 });
 
 /** Kanban: totales y primeras tarjetas por columna. */
 solicitudesRouter.get('/pipeline', ver, validate({ query: pipelineQuery }), async (req, res) => {
-  res.json(await srv.pipeline(v<typeof pipelineQuery>(req, 'query')));
+  res.json(await srv.pipeline(v<typeof pipelineQuery>(req, 'query'), await permisos(req)));
 });
 
 solicitudesRouter.get('/contadores', ver, async (_req, res) => {
   res.json(await srv.contadores());
+});
+
+/** Aviso "la familia ya eligió fecha": respuestas que este usuario aún no ha visto. */
+solicitudesRouter.get('/respuestas-familia', ver, async (req, res) => {
+  res.json(await srv.respuestasFamilia(req.user!.id));
+});
+
+solicitudesRouter.post('/respuestas-familia/visto', ver, validate({ body: respuestasVistasBody }), async (req, res) => {
+  await srv.marcarRespuestasVistas(req.user!.id, v<typeof respuestasVistasBody>(req, 'body').eventoIds);
+  res.status(204).end();
 });
 
 /** Alta interna: teléfono, presencial, puertas abiertas o asignada por la Junta. */
@@ -52,7 +70,7 @@ solicitudesRouter.post('/', gestion, validate({ body: solicitudInternaBody }), a
 });
 
 solicitudesRouter.get('/:id', ver, validate({ params: idParam }), async (req, res) => {
-  res.json(await srv.detalle(v<typeof idParam>(req, 'params').id));
+  res.json(await srv.detalle(v<typeof idParam>(req, 'params').id, await permisos(req)));
 });
 
 /** Responsable, observaciones internas, origen. */
@@ -76,11 +94,20 @@ solicitudesRouter.post('/:id/citar', gestion, validate({ params: idParam, body: 
   res.status(201).json(await citacion.proponer(v<typeof idParam>(req, 'params').id, { inicios: b.inicios, duracion: b.duracion, mensaje: b.mensaje }, req.user!.id));
 });
 
-/** Mover de columna / decisión. Si el destino requiere una acción, responde 409 ACCION_REQUERIDA. */
+/** Vista previa del correo de la decisión con los datos reales de la familia. No cambia nada. */
+solicitudesRouter.post('/:id/decision/previsualizar', requirePermiso('evaluacion.ver'), validate({ params: idParam, body: previaDecisionBody }), async (req, res) => {
+  res.json(await previsualizar(v<typeof idParam>(req, 'params').id, v<typeof previaDecisionBody>(req, 'body')));
+});
+
+/** "Registrar decisión y notificar": Admitida (crea la reserva), En espera o No admitida. */
+solicitudesRouter.post('/:id/decision', requirePermiso('evaluacion.editar'), validate({ params: idParam, body: decisionBody }), async (req, res) => {
+  res.json(await decidir(v<typeof idParam>(req, 'params').id, v<typeof decisionBody>(req, 'body'), req.user!.id));
+});
+
+/** Mover de columna. Si el destino requiere una acción (citar, decidir, cobrar…), responde 409 ACCION_REQUERIDA. */
 solicitudesRouter.patch('/:id/estado', gestion, validate({ params: idParam, body: cambiarEstadoBody }), async (req, res) => {
-  if (DECISIONES.includes(v<typeof cambiarEstadoBody>(req, 'body').estado)) {
-    const ef = await permisosDe(req.user!.roles);
-    if (!ef.superadmin && !ef.permisos.includes('evaluacion.editar')) throw forbidden('Registrar la decisión de admisión requiere el permiso de Evaluación.');
+  if (DECISIONES_ADMISION.includes(v<typeof cambiarEstadoBody>(req, 'body').estado) && !(await permisos(req)).evaluar) {
+    throw forbidden('Registrar la decisión de admisión requiere el permiso de Evaluación.');
   }
   res.json(await srv.cambiarEstadoManual(v<typeof idParam>(req, 'params').id, v<typeof cambiarEstadoBody>(req, 'body'), req.user!.id));
 });

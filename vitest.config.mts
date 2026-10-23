@@ -17,6 +17,7 @@ export default defineConfig({
       WORKERS_ENABLED: 'false',
       UPLOADS_DIR: './storage/test-uploads',
       MAIL_SECRETARIA: 'secretaria@albaydar.org',
+      MAIL_ADMINISTRACION: 'administracion@albaydar.org',
     },
   },
 });

@@ -1,6 +1,6 @@
 # Flujo, estados y modelo de datos
 
-Cubre las fases 01 y 02 del diagrama de flujo ("Captación" y "Revisión y entrevista"), pasos 1 a 11.
+Cubre las fases 01, 02 y 03 del diagrama de flujo ("Captación", "Revisión y entrevista" y "Evaluación y reserva de plaza"). La fase 04 (matrícula digital) está en pausa.
 
 ## Recorrido
 
@@ -65,7 +65,11 @@ stateDiagram-v2
   ENTREVISTA_REALIZADA --> EN_ESPERA
   ENTREVISTA_REALIZADA --> NO_ADMITIDA
   EN_ESPERA --> ADMITIDA
-  ADMITIDA --> PLAZA_RESERVADA: módulo de cobros (fase 03)
+  EN_ESPERA --> NO_ADMITIDA
+  ADMITIDA --> EN_ESPERA: anula la reserva sin cobros
+  NO_ADMITIDA --> EN_ESPERA
+  ADMITIDA --> PLAZA_RESERVADA: cobro que completa la reserva
+  PLAZA_RESERVADA --> ADMITIDA: se anula un cobro
   PLAZA_RESERVADA --> MATRICULADA: módulo de matrícula (fase 04)
 ```
 
@@ -107,6 +111,14 @@ La bandeja de admisión muestra RECIBIDA, EN_REVISION, PENDIENTE_COMPLETAR, CITA
 | Cuatro perfiles: Dirección (superadmin), Administración, Secretaría y Comercial; permisos ver/editar por módulo editables | `permisos/` |
 | Solo Dirección registra la decisión de admisión (por defecto) | permiso `evaluacion.editar` |
 | Todos los correos salen de plantillas HTML editables por evento | `correo/`, `comunicaciones/` |
+| La decisión de admisión se registra con "Registrar decisión" y, si se pide, notifica a la familia; arrastrando en el kanban no se puede | `evaluacion.service.ts › decidir`, `cambiarEstadoManual` |
+| Admitir crea la reserva: 300 € para todas las vías (configurable por vía), 15 días naturales, transferencia o efectivo | `ajustes.reserva`, `crearReserva` |
+| Lista de espera ordenada por vía y por fecha de entrada; el correo lleva la posición | `posicionesEnEspera` |
+| Cobro manual con recibo de la serie R; pagos parciales; nunca más de lo pendiente | `cobros.service.ts › registrar` |
+| Al cubrir la reserva: reserva pagada y solicitud en "Plaza reservada", en la misma transacción | `registrar` |
+| Un cobro no se borra: se anula con motivo, y si la reserva queda sin cubrir, la plaza vuelve a "Admitida" | `anular` |
+| Un único recordatorio a 3 días del plazo; "Recordar" lo envía antes, y entonces el automático ya no sale | `reservas.service.ts › recordatoriosPago`, `recordar` |
+| Reserva vencida: aviso a secretaría y administración; la plaza no se libera sola | `vencerReservas` |
 
 ## Modelo de datos
 
@@ -114,6 +126,8 @@ La bandeja de admisión muestra RECIBIDA, EN_REVISION, PENDIENTE_COMPLETAR, CITA
 erDiagram
   roles ||--o{ usuarios : "códigos en usuarios.roles"
   usuarios ||--o{ refresh_tokens : "sesiones"
+  usuarios ||--o{ eventos_vistos : "avisos vistos"
+  solicitud_eventos ||--o{ eventos_vistos : ""
   usuarios ||--o{ solicitudes : "responsable"
   vias ||--o{ solicitudes : ""
   familias ||--o{ solicitudes : "vinculada"
@@ -126,6 +140,9 @@ erDiagram
   solicitudes ||--o{ tokens_publicos : "enlaces"
   solicitudes ||--o{ documentos : "boletín de notas"
   plantillas_correo ||--o{ correos_salientes : "generó"
+  solicitudes ||--o{ reservas : "una vigente"
+  reservas ||--o{ cobros : "pagos"
+  solicitudes ||--o{ cobros : ""
   solicitudes ||--o{ correos_salientes : "trazabilidad"
 ```
 
@@ -138,6 +155,7 @@ erDiagram
 | `familias` | Familias conocidas, para "familia ya vinculada" hasta que exista Alumnado |
 | `solicitudes` | Expediente de admisión (alumna, contacto, origen, gestión interna, última revisión) |
 | `solicitud_eventos` | Historial auditable: quién hizo qué y cuándo (usuario, familia o sistema) |
+| `eventos_vistos` | Aviso "la familia ya eligió fecha": qué respuestas de la familia ha visto ya cada usuario |
 | `franjas_agenda` | Lo que ocupa la agenda: `RESERVADA` (propuesta), `CONFIRMADA` (entrevista), `BLOQUEADA` (manual), `LIBERADA` (histórico). Restricción `EXCLUDE`: dos franjas activas nunca se solapan. |
 | `propuestas_cita` | Cada envío de fechas a una familia, con su duración y cuándo aceptó (`confirmada_en`) |
 | `entrevistas` | Citas confirmadas (calendario) |
@@ -145,9 +163,13 @@ erDiagram
 | `documentos` | Boletín de notas (fichero en la carpeta de uploads, metadatos aquí) |
 | `plantillas_correo` | Plantillas HTML por evento; una activada por evento (índice único parcial) |
 | `correos_salientes` | Cola de correo (outbox) e histórico de envíos |
-| `secuencias` | Contador del código `SOL-AAAA-NNNN` |
+| `reservas` | Reserva de plaza al admitir: importe (céntimos), fecha límite y estado (`PENDIENTE`, `PAGADA`, `VENCIDA`, `ANULADA`). Índice único parcial: una vigente por solicitud |
+| `cobros` | Cobros manuales con su recibo `R-AAAA-NNNN`. Nunca se borran: se anulan con motivo |
+| `secuencias` | Contadores del código `SOL-AAAA-NNNN` y de los recibos `R-AAAA-NNNN` |
 
-El SQL está en `drizzle/0000_inicial.sql` y `drizzle/0001_agenda_sin_solapes.sql`.
+El SQL está en `drizzle/0000_inicial.sql`, `0001_agenda_sin_solapes.sql`, `0002_avisos_familia.sql`, `0003_reserva_y_cobros.sql` y `0004_reservas_admitidas_antiguas.sql`. Esta última es solo de datos, escrita a mano: crea la reserva de las solicitudes admitidas antes de la fase 03.
+
+Los importes se guardan siempre en céntimos (enteros), nunca con decimales.
 
 ## Decisiones técnicas
 

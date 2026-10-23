@@ -58,6 +58,17 @@ const ENTREVISTA = [
   v('sala', 'Lugar de la entrevista', 'Sala de reuniones de Dirección'),
   v('con', 'Quién hace la entrevista', 'Equipo directivo'),
 ];
+const DECISION = [
+  v('etapa', 'Vía y curso de la plaza', '1º Bachillerato'),
+  v('curso_escolar', 'Curso escolar', '2027/28'),
+];
+const PAGO = [
+  v('importe', 'Importe pendiente de la reserva', '300,00 €'),
+  v('fecha_limite', 'Último día para pagar', 'jueves 5 de noviembre'),
+  v('iban', 'IBAN del centro', 'ES91 2100 0418 4502 0005 1332'),
+  v('titular', 'Titular de la cuenta', 'Centro Educativo Albaydar'),
+  v('formas_pago', 'Formas de pago admitidas', 'transferencia o en efectivo en administración'),
+];
 const AVISO_NOTAS = v('aviso_notas', 'Recordatorio de subir el boletín de notas (vacío si ya lo subió)', '<p>Recuerda subir el boletín de notas.</p>', true);
 
 const p = (t: string) => `<p>${t}</p>`;
@@ -280,22 +291,63 @@ export const EVENTOS: EventoDef[] = [
       ].join('\n'),
     },
   },
-  // ── Fases siguientes: se guardan como borrador para editarlas desde ya ──
+  // ── Fase 03: decisión de admisión y reserva de plaza ──
   {
     clave: 'ADMITIDA',
     nombre: 'Admisión y reserva de plaza',
-    cuando: 'Decisión registrada como "Admitida"',
+    cuando: 'Dirección registra la decisión "Admitida"',
     destinatario: 'familia',
     obligatorio: false,
-    disponible: false,
-    variables: [...BASE, v('etapa', 'Etapa', 'Bachillerato'), v('curso_escolar', 'Curso escolar', '2027/28'), v('importe', 'Importe de la reserva', '350,00 €'), v('iban', 'IBAN del centro', 'ES00 0000 0000 0000 0000 0000'), v('fecha_limite', 'Fecha límite de pago', '15 de noviembre')],
+    disponible: true,
+    variables: [...BASE, ...DECISION, ...PAGO, v('plazo_dias', 'Días para pagar', '15')],
     predeterminada: {
       nombre: 'Admisión y reserva de plaza',
       asunto: 'Plaza admitida para {{alumna}} · reserva antes del {{fecha_limite}}',
       cuerpoHtml: [
         p('Estimada familia:'),
         p('Nos complace comunicarles que <strong>{{alumna}}</strong> ha sido admitida en {{etapa}} para el curso {{curso_escolar}}.'),
-        p('Para confirmar la plaza, realicen el ingreso de <strong>{{importe}}</strong> en el IBAN {{iban}} antes del {{fecha_limite}} (15 días naturales).'),
+        p('Para confirmar la plaza, realicen el pago de <strong>{{importe}}</strong> antes del <strong>{{fecha_limite}}</strong> ({{plazo_dias}} días naturales). Pueden pagar por {{formas_pago}}.'),
+        caja('Transferencia a {{titular}}<br>IBAN <strong>{{iban}}</strong><br>Concepto: {{codigo}} · {{alumna}}'),
+        p('Secretaría · {{centro_nombre}}'),
+      ].join('\n'),
+    },
+  },
+  {
+    clave: 'EN_ESPERA',
+    nombre: 'Lista de espera',
+    cuando: 'Dirección registra la decisión "En espera"',
+    destinatario: 'familia',
+    obligatorio: false,
+    disponible: true,
+    variables: [...BASE, ...DECISION, v('posicion', 'Posición en la lista de espera de su vía', '3'), v('motivo', 'Observación opcional de Dirección', '')],
+    predeterminada: {
+      nombre: 'Lista de espera',
+      asunto: 'Solicitud de {{alumna}}: lista de espera · {{codigo}}',
+      cuerpoHtml: [
+        p('Estimada familia:'),
+        p('Tras la entrevista, la solicitud de <strong>{{alumna}}</strong> para {{etapa}} (curso {{curso_escolar}}) queda en lista de espera, en la posición <strong>{{posicion}}</strong>.'),
+        p('{{motivo}}'),
+        p('Si se libera una plaza, nos pondremos en contacto con ustedes por este mismo correo.'),
+        p('Secretaría · {{centro_nombre}}'),
+      ].join('\n'),
+    },
+  },
+  {
+    clave: 'NO_ADMITIDA',
+    nombre: 'Solicitud no admitida',
+    cuando: 'Dirección registra la decisión "No admitida"',
+    destinatario: 'familia',
+    obligatorio: false,
+    disponible: true,
+    variables: [...BASE, ...DECISION, v('motivo', 'Motivo (opcional)', 'No quedan plazas en la vía solicitada.')],
+    predeterminada: {
+      nombre: 'Solicitud no admitida',
+      asunto: 'Resolución de la solicitud de {{alumna}} · {{codigo}}',
+      cuerpoHtml: [
+        p('Estimada familia:'),
+        p('Lamentamos comunicarles que la solicitud de <strong>{{alumna}}</strong> para {{etapa}} (curso {{curso_escolar}}) no ha sido admitida.'),
+        p('{{motivo}}'),
+        p('Agradecemos su interés en el centro. Para cualquier aclaración pueden llamar a secretaría ({{centro_telefono}}).'),
         p('Secretaría · {{centro_nombre}}'),
       ].join('\n'),
     },
@@ -303,22 +355,54 @@ export const EVENTOS: EventoDef[] = [
   {
     clave: 'RECORDATORIO_PAGO',
     nombre: 'Recordatorio de pago',
-    cuando: 'Pago pendiente a 3 días del vencimiento',
+    cuando: 'Reserva sin pagar a 3 días del vencimiento',
     destinatario: 'familia',
     obligatorio: false,
-    disponible: false,
-    variables: [...BASE, v('concepto', 'Concepto', 'Reserva de plaza'), v('importe', 'Importe', '350,00 €'), v('fecha_limite', 'Vencimiento', '15 de noviembre')],
+    disponible: true,
+    variables: [...BASE, v('concepto', 'Concepto', 'la reserva de plaza'), ...PAGO],
     predeterminada: {
       nombre: 'Recordatorio de pago',
       asunto: 'Recordatorio: {{concepto}} de {{alumna}}',
       cuerpoHtml: [
         p('Estimada familia:'),
         p('Les recordamos que el pago de {{concepto}} ({{importe}}) vence el {{fecha_limite}}.'),
-        p('Pueden abonarlo por transferencia o desde el área de familias.'),
+        p('Pueden abonarlo por {{formas_pago}}.'),
+        caja('Transferencia a {{titular}}<br>IBAN <strong>{{iban}}</strong><br>Concepto: {{codigo}} · {{alumna}}'),
         p('Administración · {{centro_nombre}}'),
       ].join('\n'),
     },
   },
+  {
+    clave: 'RESERVA_VENCIDA',
+    nombre: 'Aviso interno: reserva vencida',
+    cuando: 'Pasa el plazo de la reserva sin pagarla (a secretaría y administración)',
+    destinatario: 'secretaria',
+    obligatorio: false,
+    disponible: true,
+    variables: [
+      v('alumna', 'Nombre completo de la alumna', 'Lucía Márquez Peña'),
+      v('tutor', 'Nombre completo del tutor', 'Elena Peña Ríos'),
+      v('codigo', 'Código de la solicitud', 'SOL-2026-0001'),
+      v('curso', 'Etapa y curso', 'Bachillerato 1º'),
+      v('telefono', 'Teléfono de la familia', '+34 622 418 903'),
+      v('importe', 'Importe pendiente', '300,00 €'),
+      v('fecha_limite', 'Día en que venció', 'jueves 5 de noviembre'),
+      v('enlace', 'Enlace a la solicitud en la plataforma', 'https://app.albaydar.org/admision?ref=SOL-2026-0001'),
+      v('boton', 'Botón con el enlace', '<a href="#">Botón</a>', true),
+    ],
+    predeterminada: {
+      nombre: 'Aviso: reserva vencida',
+      asunto: 'Reserva vencida sin pagar · {{alumna}} · {{codigo}}',
+      cuerpoHtml: [
+        '<h2>Reserva vencida sin pagar</h2>',
+        p('La reserva de plaza de <strong>{{alumna}}</strong> ({{curso}}) venció el {{fecha_limite}} con <strong>{{importe}}</strong> pendiente.'),
+        caja('Familia: {{tutor}} · {{telefono}}'),
+        p('La plaza sigue ocupada hasta que decidáis: registrar el pago si llega o cambiar la decisión desde la solicitud.'),
+        '{{boton}}',
+      ].join('\n'),
+    },
+  },
+  // ── Fases siguientes: se guardan como borrador para editarlas desde ya ──
   {
     clave: 'MATRICULA_CONFIRMADA',
     nombre: 'Confirmación de matrícula',

@@ -12,11 +12,13 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
+  date,
   index,
   integer,
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -100,6 +102,18 @@ export const estadoEntrevistaEnum = pgEnum('estado_entrevista', [
 export const propositoTokenEnum = pgEnum('proposito_token', ['ELEGIR_CITA', 'COMPLETAR_SOLICITUD']);
 
 export const estadoCorreoEnum = pgEnum('estado_correo', ['PENDIENTE', 'ENVIANDO', 'ENVIADO', 'ERROR']);
+
+/** Reserva de plaza tras la admisión (fase 03). */
+export const estadoReservaEnum = pgEnum('estado_reserva', [
+  'PENDIENTE', // esperando el pago
+  'PAGADA', //    cobrada por completo → la solicitud pasa a PLAZA_RESERVADA
+  'VENCIDA', //   pasó el plazo sin pagar; secretaría decide qué hacer
+  'ANULADA', //   cambio de decisión o descartada
+]);
+
+/** De momento solo la reserva; el resto de conceptos llega con la fase de cobros completa. */
+export const conceptoCobroEnum = pgEnum('concepto_cobro', ['RESERVA_PLAZA']);
+export const metodoPagoEnum = pgEnum('metodo_pago', ['TRANSFERENCIA', 'EFECTIVO']);
 
 // ── Usuarios internos y sesiones ────────────────────────────────────────────
 
@@ -247,6 +261,8 @@ export const solicitudes = pgTable(
     /** Resultado de las cinco comprobaciones de la última revisión. */
     revision: jsonb('revision').$type<import('../modules/solicitudes/revision').ResultadoRevision>(),
     revisadaEn: ts('revisada_en'),
+    /** Cuándo entró en lista de espera: ordena las posiciones dentro de cada vía. */
+    enEsperaDesde: ts('en_espera_desde'),
     /** Campos pedidos en el último "Pedir que complete". */
     camposPendientes: text('campos_pendientes').array().notNull().default(sql`'{}'::text[]`),
 
@@ -280,7 +296,25 @@ export const solicitudEventos = pgTable(
     detalle: jsonb('detalle').$type<Record<string, unknown>>(),
     createdAt: creado(),
   },
-  (t) => [index('solicitud_eventos_solicitud_idx').on(t.solicitudId, t.createdAt)],
+  (t) => [
+    index('solicitud_eventos_solicitud_idx').on(t.solicitudId, t.createdAt),
+    index('solicitud_eventos_tipo_idx').on(t.tipo, t.createdAt),
+  ],
+);
+
+/** Aviso "la familia ya eligió fecha": qué respuestas ha visto ya cada usuario. */
+export const eventosVistos = pgTable(
+  'eventos_vistos',
+  {
+    usuarioId: uuid('usuario_id')
+      .notNull()
+      .references(() => usuarios.id, { onDelete: 'cascade' }),
+    eventoId: uuid('evento_id')
+      .notNull()
+      .references(() => solicitudEventos.id, { onDelete: 'cascade' }),
+    vistoEn: ts('visto_en').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.usuarioId, t.eventoId] })],
 );
 
 // ── Agenda del equipo directivo y citación ──────────────────────────────────
@@ -455,6 +489,71 @@ export const plantillasCorreo = pgTable(
   ],
 );
 
+// ── Reserva de plaza y cobros (fase 03) ─────────────────────────────────────
+// Importes siempre en céntimos (30000 = 300,00 €).
+
+/** Reserva de plaza que se crea al admitir: importe y plazo salen de ajustes.reserva. */
+export const reservas = pgTable(
+  'reservas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    solicitudId: uuid('solicitud_id')
+      .notNull()
+      .references(() => solicitudes.id),
+    importe: integer('importe').notNull(),
+    /** Último día para pagar (AAAA-MM-DD, hora de Madrid). */
+    fechaLimite: date('fecha_limite', { mode: 'string' }).notNull(),
+    estado: estadoReservaEnum('estado').notNull().default('PENDIENTE'),
+    creadaPorId: uuid('creada_por_id').references(() => usuarios.id),
+    pagadaEn: ts('pagada_en'),
+    vencidaEn: ts('vencida_en'),
+    anuladaEn: ts('anulada_en'),
+    motivoAnulacion: text('motivo_anulacion'),
+    recordatorioEnviadoEn: ts('recordatorio_enviado_en'),
+    createdAt: creado(),
+    updatedAt: actualizado(),
+  },
+  (t) => [
+    // Una sola reserva vigente por solicitud.
+    uniqueIndex('reservas_vigente_uq').on(t.solicitudId).where(sql`${t.estado} <> 'ANULADA'`),
+    index('reservas_estado_idx').on(t.estado, t.fechaLimite),
+    check('reservas_importe_chk', sql`${t.importe} >= 0`),
+  ],
+);
+
+/** Cobro registrado a mano por administración. No se borra nunca: se anula con motivo. */
+export const cobros = pgTable(
+  'cobros',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    solicitudId: uuid('solicitud_id')
+      .notNull()
+      .references(() => solicitudes.id),
+    reservaId: uuid('reserva_id').references(() => reservas.id),
+    concepto: conceptoCobroEnum('concepto').notNull(),
+    importe: integer('importe').notNull(),
+    metodo: metodoPagoEnum('metodo').notNull(),
+    /** Fecha del pago (AAAA-MM-DD), no la del registro. */
+    fecha: date('fecha', { mode: 'string' }).notNull(),
+    /** Recibo de la serie R: R-2026-0001. */
+    reciboNumero: text('recibo_numero').notNull().unique(),
+    registradoPorId: uuid('registrado_por_id')
+      .notNull()
+      .references(() => usuarios.id),
+    observaciones: text('observaciones'),
+    anuladoEn: ts('anulado_en'),
+    anuladoPorId: uuid('anulado_por_id').references(() => usuarios.id),
+    motivoAnulacion: text('motivo_anulacion'),
+    createdAt: creado(),
+  },
+  (t) => [
+    index('cobros_solicitud_idx').on(t.solicitudId),
+    index('cobros_reserva_idx').on(t.reservaId),
+    index('cobros_fecha_idx').on(t.fecha),
+    check('cobros_importe_chk', sql`${t.importe} > 0`),
+  ],
+);
+
 // ── Correo saliente (patrón outbox) ─────────────────────────────────────────
 
 /**
@@ -506,3 +605,6 @@ export type FamiliaVia = (typeof familiaViaEnum.enumValues)[number];
 export type CanalSolicitud = (typeof canalSolicitudEnum.enumValues)[number];
 export type EstadoEntrevista = (typeof estadoEntrevistaEnum.enumValues)[number];
 export type Documento = typeof documentos.$inferSelect;
+export type Reserva = typeof reservas.$inferSelect;
+export type Cobro = typeof cobros.$inferSelect;
+export type MetodoPago = (typeof metodoPagoEnum.enumValues)[number];

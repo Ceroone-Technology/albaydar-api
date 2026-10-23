@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { generarIcs } from '../src/correo/ics';
 import { diaLargo, fechaLocal, franja, horaLocalAUtc } from '../src/lib/fechas';
 import { tipoReal } from '../src/lib/storage';
-import { columnaDe, puedeTransicionar } from '../src/modules/solicitudes/dominio';
+import { euros, formatearIban, ibanValido } from '../src/lib/dinero';
+import { diasRestantes, fechaTexto } from '../src/modules/reservas/reservas.service';
+import { columnaDe, cursoEscolarCorto, puedeTransicionar, siguientesEstados } from '../src/modules/solicitudes/dominio';
 import { revisar, type EntradaRevision } from '../src/modules/solicitudes/revision';
 
 const base: EntradaRevision = {
@@ -102,6 +104,54 @@ describe('pipeline y transiciones', () => {
   it('no permite saltarse acciones con efectos', () => {
     expect(puedeTransicionar('EN_REVISION', 'CITACION_ENVIADA')).toBe(false);
     expect(puedeTransicionar('ENTREVISTA_REALIZADA', 'ADMITIDA')).toBe(true);
+  });
+  it('cada tarjeta dice a dónde se puede mover y con qué acción', () => {
+    const todo = { editar: true, evaluar: true, cobrar: true, puedeCitar: true, reservaPendiente: true };
+    expect(siguientesEstados('EN_REVISION', todo)).toEqual([
+      { estado: 'RECIBIDA', columna: 'nueva' },
+      { estado: 'DESCARTADA', columna: null },
+      { estado: 'PENDIENTE_COMPLETAR', columna: 'nueva', accion: 'PEDIR_QUE_COMPLETE' },
+      { estado: 'CITACION_ENVIADA', columna: 'entrevista', accion: 'CITAR_A_ENTREVISTA' },
+    ]);
+    // Incompleta: no se ofrece citar.
+    expect(siguientesEstados('EN_REVISION', { ...todo, puedeCitar: false }).map((s) => s.estado)).not.toContain('CITACION_ENVIADA');
+    // Sin evaluacion.editar no se ofrecen las decisiones de admisión.
+    expect(siguientesEstados('ENTREVISTA_REALIZADA', { ...todo, evaluar: false })).toEqual([]);
+    // Las decisiones van por "Registrar decisión" (notifica y crea la reserva).
+    expect(siguientesEstados('ENTREVISTA_REALIZADA', todo)).toEqual([
+      { estado: 'ADMITIDA', columna: 'evaluada', accion: 'DECIDIR' },
+      { estado: 'EN_ESPERA', columna: 'evaluada', accion: 'DECIDIR' },
+      { estado: 'NO_ADMITIDA', columna: null, accion: 'DECIDIR' },
+    ]);
+    // Admitida: "Registrar cobro" solo con cobros.editar.
+    expect(siguientesEstados('ADMITIDA', todo)).toContainEqual({ estado: 'PLAZA_RESERVADA', columna: 'reserva', accion: 'REGISTRAR_COBRO' });
+    expect(siguientesEstados('ADMITIDA', { ...todo, cobrar: false }).map((s) => s.estado)).not.toContain('PLAZA_RESERVADA');
+    // Admitida sin reserva pendiente (p. ej. ya pagada o anulada): no hay nada que cobrar.
+    expect(siguientesEstados('ADMITIDA', { ...todo, reservaPendiente: false }).map((s) => s.estado)).not.toContain('PLAZA_RESERVADA');
+    // Solo lectura: nada.
+    expect(siguientesEstados('RECIBIDA', { ...todo, editar: false })).toEqual([]);
+  });
+});
+
+describe('reserva de plaza: importes, IBAN y plazos', () => {
+  it('importes en céntimos con formato español (espacio de no separación antes de €)', () => {
+    expect(euros(30000)).toBe('300,00 €');
+    expect(euros(18030)).toBe('180,30 €');
+    expect(euros(123456)).toBe('1.234,56 €');
+  });
+  it('valida el IBAN por sus dígitos de control', () => {
+    expect(ibanValido('ES91 2100 0418 4502 0005 1332')).toBe(true);
+    expect(ibanValido('es9121000418450200051332')).toBe(true);
+    expect(ibanValido('ES92 2100 0418 4502 0005 1332')).toBe(false); // un dígito mal
+    expect(ibanValido('ES91 2100 0418')).toBe(false);
+    expect(formatearIban('ES9121000418450200051332')).toBe('ES91 2100 0418 4502 0005 1332');
+  });
+  it('días que quedan y fechas como en los correos', () => {
+    expect(diasRestantes('2026-11-05', '2026-10-21')).toBe(15);
+    expect(diasRestantes('2026-10-20', '2026-10-21')).toBe(-1);
+    expect(diasRestantes('2026-10-25', '2026-10-24')).toBe(1); // cruza el cambio de hora
+    expect(fechaTexto('2026-11-05')).toBe('jueves 5 de noviembre');
+    expect(cursoEscolarCorto('2027-2028')).toBe('2027/28');
   });
 });
 

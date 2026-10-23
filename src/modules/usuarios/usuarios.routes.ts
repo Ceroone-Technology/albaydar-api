@@ -8,7 +8,7 @@ import { requirePermiso } from '../../middleware/auth';
 import { v, validate } from '../../middleware/validate';
 import { passwordSegura } from '../auth/auth.routes';
 import { hashPassword, publico, revocarTodas } from '../auth/auth.service';
-import { codigosSuperadmin, existenRoles } from '../permisos/permisos.service';
+import { codigosSuperadmin, existenRoles, permisosDe } from '../permisos/permisos.service';
 
 const idParam = z.object({ id: z.string().uuid() });
 const rolesSchema = z.array(z.string().trim().toUpperCase().min(1)).min(1, 'Asigna al menos un rol.');
@@ -51,9 +51,16 @@ const verConfig = requirePermiso('configuracion.ver');
 const editarConfig = requirePermiso('configuracion.editar');
 
 /** Selector de responsable en la bandeja (lo necesita quien gestiona solicitudes). */
+/** Chips de responsable: solo quien puede gestionar solicitudes (según la matriz de permisos actual). */
 usuariosRouter.get('/responsables', requirePermiso('solicitudes.ver'), async (_req, res) => {
   const filas = await db.select().from(usuarios).where(eq(usuarios.activo, true)).orderBy(asc(usuarios.nombre));
-  res.json({ items: filas.map((u) => ({ id: u.id, nombre: u.nombre, roles: u.roles })) });
+  const gestionan = await Promise.all(
+    filas.map(async (u) => {
+      const ef = await permisosDe(u.roles);
+      return ef.superadmin || ef.permisos.includes('solicitudes.editar');
+    }),
+  );
+  res.json({ items: filas.filter((_, i) => gestionan[i]).map((u) => ({ id: u.id, nombre: u.nombre, roles: u.roles })) });
 });
 
 usuariosRouter.get('/', verConfig, validate({ query: listarQuery }), async (req, res) => {

@@ -42,6 +42,8 @@ export const camposFamilia = {
 export const solicitudPublicaBody = z.object({
   ...camposFamilia,
   consentimientoPrivacidad: z.literal(true, { error: 'Debes aceptar la política de privacidad.' }),
+  /** "Vía propia" (false) o "Asignada por la Junta (SNEC)" (true). */
+  asignadaSnec: z.boolean().default(false),
   /** Honeypot anti-bots: el front lo deja oculto y vacío. */
   website: z.string().max(0).optional(),
 });
@@ -95,6 +97,11 @@ const lista = <T extends [string, ...string[]]>(valores: T) =>
 
 const columnas = COLUMNAS_PIPELINE.map((c) => c.id) as unknown as [string, ...string[]];
 
+const booleano = z
+  .enum(['true', 'false'])
+  .optional()
+  .transform((v) => (v === undefined ? undefined : v === 'true'));
+
 export const listarQuery = z.object({
   /** bandeja = pendientes de admisión; pipeline = todo menos descartadas/no admitidas */
   vista: z.enum(['bandeja', 'pipeline', 'todas']).default('todas'),
@@ -103,10 +110,13 @@ export const listarQuery = z.object({
   familiaVia: lista(familiaViaEnum.enumValues as unknown as [string, ...string[]]),
   curso: z.coerce.number().int().min(1).max(2).optional(),
   canal: lista(canalSolicitudEnum.enumValues as unknown as [string, ...string[]]),
-  asignadaSnec: z
-    .enum(['true', 'false'])
-    .optional()
-    .transform((v) => (v === undefined ? undefined : v === 'true')),
+  asignadaSnec: booleano,
+  /** "Entrevista sin notas": entrevista programada sin boletín. */
+  notasPendientes: booleano,
+  /** "Familia ya vinculada": la misma comprobación que la revisión. */
+  familiaVinculada: booleano,
+  /** "Reserva por vencer": pendiente a 3 días o menos del plazo, o vencida. */
+  reservaPorVencer: booleano,
   responsableId: z.string().uuid().optional(),
   /** Busca por alumna, familia, correo, teléfono o código. */
   q: z.string().trim().max(100).optional(),
@@ -118,6 +128,10 @@ export const listarQuery = z.object({
 export const pipelineQuery = listarQuery.omit({ vista: true, columna: true, page: true, orden: true }).extend({
   /** Tarjetas por columna en la primera carga; el resto se pide con /solicitudes?columna=… */
   porColumna: z.coerce.number().int().min(1).max(200).default(30),
+});
+
+export const respuestasVistasBody = z.object({
+  eventoIds: z.array(z.string().uuid()).min(1).max(200),
 });
 
 export const idParam = z.object({ id: z.string().uuid() });

@@ -2,6 +2,7 @@ import cron, { type ScheduledTask } from 'node-cron';
 import { pool } from '../lib/db';
 import { logger } from '../lib/logger';
 import { liberarAtascados, procesarOutbox } from '../correo/outbox';
+import { recordatoriosPago, vencerReservas } from '../modules/reservas/reservas.service';
 import { caducarPropuestas, recordatoriosEntrevista, recordatoriosPropuesta } from './recordatorios';
 
 /**
@@ -41,7 +42,9 @@ export function arrancarTareas(): () => void {
         await caducarPropuestas();
         const p = await recordatoriosPropuesta();
         const e = await recordatoriosEntrevista();
-        if (p || e) logger.info({ propuestas: p, entrevistas: e }, 'Recordatorios encolados');
+        await vencerReservas();
+        const pagos = await recordatoriosPago();
+        if (p || e || pagos) logger.info({ propuestas: p, entrevistas: e, pagos }, 'Recordatorios encolados');
       }),
     ),
   ];

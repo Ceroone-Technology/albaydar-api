@@ -5,7 +5,8 @@ API de la plataforma de gestión académica del Centro Educativo Albaydar. Esta 
 - **Acceso:** usuarios con contraseña, cuatro perfiles (Dirección superadministrador, Administración, Secretaría, Comercial) y matriz de permisos ver/editar por módulo.
 - **Admisión:** solicitud web → revisión (5 comprobaciones) → pedir que complete → citación.
 - **Citación:** agenda por jornada laboral (L–V 8:00–18:00); 1 a 3 fechas que quedan reservadas hasta que la familia elige; cambio solo en las 24 h siguientes; entrevista en el calendario con invitación .ics.
-- **Comunicaciones:** todos los correos salen de plantillas HTML editables (crear, editar, eliminar, vista previa, prueba e histórico), incluidos los dos recordatorios.
+- **Evaluación y reserva de plaza:** decisión de admisión con notificación (admitida, en espera con posición, no admitida); reserva de 300 € a 15 días, configurable; cobros manuales (transferencia o efectivo) con recibo R, pagos parciales y anulación; recordatorio a 3 días y aviso de reserva vencida.
+- **Comunicaciones:** todos los correos salen de plantillas HTML editables (crear, editar, eliminar, vista previa, prueba e histórico), incluidos los recordatorios.
 
 Node.js 20+ · TypeScript · Express 5 · PostgreSQL 16 · Drizzle ORM · Zod · JWT · Nodemailer.
 
@@ -83,6 +84,9 @@ src/
     solicitudes/           alta, bandeja, kanban, revisión, pedir que complete, estados
     citacion/              proponer fechas y página pública de cita
     entrevistas/           calendario y lista
+    evaluacion/            registrar la decisión de admisión y notificar
+    reservas/              reserva de plaza, recordatorio y vencimiento
+    cobros/                cobros manuales, recibos y anulación
     comunicaciones/        plantillas de correo, vista previa, prueba e histórico
     documentos/ publico/ catalogo/
 drizzle/                   migraciones SQL

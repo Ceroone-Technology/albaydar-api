@@ -35,6 +35,12 @@ const schema = z.object({
   SMTP_PASS: z.string().optional().transform((v) => v || undefined),
   MAIL_FROM: z.string().default('Centro Educativo Albaydar <admisiones@albaydar.org>'),
   MAIL_SECRETARIA: z.string().email().default('secretaria@albaydar.org'),
+  /** Avisos de cobros (reserva vencida). Si no se indica, van solo a MAIL_SECRETARIA. */
+  MAIL_ADMINISTRACION: z
+    .string()
+    .optional()
+    .transform((v) => v || undefined)
+    .pipe(z.string().email('MAIL_ADMINISTRACION debe ser un correo.').optional()),
   /**
    * Demostraciones: si se indica, TODOS los correos van a este buzón (con el
    * destinatario real en el asunto). Evita escribir a direcciones de ejemplo reales.

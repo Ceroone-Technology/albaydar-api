@@ -1,29 +1,37 @@
-import { and, asc, count, desc, eq, ilike, inArray, isNull, notInArray, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type { z } from 'zod';
 import { env } from '../../config/env';
 import {
   correosSalientes,
   documentos,
   entrevistas,
+  eventosVistos,
+  familias,
   franjasAgenda,
   propuestasCita,
   solicitudEventos,
   solicitudes,
   tokensPublicos,
   usuarios,
+  reservas,
   vias,
+  type Entrevista,
   type EstadoSolicitud,
+  type PropuestaCita,
   type Solicitud,
   type Via,
 } from '../../db/schema';
 import { db, type Tx } from '../../lib/db';
 import { badRequest, conflict, gone, notFound } from '../../lib/errors';
 import { hashToken } from '../../lib/crypto';
-import { sumarDias } from '../../lib/fechas';
+import { diaLargo, fechaLocal, franja, sumarDias } from '../../lib/fechas';
 import { enviarEvento } from '../../correo/enviar';
 import { boton, lista } from '../../correo/plantillas';
 import {
   calcularRevision,
+  calcularRevisiones,
+  posicionesEnEspera,
   cambiarEstado,
   crearToken,
   datosCorreo,
@@ -34,17 +42,25 @@ import {
   urlCompletar,
   type Actor,
 } from './comun';
+import { anularReservaVigente, reservasDe } from '../reservas/reservas.service';
 import {
   ACCION_REQUERIDA,
   COLUMNAS_PIPELINE,
+  DECISIONES_ADMISION,
+  DIAS_AVISO_RESPUESTAS,
+  DIAS_RESERVA_POR_VENCER,
   ESTADOS_BANDEJA,
+  ESTADOS_PUEDE_PEDIR_COMPLETAR,
   ETAPA,
   ETIQUETA_CANAL,
   ETIQUETA_ESTADO,
+  ETIQUETA_ESTADO_ENTREVISTA,
   ETIQUETA_FAMILIA_VIA,
+  EVENTOS_RESPUESTA_FAMILIA,
   TONO_ESTADO,
   columnaDe,
   puedeTransicionar,
+  siguientesEstados,
   type ColumnaPipeline,
 } from './dominio';
 import type {
@@ -82,6 +98,7 @@ export async function crearDesdeWeb(d: z.infer<typeof solicitudPublicaBody>, ip?
         modalidadInteres: d.modalidadInteres,
         esAlumnaNueva: true,
         canal: 'SOLICITUD_WEB',
+        asignadaSnec: d.asignadaSnec,
         tutorNombre: d.tutorNombre,
         email: d.email,
         telefono: d.telefono,
@@ -90,7 +107,10 @@ export async function crearDesdeWeb(d: z.infer<typeof solicitudPublicaBody>, ip?
         ipOrigen: ip,
       })
       .returning();
-    await registrarEvento(tx, s!.id, { tipo: 'familia' }, 'CREADA', { aEstado: 'RECIBIDA', detalle: { canal: 'SOLICITUD_WEB' } });
+    await registrarEvento(tx, s!.id, { tipo: 'familia' }, 'CREADA', {
+      aEstado: 'RECIBIDA',
+      detalle: { canal: 'SOLICITUD_WEB', asignadaSnec: d.asignadaSnec },
+    });
     await enviarEvento(tx, 'SOLICITUD_RECIBIDA', { para: s!.email, vars: datosCorreo(s!, via), solicitudId: s!.id });
     return { codigo: s!.codigo };
   });
@@ -134,6 +154,16 @@ export async function crearInterna(d: z.infer<typeof solicitudInternaBody>, usua
 
 type Filtros = Omit<z.infer<typeof listarQuery>, 'page' | 'pageSize' | 'orden'>;
 
+/** Otra solicitud de la misma familia (filtro "Familia ya vinculada"). */
+const otra = alias(solicitudes, 'otra');
+
+/** Lo que el usuario puede hacer: decide qué transiciones se ofrecen en cada tarjeta. */
+export interface Permisos {
+  editar: boolean;
+  evaluar: boolean;
+  cobrar: boolean;
+}
+
 function condiciones(f: Partial<Filtros>): SQL[] {
   const c: SQL[] = [];
   if (f.vista === 'bandeja') c.push(inArray(solicitudes.estado, ESTADOS_BANDEJA));
@@ -148,6 +178,29 @@ function condiciones(f: Partial<Filtros>): SQL[] {
   if (f.canal?.length) c.push(inArray(solicitudes.canal, f.canal as Solicitud['canal'][]));
   if (f.asignadaSnec !== undefined) c.push(eq(solicitudes.asignadaSnec, f.asignadaSnec));
   if (f.responsableId) c.push(eq(solicitudes.responsableId, f.responsableId));
+  if (f.notasPendientes) {
+    c.push(
+      eq(solicitudes.estado, 'ENTREVISTA_PROGRAMADA'),
+      sql`not exists (select 1 from ${documentos} where ${documentos.solicitudId} = ${solicitudes.id} and ${documentos.tipo} = 'BOLETIN_NOTAS' and ${documentos.eliminadoEn} is null)`,
+    );
+  }
+  if (f.reservaPorVencer) {
+    // Pendiente a 3 días o menos del plazo, o ya vencida.
+    const limite = fechaLocal(sumarDias(new Date(), DIAS_RESERVA_POR_VENCER));
+    c.push(
+      sql`exists (select 1 from ${reservas} where ${reservas.solicitudId} = ${solicitudes.id} and (${reservas.estado} = 'VENCIDA' or (${reservas.estado} = 'PENDIENTE' and ${reservas.fechaLimite} <= ${limite})))`,
+    );
+  }
+  if (f.familiaVinculada) {
+    // La misma regla que la comprobación "Familia ya vinculada" (calcularRevisiones).
+    c.push(sql`(
+      (${solicitudes.email} <> '' and exists (select 1 from ${familias} where ${familias.email} = ${solicitudes.email}))
+      or exists (
+        select 1 from ${solicitudes} ${otra} where ${otra.id} <> ${solicitudes.id}
+        and ((${solicitudes.email} <> '' and ${otra.email} = ${solicitudes.email}) or ${otra.telefono} = ${solicitudes.telefono})
+      )
+    )`);
+  }
   if (f.q) {
     const t = `%${f.q.replace(/[%_\\]/g, (m) => '\\' + m)}%`;
     c.push(
@@ -179,9 +232,12 @@ const columnasResumen = {
   revision: solicitudes.revision,
   createdAt: solicitudes.createdAt,
   updatedAt: solicitudes.updatedAt,
+  viaId: vias.id,
   viaFamilia: vias.familia,
   viaCurso: vias.curso,
   viaNombre: vias.nombre,
+  viaPlazas: vias.plazas,
+  viaPlazasJunta: vias.plazasAsignadasPorJunta,
   responsableId: solicitudes.responsableId,
   responsableNombre: usuarios.nombre,
 };
@@ -207,10 +263,92 @@ function aResumen(r: FilaResumen) {
     canal: r.canal,
     asignadaSnec: r.asignadaSnec,
     responsable: r.responsableId ? { id: r.responsableId, nombre: r.responsableNombre } : null,
-    revision: r.revision,
     creadaEn: r.createdAt,
     actualizadaEn: r.updatedAt,
   };
+}
+
+/** Reserva que aún se puede cobrar: "Registrar cobro" solo se ofrece con una así. */
+const reservaAbierta = (r: { estado: string } | null) => r?.estado === 'PENDIENTE' || r?.estado === 'VENCIDA';
+
+/**
+ * Lo que la bandeja y el kanban pintan de cada fila, en pocas consultas para toda la página:
+ * comprobaciones (recalculadas), propuesta vigente, entrevista, boletín y a dónde se puede mover.
+ */
+async function enriquecer(filas: FilaResumen[], p: Permisos) {
+  if (!filas.length) return [];
+  const ids = filas.map((f) => f.id);
+  // Fuera de transacción (pool): las consultas van en paralelo, cada una por su conexión.
+  const [revisiones, props, ents, docs, reservaDe, posiciones] = await Promise.all([
+    calcularRevisiones(
+      db,
+      filas.map((f) => ({ ...f, via: { id: f.viaId, nombre: f.viaNombre, plazas: f.viaPlazas, plazasAsignadasPorJunta: f.viaPlazasJunta } })),
+    ),
+    db
+      .select()
+      .from(propuestasCita)
+      .where(and(inArray(propuestasCita.solicitudId, ids), ne(propuestasCita.estado, 'ANULADA')))
+      .orderBy(desc(propuestasCita.createdAt)),
+    db
+      .select()
+      .from(entrevistas)
+      .where(and(inArray(entrevistas.solicitudId, ids), ne(entrevistas.estado, 'CANCELADA')))
+      .orderBy(desc(entrevistas.createdAt)),
+    db
+      .selectDistinct({ id: documentos.solicitudId })
+      .from(documentos)
+      .where(and(inArray(documentos.solicitudId, ids), eq(documentos.tipo, 'BOLETIN_NOTAS'), isNull(documentos.eliminadoEn))),
+    reservasDe(db, ids),
+    posicionesEnEspera(db, filas.filter((f) => f.estado === 'EN_ESPERA').map((f) => f.viaId)),
+  ]);
+  // Ordenadas de más reciente a más antigua: la primera de cada solicitud es la vigente.
+  const propuestaDe = new Map<string, PropuestaCita>();
+  for (const x of props) if (!propuestaDe.has(x.solicitudId)) propuestaDe.set(x.solicitudId, x);
+  const entrevistaDe = new Map<string, Entrevista>();
+  for (const x of ents) if (!entrevistaDe.has(x.solicitudId)) entrevistaDe.set(x.solicitudId, x);
+  const huecos = propuestaDe.size
+    ? await db
+        .select()
+        .from(franjasAgenda)
+        .where(inArray(franjasAgenda.propuestaId, [...propuestaDe.values()].map((x) => x.id)))
+        .orderBy(asc(franjasAgenda.inicio))
+    : [];
+  const conNotas = new Set(docs.map((d) => d.id));
+
+  return filas.map((f) => {
+    const revision = revisiones.get(f.id)!;
+    const pr = propuestaDe.get(f.id);
+    const e = entrevistaDe.get(f.id);
+    const reserva = reservaDe.get(f.id) ?? null;
+    return {
+      ...aResumen(f),
+      revision,
+      propuesta: pr
+        ? {
+            id: pr.id,
+            estado: pr.estado,
+            duracion: pr.duracionMin,
+            enviadaEn: pr.createdAt,
+            respondidaEn: pr.respondidaEn,
+            reservadasHasta: pr.expiraEn,
+            alternativa: pr.estado === 'OTRA_FRANJA' ? { franja: pr.franjaSolicitada, prefiereLlamada: pr.prefiereLlamada } : null,
+            fechas: huecos
+              .filter((h) => h.propuestaId === pr.id)
+              .map((h) => ({ id: h.id, inicio: h.inicio, fin: h.fin, dia: diaLargo(h.inicio), franja: franja(h.inicio, h.fin), estado: h.estado })),
+          }
+        : null,
+      entrevista: e
+        ? {
+            id: e.id, inicio: e.inicio, fin: e.fin, dia: diaLargo(e.inicio), franja: franja(e.inicio, e.fin),
+            estado: e.estado, estadoEtiqueta: ETIQUETA_ESTADO_ENTREVISTA[e.estado], notas: e.notas,
+          }
+        : null,
+      notasSubidas: conNotas.has(f.id),
+      reserva,
+      posicionEspera: posiciones.get(f.id) ?? null,
+      siguientes: siguientesEstados(f.estado, { ...p, puedeCitar: revision.puedeCitar, reservaPendiente: reservaAbierta(reserva) }),
+    };
+  });
 }
 
 type FilaResumen = Awaited<ReturnType<typeof consultaBase>>[number];
@@ -223,7 +361,10 @@ function consultaBase(tx: Tx) {
     .leftJoin(usuarios, eq(usuarios.id, solicitudes.responsableId));
 }
 
-export async function listar(q: z.infer<typeof listarQuery>) {
+const contar = (where: SQL | undefined) =>
+  db.select({ n: count() }).from(solicitudes).innerJoin(vias, eq(vias.id, solicitudes.viaId)).where(where);
+
+export async function listar(q: z.infer<typeof listarQuery>, p: Permisos) {
   const where = and(...condiciones(q));
   const orden =
     q.orden === 'antiguas' ? asc(solicitudes.createdAt) : q.orden === 'actualizadas' ? desc(solicitudes.updatedAt) : desc(solicitudes.createdAt);
@@ -233,28 +374,37 @@ export async function listar(q: z.infer<typeof listarQuery>) {
       .orderBy(orden, desc(solicitudes.id))
       .limit(q.pageSize)
       .offset((q.page - 1) * q.pageSize),
-    db.select({ n: count() }).from(solicitudes).innerJoin(vias, eq(vias.id, solicitudes.viaId)).where(where),
+    contar(where),
   ]);
-  return { items: filas.map(aResumen), page: q.page, pageSize: q.pageSize, total: total?.n ?? 0 };
+  return { items: await enriquecer(filas, p), page: q.page, pageSize: q.pageSize, total: total?.n ?? 0 };
 }
 
 /**
  * Kanban: totales por columna + las primeras N tarjetas de cada una.
  * Para cientos de tarjetas, el front pide más con GET /solicitudes?columna=…&page=2
+ * `total` = solicitudes en el embudo sin filtros; `coinciden` = las que cumplen los filtros.
  */
-export async function pipeline(q: z.infer<typeof pipelineQuery>) {
+export async function pipeline(q: z.infer<typeof pipelineQuery>, p: Permisos) {
   const base = condiciones({ ...q, vista: 'pipeline' });
-  const columnas = await Promise.all(
-    COLUMNAS_PIPELINE.map(async (col) => {
-      const where = and(...base, inArray(solicitudes.estado, [...col.estados]));
-      const [filas, [total]] = await Promise.all([
-        consultaBase(db).where(where).orderBy(desc(solicitudes.updatedAt)).limit(q.porColumna),
-        db.select({ n: count() }).from(solicitudes).innerJoin(vias, eq(vias.id, solicitudes.viaId)).where(where),
-      ]);
-      return { id: col.id as ColumnaPipeline, titulo: col.titulo, estados: col.estados, total: total?.n ?? 0, items: filas.map(aResumen) };
-    }),
-  );
-  return { columnas };
+  const [columnas, [todas]] = await Promise.all([
+    Promise.all(
+      COLUMNAS_PIPELINE.map(async (col) => {
+        const where = and(...base, inArray(solicitudes.estado, [...col.estados]));
+        const [filas, [total]] = await Promise.all([
+          consultaBase(db).where(where).orderBy(desc(solicitudes.updatedAt)).limit(q.porColumna),
+          contar(where),
+        ]);
+        return { id: col.id as ColumnaPipeline, titulo: col.titulo, estados: col.estados, total: total?.n ?? 0, filas };
+      }),
+    ),
+    contar(and(...condiciones({ vista: 'pipeline' }))),
+  ]);
+  const items = new Map((await enriquecer(columnas.flatMap((c) => c.filas), p)).map((i) => [i.id, i]));
+  return {
+    total: todas?.n ?? 0,
+    coinciden: columnas.reduce((t, c) => t + c.total, 0),
+    columnas: columnas.map(({ filas, ...c }) => ({ ...c, items: filas.map((f) => items.get(f.id)!) })),
+  };
 }
 
 /** Contadores para el badge del menú y el dashboard. */
@@ -267,7 +417,8 @@ export async function contadores() {
 
 // ── Detalle ─────────────────────────────────────────────────────────────────
 
-export async function detalle(id: string) {
+/** Ficha. Las comprobaciones se recalculan en cada lectura (las plazas cambian con otras solicitudes). */
+export async function detalle(id: string, p: Permisos) {
   const { s, via } = await obtenerSolicitud(db, id);
   const revision = await calcularRevision(db, s, via);
 
@@ -324,6 +475,9 @@ export async function detalle(id: string) {
     .where(eq(correosSalientes.solicitudId, id))
     .orderBy(desc(correosSalientes.createdAt));
 
+  const reserva = (await reservasDe(db, [id])).get(id) ?? null;
+  const posicionEspera = s.estado === 'EN_ESPERA' ? ((await posicionesEnEspera(db, [via.id])).get(id) ?? null) : null;
+
   return {
     ...s,
     estadoEtiqueta: ETIQUETA_ESTADO[s.estado],
@@ -333,12 +487,67 @@ export async function detalle(id: string) {
     via: { ...via, etiqueta: ETIQUETA_FAMILIA_VIA[via.familia], etapa: ETAPA[via.familia] },
     responsable: responsable ?? null,
     revision,
+    siguientes: siguientesEstados(s.estado, { ...p, puedeCitar: revision.puedeCitar, reservaPendiente: reservaAbierta(reserva) }),
+    reserva,
+    posicionEspera,
     propuesta: propuesta ? { ...propuesta, huecos } : null,
     entrevista: entrevista ?? null,
     documentos: docs,
     correos,
     eventos,
   };
+}
+
+// ── Aviso "la familia ya eligió fecha" ──────────────────────────────────────
+
+/**
+ * Respuestas de las familias de los últimos días que este usuario aún no ha visto.
+ * Al elegir fecha, la solicitud sale de la bandeja: este aviso es lo que lo cuenta.
+ */
+export async function respuestasFamilia(usuarioId: string) {
+  const filas = await db
+    .select({ ev: solicitudEventos, s: solicitudes, e: entrevistas })
+    .from(solicitudEventos)
+    .innerJoin(solicitudes, eq(solicitudes.id, solicitudEventos.solicitudId))
+    .leftJoin(entrevistas, eq(entrevistas.id, sql`(${solicitudEventos.detalle}->>'entrevistaId')::uuid`))
+    .leftJoin(eventosVistos, and(eq(eventosVistos.eventoId, solicitudEventos.id), eq(eventosVistos.usuarioId, usuarioId)))
+    .where(
+      and(
+        inArray(solicitudEventos.tipo, [...EVENTOS_RESPUESTA_FAMILIA]),
+        gte(solicitudEventos.createdAt, sumarDias(new Date(), -DIAS_AVISO_RESPUESTAS)),
+        isNull(eventosVistos.eventoId),
+      ),
+    )
+    .orderBy(desc(solicitudEventos.createdAt));
+
+  return {
+    items: filas.map(({ ev, s, e }) => {
+      // La fecha elegida en ese momento (si luego la cambió, el evento siguiente trae la nueva).
+      const inicio = typeof ev.detalle?.inicio === 'string' ? new Date(ev.detalle.inicio) : e?.inicio;
+      const fin = inicio && e ? new Date(inicio.getTime() + (e.fin.getTime() - e.inicio.getTime())) : null;
+      return {
+        eventoId: ev.id,
+        tipo: ev.tipo,
+        fecha: ev.createdAt,
+        solicitud: { id: s.id, codigo: s.codigo, alumna: `${s.alumnaNombre} ${s.alumnaApellidos}`.trim(), estado: s.estado },
+        cita: inicio && fin ? { inicio, fin, dia: diaLargo(inicio), franja: franja(inicio, fin) } : null,
+      };
+    }),
+  };
+}
+
+/** "Visto": no se vuelve a avisar a este usuario de esas respuestas. Ignora ids que no sean respuestas. */
+export async function marcarRespuestasVistas(usuarioId: string, eventoIds: string[]) {
+  const validos = await db
+    .select({ id: solicitudEventos.id })
+    .from(solicitudEventos)
+    .where(and(inArray(solicitudEventos.id, eventoIds), inArray(solicitudEventos.tipo, [...EVENTOS_RESPUESTA_FAMILIA])));
+  if (validos.length) {
+    await db
+      .insert(eventosVistos)
+      .values(validos.map((v) => ({ usuarioId, eventoId: v.id })))
+      .onConflictDoNothing();
+  }
 }
 
 // ── Gestión interna ─────────────────────────────────────────────────────────
@@ -386,7 +595,7 @@ export async function revisar(id: string, usuarioId: string) {
 export async function pedirQueComplete(id: string, d: z.infer<typeof pedirCompletarBody>, usuarioId: string) {
   return db.transaction(async (tx) => {
     const { s, via } = await obtenerSolicitud(tx, id, true);
-    if (!['RECIBIDA', 'EN_REVISION', 'PENDIENTE_COMPLETAR'].includes(s.estado)) {
+    if (!ESTADOS_PUEDE_PEDIR_COMPLETAR.includes(s.estado)) {
       throw conflict('ESTADO_NO_PERMITE', `No se puede pedir que complete una solicitud en estado “${ETIQUETA_ESTADO[s.estado]}”.`);
     }
     if (!s.email) throw badRequest('SIN_CORREO', 'La solicitud no tiene correo de contacto: completa los datos por teléfono.');
@@ -422,6 +631,10 @@ export async function cambiarEstadoManual(id: string, d: z.infer<typeof cambiarE
   return db.transaction(async (tx) => {
     const { s } = await obtenerSolicitud(tx, id, true);
     if (s.estado === d.estado) return { estado: s.estado };
+    // Las decisiones de admisión notifican y crean o anulan la reserva: van por POST /decision.
+    if (DECISIONES_ADMISION.includes(d.estado) && puedeTransicionar(s.estado, d.estado)) {
+      throw conflict('ACCION_REQUERIDA', `Para pasar a “${ETIQUETA_ESTADO[d.estado]}” usa “Registrar decisión”.`, { accion: 'DECIDIR' });
+    }
     if (!puedeTransicionar(s.estado, d.estado)) {
       const accion = ACCION_REQUERIDA[d.estado];
       throw conflict(
@@ -432,7 +645,10 @@ export async function cambiarEstadoManual(id: string, d: z.infer<typeof cambiarE
         accion ? { accion } : undefined,
       );
     }
-    await cambiarEstado(tx, s, d.estado, { tipo: 'usuario', usuarioId }, 'ESTADO_CAMBIADO', d.motivo ? { motivo: d.motivo } : undefined);
+    const actor: Actor = { tipo: 'usuario', usuarioId };
+    // Descartar una admitida: su reserva pendiente deja de valer (si tiene cobros, 409).
+    if (s.estado === 'ADMITIDA') await anularReservaVigente(tx, s.id, `Pasa a ${ETIQUETA_ESTADO[d.estado]}`, actor);
+    await cambiarEstado(tx, s, d.estado, actor, 'ESTADO_CAMBIADO', d.motivo ? { motivo: d.motivo } : undefined);
     return { estado: d.estado };
   });
 }

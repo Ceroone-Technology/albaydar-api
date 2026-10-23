@@ -21,6 +21,11 @@
 | 19 | Ficheros | En tu equipo por ahora; en la nube cuando haya servidor | Carpeta `storage/uploads` del proyecto; interfaz lista para cambiar a la nube |
 | 21 | Acceso del personal | Usuario y contraseña, con módulo de usuarios y roles | Usuarios, roles y matriz de permisos editables |
 | — | Perfiles (reunión del 5 de octubre) | Dirección (superadministrador), Administración, Secretaría y Comercial/Promoción | Cuatro roles de serie; Dirección activa o desactiva ver/editar por módulo |
+| — | Importe de la reserva (21 de octubre) | 300 € para todas las vías, de momento | `ajustes.reserva`, editable; admite importes distintos por vía |
+| — | IBAN del centro (21 de octubre) | Provisional `ES91 2100 0418 4502 0005 1332` (ficticio) | En `ajustes.reserva`; llega a las plantillas como variable |
+| — | Formas de pago (21 de octubre) | Transferencia y efectivo | `ajustes.reserva.metodos` |
+| — | Conciliación (21 de octubre) | Registro manual, sin importar extractos | `POST /cobros` |
+| — | Plazo de pago | 15 días naturales desde la admisión (diagrama de flujo) | `ajustes.reserva.plazoDias` |
 
 ## Pendiente de validar
 
@@ -50,3 +55,16 @@
 
 11. **Correo en producción:** un remitente del propio centro (p. ej. `admisiones@albaydar.org`) con su servidor de correo, para que no acabe en spam. Gmail sirve solo para la demo.
 12. **Nube para los ficheros:** qué proveedor (S3, Azure, Google Cloud) y en qué región (los datos de menores deberían quedarse en la UE).
+
+**Kanban**
+
+13. **Título de la primera columna.** El embudo cuenta todas las solicitudes, también las que siguen en la bandeja (acordado con el front el 21/10/2026). Por eso la columna "Solicitud revisada" del mockup contiene también las recién recibidas y las pendientes de completar. El front propone llamarla "Nuevas y en revisión". ¿Cambiamos el título? Hasta que el cliente lo confirme se mantiene el del mockup.
+
+**Reserva de plaza y cobros**
+
+14. **Reserva vencida sin pagar.** Hoy queda "vencida", se avisa a secretaría y administración, y la plaza sigue ocupada hasta que alguien decida (si la familia paga tarde, se registra igual). ¿Lo dejamos así o la plaza se libera sola pasados X días?
+15. **Devolución de la reserva.** Si la alumna no llega a matricularse, ¿se devuelve? Hoy se puede anular el cobro con un motivo (por ejemplo, "devuelto"), pero la devolución del dinero se hace fuera de la plataforma.
+16. **Numeración de los recibos.** Hoy es correlativa por año natural: R-2026-0001, R-2026-0002… ¿Debe reiniciarse por curso escolar (2027/28)? ¿El centro emite ya recibos o facturas en otra herramienta? Si es así, conviene usar una sola numeración.
+17. **Textos de los correos de lista de espera y de no admitida.** Hoy llevan un texto provisional; el centro puede cambiarlo desde Comunicaciones.
+18. **IBAN real del centro** para sustituir al provisional.
+19. **Datos fiscales del centro para el recibo:** razón social y NIF. Hoy el recibo lleva el nombre, la dirección y el teléfono del centro, y la mención de exención de IVA.

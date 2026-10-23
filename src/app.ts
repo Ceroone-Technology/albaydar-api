@@ -12,6 +12,8 @@ import { errorHandler, notFoundHandler } from './middleware/error-handler';
 import { agendaRouter } from './modules/agenda/agenda.routes';
 import { authRouter } from './modules/auth/auth.routes';
 import { catalogoRouter } from './modules/catalogo/catalogo.routes';
+import { cobrosRouter } from './modules/cobros/cobros.routes';
+import { reservasRouter } from './modules/reservas/reservas.routes';
 import { comunicacionesRouter } from './modules/comunicaciones/comunicaciones.routes';
 import { rolesRouter } from './modules/permisos/permisos.routes';
 import { entrevistasRouter } from './modules/entrevistas/entrevistas.routes';
@@ -46,17 +48,20 @@ export function crearApp() {
   api.use('/auth', authRouter);
   api.use('/public', publicoRouter);
 
-  // Todo lo demás requiere sesión.
-  const privado = Router();
-  privado.use(requireAuth);
-  privado.use('/solicitudes', solicitudesRouter);
-  privado.use('/agenda', agendaRouter);
-  privado.use('/entrevistas', entrevistasRouter);
-  privado.use('/usuarios', usuariosRouter);
-  privado.use('/roles', rolesRouter);
-  privado.use('/comunicaciones', comunicacionesRouter);
-  privado.use('/catalogo', catalogoRouter);
-  api.use(privado);
+  // Todo lo demás requiere sesión. Se exige por prefijo, no en la raíz: así una ruta
+  // que no existe responde 404 y no 401 (un 401 cierra la sesión en el front).
+  const privados: [string, Router][] = [
+    ['/solicitudes', solicitudesRouter],
+    ['/agenda', agendaRouter],
+    ['/entrevistas', entrevistasRouter],
+    ['/usuarios', usuariosRouter],
+    ['/roles', rolesRouter],
+    ['/comunicaciones', comunicacionesRouter],
+    ['/catalogo', catalogoRouter],
+    ['/reservas', reservasRouter],
+    ['/cobros', cobrosRouter],
+  ];
+  for (const [ruta, router] of privados) api.use(ruta, requireAuth, router);
 
   app.use('/api', api);
   app.use(notFoundHandler);

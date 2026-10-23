@@ -1,4 +1,4 @@
-import { and, count, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { env } from '../../config/env';
 import {
   familias,
@@ -15,7 +15,7 @@ import type { Tx } from '../../lib/db';
 import { conflict, notFound } from '../../lib/errors';
 import { hashToken, nuevoToken } from '../../lib/crypto';
 import { nombrePila, nombreVia } from './dominio';
-import { revisar, type ResultadoRevision } from './revision';
+import { revisar, type EntradaRevision, type ResultadoRevision } from './revision';
 
 export type Actor = { tipo: 'usuario'; usuarioId: string } | { tipo: 'familia' } | { tipo: 'sistema' };
 
@@ -62,15 +62,38 @@ export async function cambiarEstado(
   await registrarEvento(tx, s.id, actor, tipo, { deEstado: s.estado, aEstado: a, detalle });
 }
 
+/** Contador atómico por clave: no repite ni con peticiones simultáneas. */
+export async function siguienteValor(tx: Tx, clave: string): Promise<number> {
+  const [r] = await tx
+    .insert(secuencias)
+    .values({ clave, valor: 1 })
+    .onConflictDoUpdate({ target: secuencias.clave, set: { valor: sql`${secuencias.valor} + 1` } })
+    .returning({ valor: secuencias.valor });
+  return r!.valor;
+}
+
 /** SOL-2026-0001 — contador por año, atómico. */
 export async function siguienteCodigo(tx: Tx, fecha = new Date()): Promise<string> {
   const anio = fecha.getFullYear();
-  const [r] = await tx
-    .insert(secuencias)
-    .values({ clave: `solicitud-${anio}`, valor: 1 })
-    .onConflictDoUpdate({ target: secuencias.clave, set: { valor: sql`${secuencias.valor} + 1` } })
-    .returning({ valor: secuencias.valor });
-  return `SOL-${anio}-${String(r!.valor).padStart(4, '0')}`;
+  return `SOL-${anio}-${String(await siguienteValor(tx, `solicitud-${anio}`)).padStart(4, '0')}`;
+}
+
+/** Posición de cada solicitud EN_ESPERA dentro de su vía, por orden de entrada en la lista. */
+export async function posicionesEnEspera(tx: Tx, viaIds: string[]): Promise<Map<string, number>> {
+  if (!viaIds.length) return new Map();
+  const filas = await tx
+    .select({ id: solicitudes.id, viaId: solicitudes.viaId })
+    .from(solicitudes)
+    .where(and(eq(solicitudes.estado, 'EN_ESPERA'), inArray(solicitudes.viaId, [...new Set(viaIds)])))
+    .orderBy(sql`${solicitudes.enEsperaDesde} asc nulls last`, asc(solicitudes.createdAt));
+  const contador = new Map<string, number>();
+  return new Map(
+    filas.map((f) => {
+      const n = (contador.get(f.viaId) ?? 0) + 1;
+      contador.set(f.viaId, n);
+      return [f.id, n];
+    }),
+  );
 }
 
 export async function obtenerSolicitud(tx: Tx, id: string, bloquear = false) {
@@ -122,16 +145,62 @@ export async function plazasOcupadas(tx: Tx, viaId: string) {
 }
 
 export async function calcularRevision(tx: Tx, s: Solicitud, via: Via): Promise<ResultadoRevision> {
-  const [familia] = await tx.select({ vinculo: familias.vinculo }).from(familias).where(eq(familias.email, s.email)).limit(1);
-  const otras = await tx
-    .select({ codigo: solicitudes.codigo, n: solicitudes.alumnaNombre, a: solicitudes.alumnaApellidos })
+  return (await calcularRevisiones(tx, [{ ...s, via }])).get(s.id)!;
+}
+
+export type EntradaLote = Omit<EntradaRevision, 'via' | 'familia' | 'otrasSolicitudes'> & {
+  id: string;
+  via: Pick<Via, 'id' | 'nombre' | 'plazas' | 'plazasAsignadasPorJunta'>;
+};
+
+/**
+ * Las cinco comprobaciones de varias solicitudes a la vez (bandeja, kanban):
+ * tres consultas en total, no tres por fila. Un correo vacío (alta telefónica)
+ * no cuenta como vínculo familiar.
+ */
+export async function calcularRevisiones(tx: Tx, filas: EntradaLote[]): Promise<Map<string, ResultadoRevision>> {
+  if (!filas.length) return new Map();
+  const viaIds = [...new Set(filas.map((f) => f.via.id))];
+  const emails = [...new Set(filas.map((f) => f.email?.trim()).filter((e): e is string => !!e))];
+  const telefonos = [...new Set(filas.map((f) => f.telefono?.trim()).filter((t): t is string => !!t))];
+
+  // En serie: dentro de una transacción todas comparten la misma conexión.
+  const ocupadas = await tx
+    .select({ viaId: solicitudes.viaId, n: count() })
     .from(solicitudes)
-    .where(and(ne(solicitudes.id, s.id), or(eq(solicitudes.email, s.email), eq(solicitudes.telefono, s.telefono))))
-    .limit(5);
-  return revisar({
-    ...s,
-    via: { nombre: via.nombre, plazas: via.plazas, plazasAsignadasPorJunta: via.plazasAsignadasPorJunta, ocupadas: await plazasOcupadas(tx, via.id) },
-    familia: familia ?? null,
-    otrasSolicitudes: otras.map((o) => ({ codigo: o.codigo, alumna: `${o.n} ${o.a}` })),
-  });
+    .where(and(inArray(solicitudes.viaId, viaIds), inArray(solicitudes.estado, ESTADOS_OCUPAN_PLAZA)))
+    .groupBy(solicitudes.viaId);
+  const conocidas = emails.length
+    ? await tx.select({ email: familias.email, vinculo: familias.vinculo }).from(familias).where(inArray(familias.email, emails))
+    : [];
+  const relacionadas =
+    emails.length || telefonos.length
+      ? await tx
+          .select({ id: solicitudes.id, codigo: solicitudes.codigo, n: solicitudes.alumnaNombre, a: solicitudes.alumnaApellidos, email: solicitudes.email, telefono: solicitudes.telefono })
+          .from(solicitudes)
+          .where(or(...(emails.length ? [inArray(solicitudes.email, emails)] : []), ...(telefonos.length ? [inArray(solicitudes.telefono, telefonos)] : [])))
+          .orderBy(asc(solicitudes.createdAt))
+      : [];
+
+  const ocupadasPorVia = new Map(ocupadas.map((o) => [o.viaId, o.n]));
+  const ahora = new Date();
+  return new Map(
+    filas.map((f) => {
+      const email = f.email?.trim();
+      const otras = relacionadas
+        .filter((o) => o.id !== f.id && ((!!email && o.email === email) || o.telefono === f.telefono))
+        .slice(0, 5);
+      const familia = email ? conocidas.find((c) => c.email === email) : undefined;
+      const r = revisar(
+        {
+          ...f,
+          via: { nombre: f.via.nombre, plazas: f.via.plazas, plazasAsignadasPorJunta: f.via.plazasAsignadasPorJunta, ocupadas: ocupadasPorVia.get(f.via.id) ?? 0 },
+          familia: familia ? { vinculo: familia.vinculo } : null,
+          otrasSolicitudes: otras.map((o) => ({ codigo: o.codigo, alumna: `${o.n} ${o.a}` })),
+        },
+        ahora,
+      );
+      return [f.id, r];
+    }),
+  );
 }

@@ -15,6 +15,27 @@
       "when": 1792534751717,
       "tag": "0001_agenda_sin_solapes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792560934346,
+      "tag": "0002_avisos_familia",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792567394366,
+      "tag": "0003_reserva_y_cobros",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792583432811,
+      "tag": "0004_reservas_admitidas_antiguas",
+      "breakpoints": true
     }
   ]
 }

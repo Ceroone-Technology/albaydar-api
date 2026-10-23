@@ -10,14 +10,13 @@ import {
   propuestasCita,
   solicitudes,
   vias,
-  type EstadoEntrevista,
 } from '../../db/schema';
 import { db } from '../../lib/db';
 import { conflict, notFound } from '../../lib/errors';
 import { diaLargo, franja, hora, horaLocalAUtc } from '../../lib/fechas';
 import { enviarEvento } from '../../correo/enviar';
 import { cambiarEstado, datosCorreo, obtenerSolicitud, registrarEvento } from '../solicitudes/comun';
-import { ETIQUETA_FAMILIA_VIA } from '../solicitudes/dominio';
+import { ETIQUETA_ESTADO_ENTREVISTA, ETIQUETA_FAMILIA_VIA } from '../solicitudes/dominio';
 import { adjuntoIcs, cancelarEntrevista, liberarFranjas } from '../citacion/citacion.service';
 
 const fecha = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -52,14 +51,6 @@ export const cancelarBody = z.object({
   motivo: z.string().trim().max(500).optional().nullable(),
   notificar: z.boolean().default(true),
 });
-
-const ETIQUETA: Record<EstadoEntrevista, string> = {
-  PROGRAMADA: 'Confirmada',
-  REPROGRAMADA: 'Reprogramada',
-  REALIZADA: 'Realizada',
-  NO_PRESENTADA: 'No presentada',
-  CANCELADA: 'Cancelada',
-};
 
 /** Vista calendario semanal y vista lista (mismo endpoint; el front agrupa). */
 export async function listar(q: z.infer<typeof listarEntrevistasQuery>) {
@@ -103,7 +94,7 @@ export async function listar(q: z.infer<typeof listarEntrevistasQuery>) {
     dia: diaLargo(e.inicio),
     franja: franja(e.inicio, e.fin),
     estado: e.estado,
-    estadoEtiqueta: ETIQUETA[e.estado],
+    estadoEtiqueta: ETIQUETA_ESTADO_ENTREVISTA[e.estado],
     alumna: `${s.alumnaNombre} ${s.alumnaApellidos}`,
     familia: s.tutorNombre,
     telefono: s.telefono,
@@ -113,6 +104,7 @@ export async function listar(q: z.infer<typeof listarEntrevistasQuery>) {
     lugar: e.lugar,
     modalidad: e.modalidad,
     notasRecibidas: conNotas.has(s.id),
+    notas: e.notas,
     solicitud: { id: s.id, codigo: s.codigo, estado: s.estado },
   }));
 

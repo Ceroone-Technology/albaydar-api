@@ -31,7 +31,7 @@ import {
   urlCita,
   type Actor,
 } from '../solicitudes/comun';
-import { ETIQUETA_ESTADO, ETIQUETA_FAMILIA_VIA } from '../solicitudes/dominio';
+import { ESTADOS_PUEDE_CITAR, ETIQUETA_ESTADO, ETIQUETA_FAMILIA_VIA } from '../solicitudes/dominio';
 
 /**
  * Reglas de la citación (validadas con el cliente):
@@ -42,7 +42,6 @@ import { ETIQUETA_ESTADO, ETIQUETA_FAMILIA_VIA } from '../solicitudes/dominio';
  *  - La entrevista es siempre presencial, con el equipo directivo, en la sala de Dirección.
  */
 export const HORAS_PARA_CAMBIAR = 24;
-const ESTADOS_PUEDE_CITAR = ['RECIBIDA', 'EN_REVISION', 'CITACION_ENVIADA', 'OTRA_FRANJA_SOLICITADA', 'ENTREVISTA_PROGRAMADA'] as const;
 
 // ── Utilidades ──────────────────────────────────────────────────────────────
 
@@ -142,7 +141,7 @@ export async function proponer(
 
   return db.transaction(async (tx) => {
     const { s, via } = await obtenerSolicitud(tx, solicitudId, true);
-    if (!(ESTADOS_PUEDE_CITAR as readonly string[]).includes(s.estado)) {
+    if (!ESTADOS_PUEDE_CITAR.includes(s.estado)) {
       throw conflict('ESTADO_NO_PERMITE', `No se puede citar una solicitud en estado “${ETIQUETA_ESTADO[s.estado]}”.`);
     }
     const revision = await calcularRevision(tx, s, via);
@@ -303,8 +302,16 @@ export async function verCita(token: string) {
   };
 }
 
-/** La familia elige (o, dentro de las 24 h, cambia) la fecha. La cita aparece sola en el calendario. */
+/**
+ * La familia elige (o, dentro de las 24 h, cambia) la fecha. La cita aparece sola en el calendario.
+ * Devuelve la cita completa (como GET /citas/:token) más `cambio`.
+ */
 export async function elegir(token: string, franjaId: string) {
+  const { cambio } = await elegirEnTx(token, franjaId);
+  return { ...(await verCita(token)), cambio };
+}
+
+async function elegirEnTx(token: string, franjaId: string) {
   return db.transaction(async (tx) => {
     const { t, p, s, via } = await contextoToken(tx, token, true);
     if (p.estado === 'CADUCADA') throw gone('PROPUESTA_CADUCADA', 'Las fechas propuestas ya han pasado. Indícanos otra franja.');
@@ -312,7 +319,7 @@ export async function elegir(token: string, franjaId: string) {
     if (!elegida) throw badRequest('FECHA_NO_PROPUESTA', 'Esa fecha no está entre las propuestas.');
 
     const actual = await entrevistaActivaDe(tx, p.id);
-    if (actual?.franjaId === franjaId) return { entrevistaId: actual.id, sinCambios: true };
+    if (actual?.franjaId === franjaId) return { cambio: false };
     const ahora = new Date();
     const hasta = limiteCambio(p);
     if (hasta && ahora > hasta) throw cambioFueraDePlazo();
@@ -381,14 +388,14 @@ export async function elegir(token: string, franjaId: string) {
       solicitudId: s.id,
     });
 
-    return { entrevistaId: entrevista.id, inicio: elegida.inicio, fin: elegida.fin, day: diaLargo(elegida.inicio), time: franja(elegida.inicio, elegida.fin), cambio, cambioHasta: limite };
+    return { cambio };
   });
 }
 
-/** "Ninguna me encaja": libera las fechas reservadas y avisa a secretaría. */
+/** "Ninguna me encaja": libera las fechas reservadas y avisa a secretaría. Devuelve la cita completa. */
 export async function pedirOtraFranja(token: string, franjaTexto: string | null, prefiereLlamada: boolean) {
   if (!franjaTexto?.trim() && !prefiereLlamada) throw badRequest('FALTA_DISPONIBILIDAD', 'Elige una fecha o dinos qué franja te vendría bien.');
-  return db.transaction(async (tx) => {
+  await db.transaction(async (tx) => {
     const { t, p, s, via } = await contextoToken(tx, token, true);
     const ahora = new Date();
     const hasta = limiteCambio(p);
@@ -431,8 +438,8 @@ export async function pedirOtraFranja(token: string, franjaTexto: string | null,
         solicitudId: s.id,
       });
     }
-    return { estado: 'alternativa' as const };
   });
+  return verCita(token);
 }
 
 /** .ics para "Añadir a mi calendario". */
