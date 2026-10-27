@@ -181,6 +181,7 @@ Tablas:
 11. **Roles al arrancar:** `sembrarBase` no pisa roles existentes. Un permiso nuevo en una BD ya creada se añade desde la matriz o con una migración.
 12. **Contenedor:** la API arranca como root solo para ajustar los permisos de `storage/uploads` y luego pasa a `node`.
 13. **Una entrevista futura no se puede marcar como realizada** (409 `ENTREVISTA_FUTURA`). En pruebas manuales, la solicitud se pasa a `ENTREVISTA_REALIZADA` con `PATCH /estado` (transición manual permitida).
+14. **`UPDATE … RETURNING` no devuelve las filas en ningún orden.** Si importa el orden (la cola de correos), se recorre el de la `SELECT … ORDER BY`. Y `now()` es el mismo durante toda la transacción: para desempatar filas creadas en la misma, `clock_timestamp()` (ver `encolarCorreo`). Sin esto, dos correos a la misma familia podían salir al revés y 6 tests fallaban de vez en cuando.
 
 ## Reglas de negocio validadas con el cliente
 
