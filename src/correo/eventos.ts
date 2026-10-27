@@ -41,7 +41,7 @@ const v = (nombre: string, descripcion: string, ejemplo: string, html = false): 
 const BASE: VariableDef[] = [
   v('alumna', 'Nombre completo de la alumna', 'Lucía Márquez Peña'),
   v('tutor', 'Nombre de pila de la madre, padre o tutor', 'Elena'),
-  v('codigo', 'Código de la solicitud', 'SOL-2026-0001'),
+  v('codigo', 'Código de la solicitud', 'B-2026-0001'),
   v('curso', 'Etapa y curso solicitados', 'Bachillerato 1º'),
   v('centro_nombre', 'Nombre del centro', 'Centro Educativo Albaydar'),
   v('centro_direccion', 'Dirección del centro', 'Avda. de la Palmera, 36 · 41012 Sevilla'),
@@ -271,12 +271,12 @@ export const EVENTOS: EventoDef[] = [
     variables: [
       v('alumna', 'Nombre completo de la alumna', 'Lucía Márquez Peña'),
       v('tutor', 'Nombre completo del tutor', 'Elena Peña Ríos'),
-      v('codigo', 'Código de la solicitud', 'SOL-2026-0001'),
+      v('codigo', 'Código de la solicitud', 'B-2026-0001'),
       v('curso', 'Etapa y curso', 'Bachillerato 1º'),
       v('telefono', 'Teléfono de la familia', '+34 622 418 903'),
       v('franja_solicitada', 'Disponibilidad que indica la familia', 'Martes o jueves a partir de las 17:00'),
       v('prefiere_llamada', '"Sí" si quiere que la llamen', 'Sí'),
-      v('enlace', 'Enlace a la solicitud en la plataforma', 'https://app.albaydar.org/admision?ref=SOL-2026-0001'),
+      v('enlace', 'Enlace a la solicitud en la plataforma', 'https://app.albaydar.org/admision?ref=B-2026-0001'),
       v('boton', 'Botón con el enlace', '<a href="#">Botón</a>', true),
     ],
     predeterminada: {
@@ -382,12 +382,12 @@ export const EVENTOS: EventoDef[] = [
     variables: [
       v('alumna', 'Nombre completo de la alumna', 'Lucía Márquez Peña'),
       v('tutor', 'Nombre completo del tutor', 'Elena Peña Ríos'),
-      v('codigo', 'Código de la solicitud', 'SOL-2026-0001'),
+      v('codigo', 'Código de la solicitud', 'B-2026-0001'),
       v('curso', 'Etapa y curso', 'Bachillerato 1º'),
       v('telefono', 'Teléfono de la familia', '+34 622 418 903'),
       v('importe', 'Importe pendiente', '300,00 €'),
       v('fecha_limite', 'Día en que venció', 'jueves 5 de noviembre'),
-      v('enlace', 'Enlace a la solicitud en la plataforma', 'https://app.albaydar.org/admision?ref=SOL-2026-0001'),
+      v('enlace', 'Enlace a la solicitud en la plataforma', 'https://app.albaydar.org/admision?ref=B-2026-0001'),
       v('boton', 'Botón con el enlace', '<a href="#">Botón</a>', true),
     ],
     predeterminada: {

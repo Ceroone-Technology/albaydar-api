@@ -165,7 +165,7 @@ erDiagram
 | `correos_salientes` | Cola de correo (outbox) e histórico de envíos |
 | `reservas` | Reserva de plaza al admitir: importe (céntimos), fecha límite y estado (`PENDIENTE`, `PAGADA`, `VENCIDA`, `ANULADA`). Índice único parcial: una vigente por solicitud |
 | `cobros` | Cobros manuales con su recibo `R-AAAA-NNNN`. Nunca se borran: se anulan con motivo |
-| `secuencias` | Contadores del código `SOL-AAAA-NNNN` y de los recibos `R-AAAA-NNNN` |
+| `secuencias` | Contadores del código de solicitud (`B-AAAA-NNNN` Bachillerato, `C-AAAA-NNNN` Ciclos; las anteriores, `SOL-AAAA-NNNN`) y de los recibos `R-AAAA-NNNN` |
 
 El SQL está en `drizzle/0000_inicial.sql`, `0001_agenda_sin_solapes.sql`, `0002_avisos_familia.sql`, `0003_reserva_y_cobros.sql` y `0004_reservas_admitidas_antiguas.sql`. Esta última es solo de datos, escrita a mano: crea la reserva de las solicitudes admitidas antes de la fase 03.
 

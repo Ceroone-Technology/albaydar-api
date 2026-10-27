@@ -8,6 +8,7 @@ import {
   tokensPublicos,
   vias,
   type EstadoSolicitud,
+  type FamiliaVia,
   type Solicitud,
   type Via,
 } from '../../db/schema';
@@ -72,10 +73,25 @@ export async function siguienteValor(tx: Tx, clave: string): Promise<number> {
   return r!.valor;
 }
 
-/** SOL-2026-0001 — contador por año, atómico. */
-export async function siguienteCodigo(tx: Tx, fecha = new Date()): Promise<string> {
+/**
+ * Letra del código según la vía (reunión del 21/10/2026): B Bachillerato, C Ciclos.
+ * Las series definitivas están pendientes del cliente: el formato vive solo aquí.
+ */
+export const LETRA_CODIGO: Record<FamiliaVia, string> = {
+  BACHILLERATO: 'B',
+  CICLOS_CONCERTADOS_GM: 'C',
+  CICLOS_CONCERTADOS_GS: 'C',
+  CICLOS_PRIVADOS_GS: 'C',
+};
+
+/**
+ * B-2026-0001 / C-2026-0001 — contador por letra y año, atómico. Formato provisional.
+ * Las solicitudes anteriores conservan su código SOL-AAAA-NNNN.
+ */
+export async function siguienteCodigo(tx: Tx, familia: FamiliaVia, fecha = new Date()): Promise<string> {
+  const letra = LETRA_CODIGO[familia];
   const anio = fecha.getFullYear();
-  return `SOL-${anio}-${String(await siguienteValor(tx, `solicitud-${anio}`)).padStart(4, '0')}`;
+  return `${letra}-${anio}-${String(await siguienteValor(tx, `solicitud-${letra}-${anio}`)).padStart(4, '0')}`;
 }
 
 /** Posición de cada solicitud EN_ESPERA dentro de su vía, por orden de entrada en la lista. */
