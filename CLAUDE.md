@@ -14,7 +14,7 @@ Este archivo es el punto de partida para cualquier sesión: qué hay, cómo se t
 | 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | ⏸️ **En pausa** por decisión del equipo. No empezar sin cerrar sus bloqueos (ver «Lo que falta») |
 | Cobros completos (remesas SEPA, conciliación, facturación), Alumnado | ❌ Sin empezar |
 
-En el front, a 22/10/2026: conectados la sesión, los permisos y el formulario público (PR #7). Siguen, en este orden: bandeja y revisión, citación, página pública de la cita, kanban, entrevistas, configuración y comunicaciones. Las pantallas de Evaluación y reserva y de Cobros se están construyendo directamente contra esta API. Matrícula sigue con su API simulada.
+En el front, a 24/10/2026 (`develop` = `main`, PR #12): conectados la sesión, los permisos, el formulario público, la bandeja, la citación, la página `/cita/:token` y el kanban. Evaluación y reserva, conectada (PR #13: decisión con vista previa, control de reservas y «Recordar»); el kanban ya no decide sin notificar, abre esa pantalla. Cobros, conectada (PR #14: KPI, reservas por vencer, registro manual, recibo y anulación); el kanban abre Cobros para «Plaza reservada». Entrevistas, conectada en la rama `feature/entrevistas-api` (calendario, resultado, no presentada, cancelación y nota; sin «Confirmar cita», que es de la familia). Configuración y Comunicaciones son placeholders por construir contra esta API. Matrícula y Alumnado siguen con su API simulada.
 
 ## Stack y comandos
 
@@ -23,6 +23,8 @@ La API es Express a propósito: decisión del equipo, aunque en una reunión con
 
 ```bash
 docker compose up -d --build     # API :3000 + PostgreSQL :5432 + Mailpit :8025 (migra y siembra al arrancar)
+DB_PORT=5433 docker compose up -d --build  # en el Mac: Subvfy ocupa el 5432. Entonces, para tests:
+TEST_DATABASE_URL=postgresql://albaydar:albaydar@localhost:5433/albaydar_test npm test
 docker compose up -d --build api # tras cambiar código
 docker compose down -v           # empezar de cero (borra la BD; necesario si cambia la migración 0000)
 npm run dev                      # sin Docker, con recarga (necesita db y mailpit levantados)
@@ -200,6 +202,20 @@ Tablas:
 - **Kanban:** el embudo cuenta todo; la bandeja es la vista de lo que requiere acción. Siempre presencial con el equipo directivo: no hay filtro de entrevistador. La cita la confirma la familia, no secretaría.
 
 ## Lo que falta
+
+### Impacto de la reunión del 21/10/2026 (pendiente de implementar)
+
+Detalle, flujo de referencia paso a paso y prioridad en `../RESUMEN-PROYECTO-ALBAYDAR.md` y `../docs/diagrama-flujo-admision.png` (fuera del repo, en `albaydar-project/`). Lo que toca a la API:
+
+- **Código con letra de tipo:** **B** Bachillerato, **C** Ciclos. Se deriva de `vias.familia` en `siguienteCodigo()` (`solicitudes/comun.ts`), con secuencia por letra y año. Series exactas pendientes del cliente.
+- **Varios entrevistadores (~7, según el tipo de solicitud)** y calendario de todos para secretaría, con Google Calendar como opción. **Revierte la decisión D2** (agenda única del equipo directivo, `CHECK entrevistas_presencial_chk`, `EXCLUDE` global): entrevistador por entrevista y agenda por persona. Esperar la lista de entrevistadores antes de migrar.
+- **Cancelar desde el recordatorio del día antes** y desde `/cita/:token`, con aviso a secretaría. Si la familia responde al correo para cancelar o cambiar, debe llegar a secretaría: en v1, `Reply-To` al buzón de secretaría; leer el buzón entrante, más adelante.
+- **Entrevista previa ya realizada:** validarla sin repetirla (hoy solo el atajo `PATCH /estado`).
+- **Duración y antelación:** 45–60 min (se mantiene) y **nunca el mismo día**: hoy la disponibilidad solo exige 2 h de antelación.
+- **Reserva no reembolsable** salvo fuerza mayor caso por caso (cierra la pregunta 15); se puede pagar desde diciembre.
+- **Captación / CRM:** primer contacto con nombre, correo, teléfono y área de interés, y correo automático de información en menos de 5 min. El flujo completo y el perfil Comercial los define el cliente (Luis Fdo.).
+- **Matrícula (sigue en pausa), dos bloqueos nuevos:** alumnado de la Junta de Andalucía directo a matrícula con **importación desde Séneca** (API o fichero), y renovación 1º→2º filtrando a quien promociona según calificaciones (requiere Alumnado y notas).
+- **Untis:** sesión aparte para decidir si se integra o se sustituye.
 
 ### Fase 04 · Matrícula digital (en pausa)
 
