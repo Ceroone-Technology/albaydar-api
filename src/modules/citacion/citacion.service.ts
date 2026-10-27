@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, ne, notInArray } from 'drizzle-orm';
+import { z } from 'zod';
 import { CENTRO, env } from '../../config/env';
 import {
   documentos,
@@ -14,7 +15,7 @@ import {
 import { db, type Tx } from '../../lib/db';
 import { badRequest, conflict, gone, notFound } from '../../lib/errors';
 import { hashToken } from '../../lib/crypto';
-import { diaLargo, fechaHoraFrase, franja, hora, sumarDias, sumarMin } from '../../lib/fechas';
+import { diaLargo, fechaHoraFrase, fechaLocal, franja, hora, horaLocalAUtc, sumarDias, sumarMin } from '../../lib/fechas';
 import { enviarEvento } from '../../correo/enviar';
 import { generarIcs } from '../../correo/ics';
 import { boton, lista } from '../../correo/plantillas';
@@ -31,7 +32,7 @@ import {
   urlCita,
   type Actor,
 } from '../solicitudes/comun';
-import { ESTADOS_PUEDE_CITAR, ETIQUETA_ESTADO, ETIQUETA_FAMILIA_VIA } from '../solicitudes/dominio';
+import { ESTADOS_ENTREVISTA_PREVIA, ESTADOS_PUEDE_CITAR, ETIQUETA_ESTADO, ETIQUETA_FAMILIA_VIA } from '../solicitudes/dominio';
 
 /**
  * Reglas de la citación (validadas con el cliente):
@@ -111,6 +112,26 @@ async function hayNotas(tx: Tx, solicitudId: string) {
   return !!d;
 }
 
+/**
+ * Anula las propuestas vigentes de una solicitud: cancela la entrevista que hubiera, devuelve
+ * sus fechas a la agenda e invalida el enlace de la familia. La avisa quien llama, si toca.
+ */
+async function anularPropuestasVigentes(tx: Tx, solicitudId: string) {
+  const anteriores = await tx
+    .select()
+    .from(propuestasCita)
+    .where(and(eq(propuestasCita.solicitudId, solicitudId), inArray(propuestasCita.estado, ['PENDIENTE', 'CONFIRMADA', 'OTRA_FRANJA'])));
+  let canceladaParaAvisar: Entrevista | null = null;
+  for (const p of anteriores) {
+    const e = await entrevistaActivaDe(tx, p.id);
+    if (e) canceladaParaAvisar = await cancelarEntrevista(tx, e);
+    await liberarFranjas(tx, p.id);
+    await tx.update(propuestasCita).set({ estado: 'ANULADA' }).where(eq(propuestasCita.id, p.id));
+  }
+  await revocarTokens(tx, solicitudId, 'ELEGIR_CITA');
+  return { anteriores, canceladaParaAvisar };
+}
+
 export const AVISO_NOTAS_HTML =
   '<p><strong>Recuerda subir el boletín de notas del último curso</strong> desde tu enlace antes de la entrevista.</p>';
 
@@ -148,18 +169,7 @@ export async function proponer(
     if (!revision.puedeCitar) throw conflict('SOLICITUD_INCOMPLETA', 'Pide a la familia que la complete antes de citar a entrevista.', { faltan: revision.faltan });
 
     // "Cambiar la propuesta" / "Proponer nuevas fechas": se anula la anterior y se liberan sus fechas.
-    const anteriores = await tx
-      .select()
-      .from(propuestasCita)
-      .where(and(eq(propuestasCita.solicitudId, solicitudId), inArray(propuestasCita.estado, ['PENDIENTE', 'CONFIRMADA', 'OTRA_FRANJA'])));
-    let canceladaParaAvisar: Entrevista | null = null;
-    for (const p of anteriores) {
-      const e = await entrevistaActivaDe(tx, p.id);
-      if (e) canceladaParaAvisar = await cancelarEntrevista(tx, e);
-      await liberarFranjas(tx, p.id);
-      await tx.update(propuestasCita).set({ estado: 'ANULADA' }).where(eq(propuestasCita.id, p.id));
-    }
-    await revocarTokens(tx, solicitudId, 'ELEGIR_CITA');
+    const { anteriores, canceladaParaAvisar } = await anularPropuestasVigentes(tx, solicitudId);
 
     // Comprobación con mensaje claro; la restricción de la BD es la garantía final.
     const ocupadas = await ocupaciones(tx, franjasNuevas[0]!.inicio, franjasNuevas[franjasNuevas.length - 1]!.fin);
@@ -459,3 +469,63 @@ export async function solicitudDeToken(token: string) {
 }
 
 export { cancelarEntrevista, liberarFranjas, adjuntoIcs };
+
+// ── Entrevista previa (paso 6 del diagrama) ─────────────────────────────────
+
+/** Lugar con el que se guarda una entrevista hecha fuera de la plataforma: no ocupa la agenda. */
+export const LUGAR_ENTREVISTA_PREVIA = 'Entrevista previa (registrada sin cita)';
+
+export const entrevistaPreviaBody = z.object({
+  /** Día en que se celebró (AAAA-MM-DD). Nunca futuro: si aún no se ha hecho, se cita. */
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha AAAA-MM-DD.'),
+  /** Nota de la entrevista: no la ve la familia. */
+  notas: z.string().trim().max(4000).optional().nullable(),
+});
+
+/**
+ * «¿Ya tuvo entrevista? Sí»: se registra la entrevista ya celebrada, sin repetirla y sin
+ * ocupar la agenda, y la solicitud pasa directa a «Evaluada · pendiente de decisión».
+ * Si había fechas propuestas, se anulan y se liberan (sin correo: la familia ya fue entrevistada).
+ */
+export async function registrarEntrevistaPrevia(solicitudId: string, d: z.infer<typeof entrevistaPreviaBody>, usuarioId: string) {
+  if (d.fecha > fechaLocal(new Date())) {
+    throw badRequest('FECHA_FUTURA', 'La entrevista previa no puede tener fecha futura: si aún no se ha hecho, cita a la familia.');
+  }
+  const cfg = await agendaConfig();
+  return db.transaction(async (tx) => {
+    const { s, via } = await obtenerSolicitud(tx, solicitudId, true);
+    if (!ESTADOS_ENTREVISTA_PREVIA.includes(s.estado)) {
+      throw conflict('ESTADO_NO_PERMITE', `No se puede registrar una entrevista previa en una solicitud en estado “${ETIQUETA_ESTADO[s.estado]}”.`);
+    }
+    const revision = await calcularRevision(tx, s, via);
+    if (!revision.puedeCitar) {
+      throw conflict('SOLICITUD_INCOMPLETA', 'Completa los datos de la solicitud antes de registrar la entrevista.', { faltan: revision.faltan });
+    }
+
+    const { anteriores } = await anularPropuestasVigentes(tx, solicitudId);
+    const inicio = horaLocalAUtc(d.fecha, '12:00');
+    const [e] = await tx
+      .insert(entrevistas)
+      .values({
+        solicitudId,
+        inicio,
+        fin: sumarMin(inicio, cfg.duracionPorDefecto),
+        lugar: LUGAR_ENTREVISTA_PREVIA,
+        estado: 'REALIZADA',
+        notas: d.notas?.trim() || null,
+      })
+      .returning();
+    await tx.update(solicitudes).set({ revision, revisadaEn: new Date() }).where(eq(solicitudes.id, solicitudId));
+    await cambiarEstado(tx, s, 'ENTREVISTA_REALIZADA', { tipo: 'usuario', usuarioId }, 'ENTREVISTA_PREVIA', {
+      entrevistaId: e!.id,
+      fecha: d.fecha,
+      sustituye: anteriores.map((a) => a.id),
+    });
+
+    return {
+      estado: 'ENTREVISTA_REALIZADA' as const,
+      estadoEtiqueta: ETIQUETA_ESTADO.ENTREVISTA_REALIZADA,
+      entrevista: { id: e!.id, inicio: e!.inicio, fin: e!.fin, dia: diaLargo(e!.inicio), estado: e!.estado, lugar: e!.lugar, notas: e!.notas },
+    };
+  });
+}

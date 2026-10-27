@@ -112,9 +112,13 @@ describe('pipeline y transiciones', () => {
       { estado: 'DESCARTADA', columna: null },
       { estado: 'PENDIENTE_COMPLETAR', columna: 'nueva', accion: 'PEDIR_QUE_COMPLETE' },
       { estado: 'CITACION_ENVIADA', columna: 'entrevista', accion: 'CITAR_A_ENTREVISTA' },
+      { estado: 'ENTREVISTA_REALIZADA', columna: 'evaluada', accion: 'REGISTRAR_ENTREVISTA_PREVIA' },
     ]);
-    // Incompleta: no se ofrece citar.
+    // Incompleta: no se ofrece citar ni registrar una entrevista previa.
     expect(siguientesEstados('EN_REVISION', { ...todo, puedeCitar: false }).map((s) => s.estado)).not.toContain('CITACION_ENVIADA');
+    expect(siguientesEstados('EN_REVISION', { ...todo, puedeCitar: false }).map((s) => s.estado)).not.toContain('ENTREVISTA_REALIZADA');
+    // Con la entrevista ya programada, el resultado se registra en ella, no como entrevista previa.
+    expect(siguientesEstados('ENTREVISTA_PROGRAMADA', todo).map((s) => s.accion)).not.toContain('REGISTRAR_ENTREVISTA_PREVIA');
     // Sin evaluacion.editar no se ofrecen las decisiones de admisión.
     expect(siguientesEstados('ENTREVISTA_REALIZADA', { ...todo, evaluar: false })).toEqual([]);
     // Las decisiones van por "Registrar decisión" (notifica y crea la reserva).

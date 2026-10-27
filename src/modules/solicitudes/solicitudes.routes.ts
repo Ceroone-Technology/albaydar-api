@@ -94,6 +94,11 @@ solicitudesRouter.post('/:id/citar', gestion, validate({ params: idParam, body: 
   res.status(201).json(await citacion.proponer(v<typeof idParam>(req, 'params').id, { inicios: b.inicios, duracion: b.duracion, mensaje: b.mensaje }, req.user!.id));
 });
 
+/** «¿Ya tuvo entrevista? Sí»: registra la entrevista hecha fuera de la plataforma y pasa a decisión. */
+solicitudesRouter.post('/:id/entrevista-previa', gestion, validate({ params: idParam, body: citacion.entrevistaPreviaBody }), async (req, res) => {
+  res.status(201).json(await citacion.registrarEntrevistaPrevia(v<typeof idParam>(req, 'params').id, v<typeof citacion.entrevistaPreviaBody>(req, 'body'), req.user!.id));
+});
+
 /** Vista previa del correo de la decisión con los datos reales de la familia. No cambia nada. */
 solicitudesRouter.post('/:id/decision/previsualizar', requirePermiso('evaluacion.ver'), validate({ params: idParam, body: previaDecisionBody }), async (req, res) => {
   res.json(await previsualizar(v<typeof idParam>(req, 'params').id, v<typeof previaDecisionBody>(req, 'body')));

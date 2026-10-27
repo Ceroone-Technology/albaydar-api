@@ -125,11 +125,17 @@ export const DECISIONES_ADMISION: EstadoSolicitud[] = ['ADMITIDA', 'NO_ADMITIDA'
 export const ESTADOS_PUEDE_PEDIR_COMPLETAR: EstadoSolicitud[] = ['RECIBIDA', 'EN_REVISION', 'PENDIENTE_COMPLETAR'];
 export const ESTADOS_PUEDE_CITAR: EstadoSolicitud[] = ['RECIBIDA', 'EN_REVISION', 'CITACION_ENVIADA', 'OTRA_FRANJA_SOLICITADA', 'ENTREVISTA_PROGRAMADA'];
 
+/**
+ * Paso 6 del diagrama, «¿Ya tuvo entrevista?»: desde dónde se registra una entrevista hecha
+ * fuera de la plataforma, sin repetirla. Con una entrevista ya programada se usa su resultado.
+ */
+export const ESTADOS_ENTREVISTA_PREVIA: EstadoSolicitud[] = ['RECIBIDA', 'EN_REVISION', 'CITACION_ENVIADA', 'OTRA_FRANJA_SOLICITADA'];
+
 export interface Siguiente {
   estado: EstadoSolicitud;
   columna: ColumnaPipeline | null;
   /** Si está, no se mueve con PATCH /estado: el front abre el panel de esa acción. */
-  accion?: 'PEDIR_QUE_COMPLETE' | 'CITAR_A_ENTREVISTA' | 'DECIDIR' | 'REGISTRAR_COBRO';
+  accion?: 'PEDIR_QUE_COMPLETE' | 'CITAR_A_ENTREVISTA' | 'REGISTRAR_ENTREVISTA_PREVIA' | 'DECIDIR' | 'REGISTRAR_COBRO';
 }
 
 /**
@@ -153,6 +159,9 @@ export function siguientesEstados(
   }
   if (o.puedeCitar && estado !== 'CITACION_ENVIADA' && ESTADOS_PUEDE_CITAR.includes(estado)) {
     r.push({ estado: 'CITACION_ENVIADA', columna: columnaDe('CITACION_ENVIADA'), accion: 'CITAR_A_ENTREVISTA' });
+  }
+  if (o.puedeCitar && ESTADOS_ENTREVISTA_PREVIA.includes(estado)) {
+    r.push({ estado: 'ENTREVISTA_REALIZADA', columna: columnaDe('ENTREVISTA_REALIZADA'), accion: 'REGISTRAR_ENTREVISTA_PREVIA' });
   }
   return r;
 }

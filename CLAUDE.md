@@ -210,7 +210,7 @@ Detalle, flujo de referencia paso a paso y prioridad en `../RESUMEN-PROYECTO-ALB
 - **Código con letra de tipo:** **B** Bachillerato, **C** Ciclos. Se deriva de `vias.familia` en `siguienteCodigo()` (`solicitudes/comun.ts`), con secuencia por letra y año. Series exactas pendientes del cliente.
 - **Varios entrevistadores (~7, según el tipo de solicitud)** y calendario de todos para secretaría, con Google Calendar como opción. **Revierte la decisión D2** (agenda única del equipo directivo, `CHECK entrevistas_presencial_chk`, `EXCLUDE` global): entrevistador por entrevista y agenda por persona. Esperar la lista de entrevistadores antes de migrar.
 - **Cancelar desde el recordatorio del día antes** y desde `/cita/:token`, con aviso a secretaría. Si la familia responde al correo para cancelar o cambiar, debe llegar a secretaría: en v1, `Reply-To` al buzón de secretaría; leer el buzón entrante, más adelante.
-- **Entrevista previa ya realizada:** validarla sin repetirla (hoy solo el atajo `PATCH /estado`).
+- ~~**Entrevista previa ya realizada:** validarla sin repetirla~~ ✅ hecho en `feat/entrevista-previa`: `POST /solicitudes/:id/entrevista-previa` (`registrarEntrevistaPrevia` en `citacion.service.ts`) y acción `REGISTRAR_ENTREVISTA_PREVIA` en `siguientes`. Falta la acción en el front.
 - **Duración y antelación:** 45–60 min (se mantiene) y **nunca el mismo día**: hoy la disponibilidad solo exige 2 h de antelación.
 - **Reserva no reembolsable** salvo fuerza mayor caso por caso (cierra la pregunta 15); se puede pagar desde diciembre.
 - **Captación / CRM:** primer contacto con nombre, correo, teléfono y área de interés, y correo automático de información en menos de 5 min. El flujo completo y el perfil Comercial los define el cliente (Luis Fdo.).
