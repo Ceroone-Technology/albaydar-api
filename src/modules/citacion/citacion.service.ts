@@ -242,6 +242,10 @@ async function contextoToken(tx: Tx, token: string, bloquear = false) {
   return { t, p, s, via };
 }
 
+// La familia canceló: el enlace sigue enseñando la cita, pero ya no se puede elegir otra fecha.
+const citaCanceladaPorFamilia = () =>
+  conflict('CITA_CANCELADA', 'Has cancelado esta cita. Secretaría te escribirá con nuevas fechas.');
+
 const cambioFueraDePlazo = () =>
   conflict(
     'CAMBIO_FUERA_DE_PLAZO',
@@ -276,8 +280,17 @@ export async function verCita(token: string) {
       { k: 'Con', v: CENTRO.entrevista.con },
       { k: 'Lugar', v: `${CENTRO.entrevista.lugar} · ${CENTRO.direccion.split(' · ')[0]}` },
     ],
-    /** propuesta | elegida | alternativa | caducada */
-    estado: p.estado === 'CONFIRMADA' ? 'elegida' : p.estado === 'OTRA_FRANJA' ? 'alternativa' : p.estado === 'CADUCADA' ? 'caducada' : 'propuesta',
+    /** propuesta | elegida | alternativa | caducada | cancelada */
+    estado:
+      p.estado === 'CONFIRMADA'
+        ? 'elegida'
+        : p.estado === 'OTRA_FRANJA'
+          ? 'alternativa'
+          : p.estado === 'CADUCADA'
+            ? 'caducada'
+            : p.estado === 'CANCELADA'
+              ? 'cancelada'
+              : 'propuesta',
     duracion: p.duracionMin,
     mensaje: p.mensaje,
     slots: fs.map((f) => {
@@ -289,13 +302,16 @@ export async function verCita(token: string) {
         inicio: f.inicio,
         fin: f.fin,
         elegido,
-        disponible: elegido || (f.inicio > ahora && (f.estado === 'RESERVADA' || (f.estado === 'LIBERADA' && libre(f)))),
+        disponible:
+          p.estado !== 'CANCELADA' && (elegido || (f.inicio > ahora && (f.estado === 'RESERVADA' || (f.estado === 'LIBERADA' && libre(f))))),
       };
     }),
     elegida: entrevista ? { inicio: entrevista.inicio, fin: entrevista.fin, day: diaLargo(entrevista.inicio), time: franja(entrevista.inicio, entrevista.fin) } : null,
     alternativa: p.estado === 'OTRA_FRANJA' ? { franja: p.franjaSolicitada, prefiereLlamada: p.prefiereLlamada } : null,
     /** La familia solo puede cambiar durante las 24 h siguientes a aceptar. */
-    puedeCambiar: !hasta || (ahora < hasta && (!entrevista || entrevista.inicio > ahora)),
+    puedeCambiar: p.estado !== 'CANCELADA' && (!hasta || (ahora < hasta && (!entrevista || entrevista.inicio > ahora))),
+    /** Cancelar se puede hasta la hora de la cita, también pasadas las 24 h (el recordatorio del día antes lo ofrece). */
+    puedeCancelar: p.estado === 'CONFIRMADA' && !!entrevista && entrevista.inicio > ahora,
     cambioHasta: hasta,
     notas: notas ? { nombre: notas.nombreOriginal, tamano: notas.tamano, subidoEn: notas.createdAt } : null,
     notasHasta: entrevista?.inicio ?? null,
@@ -314,6 +330,7 @@ export async function elegir(token: string, franjaId: string) {
 async function elegirEnTx(token: string, franjaId: string) {
   return db.transaction(async (tx) => {
     const { t, p, s, via } = await contextoToken(tx, token, true);
+    if (p.estado === 'CANCELADA') throw citaCanceladaPorFamilia();
     if (p.estado === 'CADUCADA') throw gone('PROPUESTA_CADUCADA', 'Las fechas propuestas ya han pasado. Indícanos otra franja.');
     const [elegida] = await tx.select().from(franjasAgenda).where(and(eq(franjasAgenda.id, franjaId), eq(franjasAgenda.propuestaId, p.id)));
     if (!elegida) throw badRequest('FECHA_NO_PROPUESTA', 'Esa fecha no está entre las propuestas.');
@@ -397,6 +414,7 @@ export async function pedirOtraFranja(token: string, franjaTexto: string | null,
   if (!franjaTexto?.trim() && !prefiereLlamada) throw badRequest('FALTA_DISPONIBILIDAD', 'Elige una fecha o dinos qué franja te vendría bien.');
   await db.transaction(async (tx) => {
     const { t, p, s, via } = await contextoToken(tx, token, true);
+    if (p.estado === 'CANCELADA') throw citaCanceladaPorFamilia();
     const ahora = new Date();
     const hasta = limiteCambio(p);
     if (hasta && ahora > hasta) throw cambioFueraDePlazo();
@@ -438,6 +456,58 @@ export async function pedirOtraFranja(token: string, franjaTexto: string | null,
         solicitudId: s.id,
       });
     }
+  });
+  return verCita(token);
+}
+
+/**
+ * La familia cancela la cita desde su enlace (el del recordatorio del día antes): se libera la
+ * hora, la solicitud vuelve a revisión para proponer otras fechas (paso 13 del diagrama) y
+ * secretaría recibe el aviso en la bandeja y por correo. La familia recibe la anulación (.ics).
+ */
+export async function cancelarPorFamilia(token: string, motivo: string | null) {
+  await db.transaction(async (tx) => {
+    const { t, p, s, via } = await contextoToken(tx, token, true);
+    if (p.estado === 'CANCELADA') throw citaCanceladaPorFamilia();
+    const e = p.estado === 'CONFIRMADA' ? await entrevistaActivaDe(tx, p.id) : null;
+    if (!e || !['PROGRAMADA', 'REPROGRAMADA'].includes(e.estado)) {
+      throw conflict('SIN_CITA_CONFIRMADA', 'No hay ninguna cita confirmada que cancelar.');
+    }
+    const ahora = new Date();
+    if (e.inicio <= ahora) throw gone('ENTREVISTA_PASADA', `La entrevista ya ha empezado o pasado. Llama a secretaría (${CENTRO.telefono}).`);
+
+    const texto = motivo?.trim() || null;
+    const cancelada = await cancelarEntrevista(tx, e);
+    await liberarFranjas(tx, p.id);
+    await tx.update(propuestasCita).set({ estado: 'CANCELADA', respondidaEn: ahora }).where(eq(propuestasCita.id, p.id));
+    await tx.update(tokensPublicos).set({ ultimoUsoEn: ahora }).where(eq(tokensPublicos.id, t.id));
+    // `inicio` en el detalle: el aviso de la bandeja dice qué cita era.
+    const detalle = { entrevistaId: e.id, inicio: e.inicio.toISOString(), motivo: texto };
+    if (s.estado === 'ENTREVISTA_PROGRAMADA') await cambiarEstado(tx, s, 'EN_REVISION', { tipo: 'familia' }, 'CITA_CANCELADA_FAMILIA', detalle);
+    else await registrarEvento(tx, s.id, { tipo: 'familia' }, 'CITA_CANCELADA_FAMILIA', { detalle });
+
+    const base = datosCorreo(s, via);
+    const urlSolicitud = `${env.PUBLIC_APP_URL}/admision?ref=${s.codigo}`;
+    await enviarEvento(tx, 'AVISO_CANCELACION_FAMILIA', {
+      para: env.MAIL_SECRETARIA,
+      vars: {
+        ...base,
+        tutor: s.tutorNombre,
+        telefono: s.telefono,
+        fecha_entrevista: diaLargo(e.inicio),
+        hora: hora(e.inicio),
+        motivo: texto ?? 'Sin indicar',
+        enlace: urlSolicitud,
+        boton: boton(urlSolicitud, 'Abrir la solicitud'),
+      },
+      solicitudId: s.id,
+    });
+    await enviarEvento(tx, 'CITA_CANCELADA', {
+      para: s.email,
+      vars: { ...base, fecha_entrevista: diaLargo(cancelada.inicio), hora: hora(cancelada.inicio), motivo: 'Has cancelado la entrevista desde tu enlace.' },
+      adjuntos: [adjuntoIcs(cancelada, base.alumna, true)],
+      solicitudId: s.id,
+    });
   });
   return verCita(token);
 }

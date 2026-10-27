@@ -35,6 +35,15 @@ const schema = z.object({
   SMTP_PASS: z.string().optional().transform((v) => v || undefined),
   MAIL_FROM: z.string().default('Centro Educativo Albaydar <admisiones@albaydar.org>'),
   MAIL_SECRETARIA: z.string().email().default('secretaria@albaydar.org'),
+  /**
+   * A dónde llegan las respuestas a los correos (Reply-To). Acordado el 21/10/2026: si la familia
+   * responde al correo para cancelar o cambiar, que lo lea secretaría. Si no se indica, MAIL_SECRETARIA.
+   */
+  MAIL_REPLY_TO: z
+    .string()
+    .optional()
+    .transform((v) => v || undefined)
+    .pipe(z.string().email('MAIL_REPLY_TO debe ser un correo.').optional()),
   /** Avisos de cobros (reserva vencida). Si no se indica, van solo a MAIL_SECRETARIA. */
   MAIL_ADMINISTRACION: z
     .string()

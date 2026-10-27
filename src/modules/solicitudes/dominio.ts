@@ -189,8 +189,11 @@ export const DIAS_RESERVA_POR_VENCER = 3;
 /** "2027-2028" → "2027/28" (como en los correos del mockup). */
 export const cursoEscolarCorto = (c: string) => c.replace(/^(\d{4})-\d{2}(\d{2})$/, '$1/$2');
 
-/** Respuestas de la familia que sacan la solicitud de la bandeja: se avisa una vez a cada usuario. */
-export const EVENTOS_RESPUESTA_FAMILIA = ['CITA_CONFIRMADA', 'CITA_CAMBIADA'] as const;
+/**
+ * Respuestas de la familia que se avisan una vez a cada usuario: elegir o cambiar la fecha (la
+ * solicitud sale de la bandeja) y cancelar la cita (vuelve a la bandeja para proponer otras).
+ */
+export const EVENTOS_RESPUESTA_FAMILIA = ['CITA_CONFIRMADA', 'CITA_CAMBIADA', 'CITA_CANCELADA_FAMILIA'] as const;
 export const DIAS_AVISO_RESPUESTAS = 7;
 
 /** Nombre de pila del tutor para los saludos ("Hola, Elena"). */

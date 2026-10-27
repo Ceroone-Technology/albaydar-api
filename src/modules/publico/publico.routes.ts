@@ -64,6 +64,13 @@ publicoRouter.post('/citas/:token/elegir', limiteEnlace, validate({ params: toke
   res.json(await citacion.elegir(v<typeof tokenParam>(req, 'params').token, v<typeof elegirBody>(req, 'body').huecoId));
 });
 
+const cancelarCitaBody = z.object({ motivo: z.string().trim().max(500).optional().nullable() });
+
+/** La familia cancela su cita confirmada (desde el recordatorio del día antes o su enlace). */
+publicoRouter.post('/citas/:token/cancelar', limiteEnlace, validate({ params: tokenParam, body: cancelarCitaBody }), async (req, res) => {
+  res.json(await citacion.cancelarPorFamilia(v<typeof tokenParam>(req, 'params').token, v<typeof cancelarCitaBody>(req, 'body').motivo ?? null));
+});
+
 publicoRouter.post('/citas/:token/otra-franja', limiteEnlace, validate({ params: tokenParam, body: otraFranjaBody }), async (req, res) => {
   const b = v<typeof otraFranjaBody>(req, 'body');
   res.json(await citacion.pedirOtraFranja(v<typeof tokenParam>(req, 'params').token, b.franja ?? null, b.prefiereLlamada));

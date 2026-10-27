@@ -75,6 +75,7 @@ services:
       SMTP_PASS: ${DOCKER_SMTP_PASS:-}
       MAIL_FROM: ${MAIL_FROM:-Centro Educativo Albaydar <admisiones@albaydar.org>}
       MAIL_SECRETARIA: ${MAIL_SECRETARIA:-secretaria@albaydar.org}
+      MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
       MAIL_ADMINISTRACION: ${MAIL_ADMINISTRACION:-}
       MAIL_DESVIO: ${MAIL_DESVIO:-}
       UPLOADS_DIR: /app/storage/uploads

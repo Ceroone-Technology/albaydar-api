@@ -152,6 +152,7 @@ Tablas:
 | `0002_avisos_familia` | `eventos_vistos` |
 | `0003_reserva_y_cobros` | `reservas`, `cobros`, enumerados y `solicitudes.en_espera_desde` |
 | `0004_reservas_admitidas_antiguas` | A mano, solo datos |
+| `0005_propuesta_cancelada_familia` | Valor `CANCELADA` en `estado_propuesta` (la familia cancela su cita) |
 
 ## Convenciones
 
@@ -209,7 +210,7 @@ Detalle, flujo de referencia paso a paso y prioridad en `../RESUMEN-PROYECTO-ALB
 
 - **Código con letra de tipo:** **B** Bachillerato, **C** Ciclos. Se deriva de `vias.familia` en `siguienteCodigo()` (`solicitudes/comun.ts`), con secuencia por letra y año. Series exactas pendientes del cliente.
 - **Varios entrevistadores (~7, según el tipo de solicitud)** y calendario de todos para secretaría, con Google Calendar como opción. **Revierte la decisión D2** (agenda única del equipo directivo, `CHECK entrevistas_presencial_chk`, `EXCLUDE` global): entrevistador por entrevista y agenda por persona. Esperar la lista de entrevistadores antes de migrar.
-- **Cancelar desde el recordatorio del día antes** y desde `/cita/:token`, con aviso a secretaría. Si la familia responde al correo para cancelar o cambiar, debe llegar a secretaría: en v1, `Reply-To` al buzón de secretaría; leer el buzón entrante, más adelante.
+- ~~**Cancelar desde el recordatorio del día antes** y desde `/cita/:token`, con aviso a secretaría; respuestas por correo a secretaría~~ ✅ hecho en `feat/cancelar-cita-familia`: `POST /public/citas/:token/cancelar` (`cancelarPorFamilia`), propuesta `CANCELADA` (migración `0005`), aviso `CITA_CANCELADA_FAMILIA` en `respuestas-familia`, correo `AVISO_CANCELACION_FAMILIA` y `Reply-To` (`MAIL_REPLY_TO` o `MAIL_SECRETARIA`). Falta el front: botón en la página de la cita, estado «cancelada» y el aviso en la bandeja. El texto nuevo del recordatorio solo llega a BD nuevas (trampa 10): en las existentes, se edita desde Comunicaciones.
 - **Entrevista previa ya realizada:** validarla sin repetirla (hoy solo el atajo `PATCH /estado`).
 - **Duración y antelación:** 45–60 min (se mantiene) y **nunca el mismo día**: hoy la disponibilidad solo exige 2 h de antelación.
 - **Reserva no reembolsable** salvo fuerza mayor caso por caso (cierra la pregunta 15); se puede pagar desde diciembre.

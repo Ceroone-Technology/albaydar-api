@@ -100,6 +100,7 @@ Contraseña: mínimo 10 caracteres, con letras y números. Siempre debe quedar u
 | GET | `/public/citas/:token` | Página "Albaydar Cita" |
 | POST | `/public/citas/:token/elegir` | `{ huecoId }` (id de un `slot`) → confirma o cambia la fecha. Devuelve la cita completa (igual que el GET) más `cambio: boolean` |
 | POST | `/public/citas/:token/otra-franja` | `{ franja?, prefiereLlamada }` → "Ninguna me encaja". Devuelve la cita completa (`estado: "alternativa"`) |
+| POST | `/public/citas/:token/cancelar` | `{ motivo? }` → la familia cancela su cita confirmada. Devuelve la cita completa (`estado: "cancelada"`). Ver abajo |
 | GET | `/public/citas/:token/ics` | "Añadir a mi calendario" |
 | POST / DELETE | `/public/citas/:token/notas` | Boletín de notas: `multipart/form-data`, campo `archivo` (PDF, JPG, PNG o HEIC, máx. 10 MB) |
 
@@ -128,12 +129,13 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
   "ref": "SOL-2026-0001", "alumno": "Lucía Márquez Peña", "tutor": "Elena", "curso": "Bachillerato 1º",
   "info": [{ "k": "Tipo", "v": "Presencial" }, { "k": "Con", "v": "Equipo directivo" },
            { "k": "Lugar", "v": "Sala de reuniones de Dirección · Avda. de la Palmera, 36" }],
-  "estado": "propuesta | elegida | alternativa | caducada",
+  "estado": "propuesta | elegida | alternativa | caducada | cancelada",
   "duracion": 60,
   "slots": [{ "id": "uuid", "day": "Martes 27 de octubre", "time": "12:00 – 13:00", "inicio": "…", "fin": "…", "elegido": false, "disponible": true }],
   "elegida": null,
   "alternativa": null,
   "puedeCambiar": true,
+  "puedeCancelar": false,
   "cambioHasta": null,
   "notas": null,
   "notasHasta": null
@@ -143,6 +145,15 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 - Mientras la familia no elige, sus fechas están **reservadas**: `disponible: true`.
 - Al elegir, las otras se liberan para otras familias. Si después quiere cambiar, puede volver a una de ellas solo si sigue libre.
 - `cambioHasta` = 24 h después de la primera aceptación. Pasado ese momento `puedeCambiar: false` y `elegir` / `otra-franja` responden `CAMBIO_FUERA_DE_PLAZO`: el front debe ocultar "Cambiar la elección" y mostrar el teléfono de secretaría.
+
+**Cancelar la cita** (acordado el 21/10/2026; el recordatorio del día antes lleva el enlace): `puedeCancelar` es `true` con la fecha elegida y hasta la hora de la cita, también pasadas las 24 h del cambio. `POST /public/citas/:token/cancelar { motivo? }`:
+
+- Libera la hora, la solicitud vuelve a `EN_REVISION` para proponer otras fechas (evento `CITA_CANCELADA_FAMILIA`) y la propuesta queda `CANCELADA`.
+- Secretaría recibe el aviso en la bandeja (`respuestas-familia`, tipo `CITA_CANCELADA_FAMILIA`) y por correo (`AVISO_CANCELACION_FAMILIA`, con el motivo). La familia recibe `CITA_CANCELADA` con la anulación (.ics).
+- El enlace sigue abriendo la página con `estado: "cancelada"`, sin fechas disponibles y `puedeCambiar: false`: el front muestra «Has cancelado la cita; secretaría te escribirá con nuevas fechas». `elegir`, `otra-franja` y `cancelar` responden 409 `CITA_CANCELADA`.
+- Sin fecha elegida, 409 `SIN_CITA_CONFIRMADA`; con la entrevista ya empezada, 410 `ENTREVISTA_PASADA`.
+
+**Respuestas por correo:** todos los correos llevan `Reply-To` al buzón de secretaría (`MAIL_REPLY_TO` o, si no se indica, `MAIL_SECRETARIA`): si la familia responde para cancelar o cambiar, lo lee secretaría.
 
 ## Admisión
 
@@ -224,11 +235,11 @@ Filtros rápidos del kanban (solo se aplican con `=true`):
 
 ### Aviso "la familia ya eligió fecha"
 
-Al elegir fecha, la solicitud sale de la bandeja. `GET /solicitudes/respuestas-familia` devuelve las elecciones y cambios de fecha de los últimos 7 días que **este usuario** aún no ha marcado como vistos:
+Al elegir fecha, la solicitud sale de la bandeja; al cancelarla, vuelve. `GET /solicitudes/respuestas-familia` devuelve las elecciones, cambios y cancelaciones de la familia de los últimos 7 días que **este usuario** aún no ha marcado como vistos (en `CITA_CANCELADA_FAMILIA`, `cita` es la que se canceló):
 
 ```json
 { "items": [{
-  "eventoId": "uuid", "tipo": "CITA_CONFIRMADA | CITA_CAMBIADA", "fecha": "…",
+  "eventoId": "uuid", "tipo": "CITA_CONFIRMADA | CITA_CAMBIADA | CITA_CANCELADA_FAMILIA", "fecha": "…",
   "solicitud": { "id": "uuid", "codigo": "SOL-2026-0001", "alumna": "Lucía Márquez Peña", "estado": "ENTREVISTA_PROGRAMADA" },
   "cita": { "inicio": "…", "fin": "…", "dia": "Martes 27 de octubre", "franja": "12:00 – 13:00" }
 }] }
@@ -438,6 +449,7 @@ Reglas:
 | `ENTREVISTA_RECORDATORIO` | El día antes | Activada |
 | `CITA_CANCELADA` | Se anula la entrevista (con .ics de anulación) | Activada |
 | `AVISO_OTRA_FRANJA` | "Ninguna me encaja" (a secretaría) | Activada |
+| `AVISO_CANCELACION_FAMILIA` | La familia cancela su cita desde el enlace (a secretaría) | Activada |
 | `ADMITIDA` | "Registrar decisión" → Admitida (importe, IBAN, fecha límite) | Activada |
 | `EN_ESPERA` | "Registrar decisión" → En espera (posición) | Activada · texto provisional |
 | `NO_ADMITIDA` | "Registrar decisión" → No admitida (motivo) | Activada · texto provisional |
