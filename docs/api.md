@@ -162,6 +162,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 | POST | `/solicitudes/:id/revisar` | solicitudes.editar | Las cinco comprobaciones |
 | POST | `/solicitudes/:id/pedir-completar` | solicitudes.editar | `{ campos?, mensaje? }` |
 | POST | `/solicitudes/:id/citar` | solicitudes.editar | Ver abajo |
+| POST | `/solicitudes/:id/entrevista-previa` | solicitudes.editar | «¿Ya tuvo entrevista? Sí»: ver [Entrevista previa](#entrevista-previa) |
 | POST | `/solicitudes/:id/decision` | evaluacion.editar | "Registrar decisión y notificar" (ver [Evaluación y reserva](#evaluación-y-reserva-de-plaza)) |
 | PATCH | `/solicitudes/:id/estado` | solicitudes.editar | Mover en el kanban; 409 `ACCION_REQUERIDA` si el destino exige una acción (`details.accion`). Las decisiones de admisión ya no se hacen aquí: responden `accion: "DECIDIR"` |
 | GET | `/solicitudes/:id/documentos/:docId` | solicitudes.ver | Descarga del boletín |
@@ -208,6 +209,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
   |---|---|
   | `PEDIR_QUE_COMPLETE` | "Pedir que complete" |
   | `CITAR_A_ENTREVISTA` | "Citar a entrevista" (solo si la solicitud está completa) |
+  | `REGISTRAR_ENTREVISTA_PREVIA` | "Ya tuvo entrevista" (solo si la solicitud está completa y aún no tiene entrevista programada) |
   | `DECIDIR` | "Registrar decisión" (solo con `evaluacion.editar`) |
   | `REGISTRAR_COBRO` | "Registrar cobro" (de Admitida a Plaza reservada; solo con `cobros.editar` y si la reserva está pendiente o vencida) |
 
@@ -253,6 +255,20 @@ Respuesta `201`: `{ propuestaId, duracion, reservadasHasta, franjas: [{ id, inic
 Nunca el mismo día (acordado el 21/10/2026): la disponibilidad marca las horas de hoy con `motivo: "Mismo día"` y `citar` las rechaza con 400 `FECHA_MISMO_DIA`. Lo controla `permitirMismoDia` en la configuración de la agenda (por defecto `false`); la antelación mínima (`antelacionMinHoras`, 400 `FECHA_DEMASIADO_PRONTO`) se sigue aplicando.
 
 Desde ese momento esas horas están bloqueadas para el resto. Si otra persona las acaba de coger: 409 `FRANJA_OCUPADA`. Volver a citar ("Cambiar la propuesta" / "Proponer nuevas fechas") anula la propuesta anterior, libera sus horas e invalida el enlace anterior.
+
+### Entrevista previa
+
+Paso 6 del diagrama, «¿Ya tuvo entrevista?»: si la alumna ya fue entrevistada fuera de la plataforma, no se repite.
+
+```json
+POST /solicitudes/:id/entrevista-previa
+{ "fecha": "2026-10-20", "notas": "Entrevistada en las jornadas de puertas abiertas." }
+```
+
+- Desde Recibida, En revisión, Esperando a la familia o Pide otra franja (`ESTADOS_ENTREVISTA_PREVIA`), con la solicitud completa. Si había fechas propuestas, se anulan y se liberan, sin correo.
+- Crea una entrevista `REALIZADA` ese día a las 12:00 con `lugar: "Entrevista previa (registrada sin cita)"`, que **no ocupa la agenda**, y la solicitud pasa a `ENTREVISTA_REALIZADA` (evento `ENTREVISTA_PREVIA`). En el calendario aparece en su día como realizada.
+- Respuesta `201`: `{ estado, estadoEtiqueta, entrevista: { id, inicio, fin, dia, estado, lugar, notas } }`.
+- Errores: 400 `FECHA_FUTURA` (si aún no se ha hecho, se cita), 409 `SOLICITUD_INCOMPLETA` (con `details.faltan`), 409 `ESTADO_NO_PERMITE` (con la entrevista ya programada se registra su resultado en Entrevistas).
 
 ## Agenda del equipo directivo
 

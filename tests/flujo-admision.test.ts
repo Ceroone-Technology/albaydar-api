@@ -899,3 +899,62 @@ describe('Código de la solicitud por tipo (reunión del 21/10/2026)', () => {
     expect(bach).not.toBe(`B-${anio}-0001`);
   });
 });
+
+describe('Entrevista previa: «¿Ya tuvo entrevista? Sí» (paso 6 del diagrama)', () => {
+  let telefono = 0;
+  const alta = async (nombre: string, extra: Record<string, unknown> = {}) =>
+    (
+      await request(app)
+        .post('/api/solicitudes')
+        .set(auth())
+        .send({
+          viaId: viaBach, alumnaNombre: nombre, alumnaApellidos: 'Entrevista Previa', tutorNombre: `Familia de ${nombre}`,
+          email: `${nombre.toLowerCase()}.previa@example.com`, telefono: `+34 611 400 ${String(++telefono).padStart(3, '0')}`,
+          centroProcedencia: 'IES Previa', canal: 'PRESENCIAL', consentimientoPrivacidad: true, ...extra,
+        })
+    ).body.id as string;
+  const previa = (id: string, body: Record<string, unknown>) =>
+    request(app).post(`/api/solicitudes/${id}/entrevista-previa`).set(auth()).send(body);
+  const ficha = async (id: string) => (await request(app).get(`/api/solicitudes/${id}`).set(auth('direccion'))).body;
+  const ayer = fechaLocal(sumarDias(new Date(), -1));
+
+  it('se registra sin cita y la solicitud pasa directa a decisión', async () => {
+    const id = await alta('Previa');
+    expect((await ficha(id)).siguientes).toContainEqual({ estado: 'ENTREVISTA_REALIZADA', columna: 'evaluada', accion: 'REGISTRAR_ENTREVISTA_PREVIA' });
+
+    const r = await previa(id, { fecha: ayer, notas: 'Entrevistada en las jornadas de puertas abiertas.' });
+    expect(r.status).toBe(201);
+    expect(r.body).toMatchObject({ estado: 'ENTREVISTA_REALIZADA', entrevista: { estado: 'REALIZADA', notas: 'Entrevistada en las jornadas de puertas abiertas.' } });
+
+    const f = await ficha(id);
+    expect(f.estado).toBe('ENTREVISTA_REALIZADA');
+    expect(f.eventos.map((e: { tipo: string }) => e.tipo)).toContain('ENTREVISTA_PREVIA');
+    expect(f.siguientes.map((s: { accion?: string }) => s.accion)).toContain('DECIDIR');
+
+    // En el calendario consta como realizada, sin ocupar la agenda.
+    const cal = (await request(app).get(`/api/entrevistas?desde=${ayer}&hasta=${ayer}`).set(auth())).body;
+    expect(cal.items.find((e: { solicitud: { id: string } }) => e.solicitud.id === id)).toMatchObject({
+      estado: 'REALIZADA',
+      lugar: 'Entrevista previa (registrada sin cita)',
+    });
+  });
+
+  it('anula las fechas que se le habían propuesto y las devuelve a la agenda', async () => {
+    const id = await alta('Propuesta');
+    expect((await request(app).post(`/api/solicitudes/${id}/citar`).set(auth()).send({ inicios: [iso(dia(9), '10:00')], duracion: 45 })).status).toBe(201);
+    expect((await previa(id, { fecha: ayer })).status).toBe(201);
+    const disp = (await request(app).get(`/api/agenda/disponibilidad?desde=${dia(9)}&hasta=${dia(9)}&duracion=45`).set(auth())).body;
+    expect(disp.dias[0].huecos.find((h: { hora: string }) => h.hora === '10:00')).toMatchObject({ disponible: true });
+  });
+
+  it('nunca con fecha futura, ni incompleta, ni con la entrevista ya programada', async () => {
+    const id = await alta('Futura');
+    expect((await previa(id, { fecha: fechaLocal(sumarDias(new Date(), 2)) })).body.error.code).toBe('FECHA_FUTURA');
+
+    const incompleta = await alta('Incompleta', { centroProcedencia: undefined });
+    expect((await previa(incompleta, { fecha: ayer })).body.error.code).toBe('SOLICITUD_INCOMPLETA');
+
+    await db.update(solicitudes).set({ estado: 'ENTREVISTA_PROGRAMADA' }).where(eq(solicitudes.id, id));
+    expect((await previa(id, { fecha: ayer })).body.error.code).toBe('ESTADO_NO_PERMITE');
+  });
+});
