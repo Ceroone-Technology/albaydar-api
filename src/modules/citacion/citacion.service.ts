@@ -20,7 +20,7 @@ import { enviarEvento } from '../../correo/enviar';
 import { generarIcs } from '../../correo/ics';
 import { boton, lista } from '../../correo/plantillas';
 import { agendaConfig } from '../ajustes/ajustes.service';
-import { dentroDeJornada, esSolape, ocupaciones } from '../agenda/agenda.service';
+import { dentroDeJornada, esSolape, ocupaciones, primerInicioPermitido } from '../agenda/agenda.service';
 import {
   calcularRevision,
   cambiarEstado,
@@ -150,9 +150,10 @@ export async function proponer(
   if (inicios.length < 1 || inicios.length > 3) throw badRequest('FECHAS_INVALIDAS', 'Propón entre 1 y 3 fechas distintas.');
   const franjasNuevas = inicios.map((inicio) => ({ inicio, fin: sumarMin(inicio, duracion) }));
 
-  const limite = new Date(Date.now() + cfg.antelacionMinHoras * 3_600_000);
+  const { antelacion, manana } = primerInicioPermitido(cfg);
   for (const f of franjasNuevas) {
-    if (f.inicio < limite) throw badRequest('FECHA_DEMASIADO_PRONTO', `${textoFranja(f)}: propón fechas con al menos ${cfg.antelacionMinHoras} h de antelación.`);
+    if (f.inicio < antelacion) throw badRequest('FECHA_DEMASIADO_PRONTO', `${textoFranja(f)}: propón fechas con al menos ${cfg.antelacionMinHoras} h de antelación.`);
+    if (manana && f.inicio < manana) throw badRequest('FECHA_MISMO_DIA', `${textoFranja(f)}: la entrevista no puede ser el mismo día; propón fechas a partir de mañana.`);
     const fuera = dentroDeJornada(f.inicio, f.fin, cfg);
     if (fuera) throw badRequest('FUERA_DE_HORARIO', `${textoFranja(f)}: ${fuera}`);
   }

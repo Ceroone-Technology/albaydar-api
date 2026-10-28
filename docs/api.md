@@ -125,7 +125,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 
 ```json
 {
-  "ref": "SOL-2026-0001", "alumno": "Lucía Márquez Peña", "tutor": "Elena", "curso": "Bachillerato 1º",
+  "ref": "B-2026-0001", "alumno": "Lucía Márquez Peña", "tutor": "Elena", "curso": "Bachillerato 1º",
   "info": [{ "k": "Tipo", "v": "Presencial" }, { "k": "Con", "v": "Equipo directivo" },
            { "k": "Lugar", "v": "Sala de reuniones de Dirección · Avda. de la Palmera, 36" }],
   "estado": "propuesta | elegida | alternativa | caducada",
@@ -145,6 +145,8 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 - `cambioHasta` = 24 h después de la primera aceptación. Pasado ese momento `puedeCambiar: false` y `elegir` / `otra-franja` responden `CAMBIO_FUERA_DE_PLAZO`: el front debe ocultar "Cambiar la elección" y mostrar el teléfono de secretaría.
 
 ## Admisión
+
+**Código de la solicitud** (acordado el 21/10/2026, formato provisional): letra de la vía, año y contador por letra y año: `B-2026-0001` (Bachillerato) y `C-2026-0001` (Ciclos). Las solicitudes creadas antes conservan su `SOL-2026-NNNN`. El formato está solo en `siguienteCodigo()` (`solicitudes/comun.ts`), para cambiarlo cuando el centro dé sus series.
 
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
@@ -169,7 +171,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 
 ```json
 {
-  "id": "uuid", "codigo": "SOL-2026-0001",
+  "id": "uuid", "codigo": "B-2026-0001",
   "estado": "CITACION_ENVIADA", "estadoEtiqueta": "Esperando a la familia", "estadoTono": "violet", "columna": "entrevista",
   "alumna": "Lucía Márquez Peña", "tutor": "Elena Peña Ríos", "email": "…", "telefono": "…",
   "centroProcedencia": "…", "modalidadInteres": "Ciencias",
@@ -231,7 +233,7 @@ Al elegir fecha, la solicitud sale de la bandeja. `GET /solicitudes/respuestas-f
 ```json
 { "items": [{
   "eventoId": "uuid", "tipo": "CITA_CONFIRMADA | CITA_CAMBIADA", "fecha": "…",
-  "solicitud": { "id": "uuid", "codigo": "SOL-2026-0001", "alumna": "Lucía Márquez Peña", "estado": "ENTREVISTA_PROGRAMADA" },
+  "solicitud": { "id": "uuid", "codigo": "B-2026-0001", "alumna": "Lucía Márquez Peña", "estado": "ENTREVISTA_PROGRAMADA" },
   "cita": { "inicio": "…", "fin": "…", "dia": "Martes 27 de octubre", "franja": "12:00 – 13:00" }
 }] }
 ```
@@ -249,6 +251,8 @@ POST /solicitudes/:id/citar
 ```
 
 Respuesta `201`: `{ propuestaId, duracion, reservadasHasta, franjas: [{ id, inicio, fin, dia, franja, estado: "RESERVADA" }] }`.
+
+Nunca el mismo día (acordado el 21/10/2026): la disponibilidad marca las horas de hoy con `motivo: "Mismo día"` y `citar` las rechaza con 400 `FECHA_MISMO_DIA`. Lo controla `permitirMismoDia` en la configuración de la agenda (por defecto `false`); la antelación mínima (`antelacionMinHoras`, 400 `FECHA_DEMASIADO_PRONTO`) se sigue aplicando.
 
 Desde ese momento esas horas están bloqueadas para el resto. Si otra persona las acaba de coger: 409 `FRANJA_OCUPADA`. Volver a citar ("Cambiar la propuesta" / "Proponer nuevas fechas") anula la propuesta anterior, libera sus horas e invalida el enlace anterior.
 
@@ -272,7 +276,7 @@ La disponibilidad no se crea a mano: es la **jornada** (por defecto lunes a vier
 
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
-| GET | `/agenda/disponibilidad?desde&hasta&duracion` | entrevistas.ver o solicitudes.editar | `{ duracion, dias: [{ fecha, dia, libres, huecos: [{ inicio, fin, hora, franja, disponible, motivo }] }] }`. `motivo`: `Ocupado`, `Bloqueado`, `Pasado`, `No lectivo` |
+| GET | `/agenda/disponibilidad?desde&hasta&duracion` | entrevistas.ver o solicitudes.editar | `{ duracion, dias: [{ fecha, dia, libres, huecos: [{ inicio, fin, hora, franja, disponible, motivo }] }] }`. `motivo`: `Ocupado`, `Bloqueado`, `Pasado`, `Mismo día`, `No lectivo` |
 | GET | `/agenda/ocupacion?desde&hasta` | ídem | Qué ocupa cada franja: reserva de propuesta (con la alumna), entrevista o bloqueo |
 | POST | `/agenda/bloqueos` | entrevistas.editar | `{ fecha, inicio: "09:00", fin: "11:00", motivo }` (reunión, ausencia…) |
 | DELETE | `/agenda/bloqueos/:id` | entrevistas.editar | Quitar un bloqueo |
@@ -286,6 +290,7 @@ La disponibilidad no se crea a mano: es la **jornada** (por defecto lunes a vier
   "duraciones": [45, 60], "duracionPorDefecto": 45,
   "pasoMin": 30,
   "antelacionMinHoras": 2,
+  "permitirMismoDia": false,
   "diasNoLectivos": ["2026-12-08"]
 }
 ```
@@ -476,4 +481,4 @@ Base `PUBLIC_APP_URL`. Deben existir en Angular y ser públicas:
 
 - `/cita/:token` → página "Albaydar Cita"
 - `/solicitud/completar/:token` → completar solicitud
-- `/admision?ref=SOL-…` → solicitud en la bandeja (aviso interno a secretaría)
+- `/admision?ref=B-…` (o `C-…`) → solicitud en la bandeja (aviso interno a secretaría)

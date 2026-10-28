@@ -225,7 +225,7 @@ export const solicitudes = pgTable(
   'solicitudes',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    /** Código legible para la familia: SOL-2026-0001 */
+    /** Código legible para la familia: B-2026-0001 (Bachillerato) o C-2026-0001 (Ciclos); las antiguas, SOL-2026-0001. */
     codigo: text('codigo').notNull().unique(),
     estado: estadoSolicitudEnum('estado').notNull().default('RECIBIDA'),
     viaId: uuid('via_id')
@@ -584,7 +584,7 @@ export const correosSalientes = pgTable(
   (t) => [index('correos_estado_programado_idx').on(t.estado, t.programadoPara)],
 );
 
-/** Contador transaccional para códigos legibles (SOL-2026-0001) sin carreras. */
+/** Contador transaccional para códigos legibles (B-2026-0001, R-2026-0001) sin carreras. */
 export const secuencias = pgTable('secuencias', {
   clave: text('clave').primaryKey(),
   valor: integer('valor').notNull().default(0),
