@@ -18,6 +18,8 @@ export default defineConfig({
       UPLOADS_DIR: './storage/test-uploads',
       MAIL_SECRETARIA: 'secretaria@albaydar.org',
       MAIL_ADMINISTRACION: 'administracion@albaydar.org',
+      // Vacío: el Reply-To es MAIL_SECRETARIA (trampa 9: que no se cuele el .env local).
+      MAIL_REPLY_TO: '',
     },
   },
 });

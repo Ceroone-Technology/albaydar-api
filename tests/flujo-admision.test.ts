@@ -26,7 +26,7 @@ import { fechaLocal, horaLocalAUtc, sumarDias } from '../src/lib/fechas';
 const app = crearApp();
 const ORIGIN = 'http://localhost:4200';
 const PASS = 'Albaydar-2026';
-type Mail = { to: string; subject: string; text: string; html: string; attachments: { filename: string; content: Buffer }[] };
+type Mail = { to: string; replyTo: string; subject: string; text: string; html: string; attachments: { filename: string; content: Buffer }[] };
 const buzon: Mail[] = [];
 
 const enviarCorreos = () => procesarOutbox(100);
@@ -76,6 +76,7 @@ beforeAll(async () => {
     sendMail: async (m: Record<string, unknown>) => {
       buzon.push({
         to: String(m.to),
+        replyTo: String(m.replyTo),
         subject: String(m.subject),
         text: String(m.text),
         html: String(m.html),
@@ -956,5 +957,93 @@ describe('Entrevista previa: «¿Ya tuvo entrevista? Sí» (paso 6 del diagrama)
 
     await db.update(solicitudes).set({ estado: 'ENTREVISTA_PROGRAMADA' }).where(eq(solicitudes.id, id));
     expect((await previa(id, { fecha: ayer })).body.error.code).toBe('ESTADO_NO_PERMITE');
+  });
+});
+
+describe('La familia cancela su cita desde el enlace (reunión del 21/10/2026)', () => {
+  let telefono = 0;
+  const email = (nombre: string) => `${nombre.toLowerCase()}.cancela@example.com`;
+  /** Solicitud con la cita ya elegida por la familia: devuelve su id y el token del enlace. */
+  async function conCita(nombre: string, dias: number) {
+    const id = (
+      await request(app)
+        .post('/api/solicitudes')
+        .set(auth())
+        .send({
+          viaId: viaBach, alumnaNombre: nombre, alumnaApellidos: 'Cancela Cita', tutorNombre: `Familia de ${nombre}`, email: email(nombre),
+          telefono: `+34 611 500 ${String(++telefono).padStart(3, '0')}`, centroProcedencia: 'IES Cancela', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
+        })
+    ).body.id as string;
+    const cita = await request(app).post(`/api/solicitudes/${id}/citar`).set(auth()).send({ inicios: [iso(dia(dias), '09:00')], duracion: 45 });
+    expect(cita.status).toBe(201);
+    await enviarCorreos();
+    const token = tokenDe(ultimoPara(email(nombre)).text, '/cita');
+    const pagina = await request(app).get(`/api/public/citas/${token}`);
+    expect((await request(app).post(`/api/public/citas/${token}/elegir`).send({ huecoId: pagina.body.slots[0].id })).status).toBe(200);
+    return { id, token };
+  }
+
+  it('libera la hora, vuelve a revisión y avisa a secretaría', async () => {
+    const { id, token } = await conCita('Irene', 11);
+    expect((await request(app).get(`/api/public/citas/${token}`)).body).toMatchObject({ estado: 'elegida', puedeCancelar: true });
+    await enviarCorreos();
+
+    const r = await request(app).post(`/api/public/citas/${token}/cancelar`).send({ motivo: 'Coincide con un viaje familiar.' });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ estado: 'cancelada', puedeCancelar: false, puedeCambiar: false });
+    expect(r.body.slots.every((s: { disponible: boolean }) => !s.disponible)).toBe(true);
+
+    // La solicitud vuelve a la bandeja para proponer otras fechas y la hora queda libre.
+    const ficha = (await request(app).get(`/api/solicitudes/${id}`).set(auth())).body;
+    expect(ficha.estado).toBe('EN_REVISION');
+    expect(ficha.eventos.map((e: { tipo: string }) => e.tipo)).toContain('CITA_CANCELADA_FAMILIA');
+    const disp = (await request(app).get(`/api/agenda/disponibilidad?desde=${dia(11)}&hasta=${dia(11)}&duracion=45`).set(auth())).body;
+    expect(disp.dias[0].huecos.find((h: { hora: string }) => h.hora === '09:00')).toMatchObject({ disponible: true });
+
+    // Aviso en la bandeja, con la cita que era.
+    const avisos = (await request(app).get('/api/solicitudes/respuestas-familia').set(auth())).body.items;
+    expect(avisos.find((a: { solicitud: { id: string } }) => a.solicitud.id === id)).toMatchObject({
+      tipo: 'CITA_CANCELADA_FAMILIA',
+      solicitud: { estado: 'EN_REVISION' },
+      cita: { franja: '09:00 – 09:45' },
+    });
+
+    // Correo a secretaría con el motivo, y a la familia con la anulación para su calendario.
+    await enviarCorreos();
+    const aviso = ultimoPara('secretaria@albaydar.org');
+    expect(aviso.subject).toMatch(/^La familia de Irene Cancela Cita cancela la entrevista · /);
+    expect(aviso.text).toContain('Coincide con un viaje familiar.');
+    const familia = ultimoPara(email('Irene'));
+    expect(familia.subject).toMatch(/^Entrevista anulada: /);
+    expect(familia.attachments.some((a) => a.filename.endsWith('.ics'))).toBe(true);
+    // Si la familia responde a cualquier correo, le llega a secretaría.
+    expect(familia.replyTo).toBe('secretaria@albaydar.org');
+  });
+
+  it('después de cancelar no se puede volver a elegir ni a cancelar', async () => {
+    const { token } = await conCita('Julia', 14); // lunes
+    expect((await request(app).post(`/api/public/citas/${token}/cancelar`).send({})).status).toBe(200);
+    const pagina = await request(app).get(`/api/public/citas/${token}`);
+    expect(pagina.status).toBe(200);
+    expect((await request(app).post(`/api/public/citas/${token}/elegir`).send({ huecoId: pagina.body.slots[0].id })).body.error.code).toBe('CITA_CANCELADA');
+    expect((await request(app).post(`/api/public/citas/${token}/otra-franja`).send({ franja: 'Por la tarde' })).body.error.code).toBe('CITA_CANCELADA');
+    expect((await request(app).post(`/api/public/citas/${token}/cancelar`).send({})).body.error.code).toBe('CITA_CANCELADA');
+  });
+
+  it('sin fecha elegida no hay nada que cancelar', async () => {
+    const id = (
+      await request(app)
+        .post('/api/solicitudes')
+        .set(auth())
+        .send({
+          viaId: viaBach, alumnaNombre: 'Karen', alumnaApellidos: 'Cancela Cita', tutorNombre: 'Familia de Karen', email: email('Karen'),
+          telefono: '+34 611 500 900', centroProcedencia: 'IES Cancela', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
+        })
+    ).body.id as string;
+    await request(app).post(`/api/solicitudes/${id}/citar`).set(auth()).send({ inicios: [iso(dia(15), '09:00')], duracion: 45 }); // martes
+    await enviarCorreos();
+    const token = tokenDe(ultimoPara(email('Karen')).text, '/cita');
+    expect((await request(app).get(`/api/public/citas/${token}`)).body.puedeCancelar).toBe(false);
+    expect((await request(app).post(`/api/public/citas/${token}/cancelar`).send({})).body.error.code).toBe('SIN_CITA_CONFIRMADA');
   });
 });

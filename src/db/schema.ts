@@ -89,6 +89,7 @@ export const estadoPropuestaEnum = pgEnum('estado_propuesta', [
   'OTRA_FRANJA',
   'ANULADA',
   'CADUCADA',
+  'CANCELADA', // la familia canceló la cita desde su enlace (el enlace sigue sirviendo para verlo)
 ]);
 
 export const estadoEntrevistaEnum = pgEnum('estado_entrevista', [

@@ -86,6 +86,8 @@ export async function procesarOutbox(lote = 20): Promise<{ enviados: number; fal
       const desvio = env.MAIL_DESVIO;
       await getTransporter().sendMail({
         from: env.MAIL_FROM,
+        // Si la familia responde al correo (p. ej. para cancelar), lo lee secretaría.
+        replyTo: env.MAIL_REPLY_TO ?? env.MAIL_SECRETARIA,
         to: desvio ?? c.para,
         subject: desvio ? `[Para: ${c.para}] ${c.asunto}` : c.asunto,
         html: c.html,
