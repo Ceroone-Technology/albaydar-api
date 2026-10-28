@@ -29,7 +29,7 @@ docker compose up -d --build api # tras cambiar código
 docker compose down -v           # empezar de cero (borra la BD; necesario si cambia la migración 0000)
 npm run dev                      # sin Docker, con recarga (necesita db y mailpit levantados)
 npm run typecheck                # tsc --noEmit
-npm test                         # 85 tests; usa la BD albaydar_test (la crea el contenedor de PostgreSQL)
+npm test                         # usa la BD albaydar_test (la crea el contenedor de PostgreSQL)
 npm run db:generate -- --name x  # tras editar src/db/schema.ts → SQL nuevo en drizzle/
 DATABASE_URL=postgresql://albaydar:albaydar@localhost:5432/albaydar npm run db:migrate
 ```
@@ -182,13 +182,14 @@ Tablas:
 11. **Roles al arrancar:** `sembrarBase` no pisa roles existentes. Un permiso nuevo en una BD ya creada se añade desde la matriz o con una migración.
 12. **Contenedor:** la API arranca como root solo para ajustar los permisos de `storage/uploads` y luego pasa a `node`.
 13. **Una entrevista futura no se puede marcar como realizada** (409 `ENTREVISTA_FUTURA`). En pruebas manuales, la solicitud se pasa a `ENTREVISTA_REALIZADA` con `PATCH /estado` (transición manual permitida).
+14. **`UPDATE … RETURNING` no devuelve las filas en ningún orden.** Si importa el orden (la cola de correos), se recorre el de la `SELECT … ORDER BY`. Y `now()` es el mismo durante toda la transacción: para desempatar filas creadas en la misma, `clock_timestamp()` (ver `encolarCorreo`). Sin esto, dos correos a la misma familia podían salir al revés y 6 tests fallaban de vez en cuando.
 
 ## Reglas de negocio validadas con el cliente
 
 - **Perfiles:** Dirección (superadministrador, todos los permisos, no se le pueden quitar), Administración, Secretaría y Comercial/Promoción. Matriz editable por Dirección. Siempre debe quedar un usuario activo de Dirección. Solo Dirección registra la decisión de admisión (`evaluacion.editar`).
 - **Solicitud web:** obligatorios alumna (nombre y apellidos), vía, centro de procedencia, tutor, correo y teléfono; la modalidad es opcional. Entra como `RECIBIDA` y se envía un acuse.
 - **Revisión:** cinco comprobaciones (datos completos, correo válido, plazas libres por vía, familia ya vinculada, cupo SNEC). No se puede citar si está incompleta: se usa "Pedir que complete".
-- **Agenda:** jornada de lunes a viernes de 8:00 a 18:00. Entrevistas de 45 o 60 min, siempre **presenciales con el equipo directivo** en la sala de reuniones de Dirección.
+- **Agenda:** jornada de lunes a viernes de 8:00 a 18:00. Entrevistas de 45 o 60 min, siempre **presenciales con el equipo directivo** en la sala de reuniones de Dirección. **Nunca el mismo día** (21/10/2026): la disponibilidad marca las horas de hoy como `Mismo día` y `citar` responde 400 `FECHA_MISMO_DIA`; se controla con `permitirMismoDia` (por defecto `false`) en `ajustes.agenda`.
 - **Citación:** 1 a 3 fechas reservadas hasta que la familia elige. Al elegir, la elegida se confirma, las demás se liberan y la entrevista aparece en el calendario (.ics por correo).
 - **Cambio de cita:** solo durante las **24 h siguientes a la primera aceptación**. Después, 409 `CAMBIO_FUERA_DE_PLAZO`.
 - **Recordatorios:** uno si la familia no elige en 3 días, y otro el día antes de la entrevista.
@@ -208,11 +209,11 @@ Tablas:
 
 Detalle, flujo de referencia paso a paso y prioridad en `../RESUMEN-PROYECTO-ALBAYDAR.md` y `../docs/diagrama-flujo-admision.png` (fuera del repo, en `albaydar-project/`). Lo que toca a la API:
 
-- **Código con letra de tipo:** **B** Bachillerato, **C** Ciclos. Se deriva de `vias.familia` en `siguienteCodigo()` (`solicitudes/comun.ts`), con secuencia por letra y año. Series exactas pendientes del cliente.
+- ~~**Código con letra de tipo:** B Bachillerato, C Ciclos~~ ✅ hecho en `feat/codigo-solicitud-por-tipo`: `B-2026-0001` / `C-2026-0001`, contador por letra y año (`siguienteCodigo` y `LETRA_CODIGO` en `solicitudes/comun.ts`). Formato provisional hasta que el cliente dé sus series; las anteriores conservan `SOL-…`.
 - **Varios entrevistadores (~7, según el tipo de solicitud)** y calendario de todos para secretaría, con Google Calendar como opción. **Revierte la decisión D2** (agenda única del equipo directivo, `CHECK entrevistas_presencial_chk`, `EXCLUDE` global): entrevistador por entrevista y agenda por persona. Esperar la lista de entrevistadores antes de migrar.
 - ~~**Cancelar desde el recordatorio del día antes** y desde `/cita/:token`, con aviso a secretaría; respuestas por correo a secretaría~~ ✅ hecho en `feat/cancelar-cita-familia`: `POST /public/citas/:token/cancelar` (`cancelarPorFamilia`), propuesta `CANCELADA` (migración `0005`), aviso `CITA_CANCELADA_FAMILIA` en `respuestas-familia`, correo `AVISO_CANCELACION_FAMILIA` y `Reply-To` (`MAIL_REPLY_TO` o `MAIL_SECRETARIA`). Falta el front: botón en la página de la cita, estado «cancelada» y el aviso en la bandeja. El texto nuevo del recordatorio solo llega a BD nuevas (trampa 10): en las existentes, se edita desde Comunicaciones.
-- **Entrevista previa ya realizada:** validarla sin repetirla (hoy solo el atajo `PATCH /estado`).
-- **Duración y antelación:** 45–60 min (se mantiene) y **nunca el mismo día**: hoy la disponibilidad solo exige 2 h de antelación.
+- ~~**Entrevista previa ya realizada:** validarla sin repetirla~~ ✅ hecho en `feat/entrevista-previa`: `POST /solicitudes/:id/entrevista-previa` (`registrarEntrevistaPrevia` en `citacion.service.ts`) y acción `REGISTRAR_ENTREVISTA_PREVIA` en `siguientes`. Falta la acción en el front.
+- ~~**Duración y antelación:** 45–60 min y nunca el mismo día~~ ✅ hecho en `fix/agenda-sin-mismo-dia` (`primerInicioPermitido` en `agenda.service.ts`).
 - **Reserva no reembolsable** salvo fuerza mayor caso por caso (cierra la pregunta 15); se puede pagar desde diciembre.
 - **Captación / CRM:** primer contacto con nombre, correo, teléfono y área de interés, y correo automático de información en menos de 5 min. El flujo completo y el perfil Comercial los define el cliente (Luis Fdo.).
 - **Matrícula (sigue en pausa), dos bloqueos nuevos:** alumnado de la Junta de Andalucía directo a matrícula con **importación desde Séneca** (API o fichero), y renovación 1º→2º filtrando a quien promociona según calificaciones (requiere Alumnado y notas).
@@ -301,6 +302,8 @@ Lo que propuso el front:
 - **Deuda menor:** `z.string().uuid()` y `.email()` están obsoletos en Zod 4 (se usan en todo el código, migrar de una vez a `z.uuid()` y `z.email()`); avisos de estilo de Sonar (`await` en bucles intencionado en las tareas, ternarios anidados).
 
 ## Cómo trabajar en este repo
+
+- **Ramas** (desde el 27/10/2026, igual que el front): `develop` es la rama de trabajo y la de por defecto en GitHub. Todo sale de `develop` en una rama `feat/…`, `fix/…`, `chore/…` o `docs/…` y vuelve a `develop` mediante PR. Cuando se completan varias iteraciones, `develop` → `main` con un PR. No se abren PR de funcionalidades contra `main`. Commits y PR, solo cuando el usuario lo pida.
 
 - **Cambio de contrato:**
   1. Actualiza `docs/api.md` en el mismo cambio.

@@ -83,7 +83,7 @@ async function main() {
       await db.transaction(async (tx) => {
         const [s] = await tx
           .insert(solicitudes)
-          .values({ ...e, codigo: await siguienteCodigo(tx), consentimientoPrivacidad: true, consentimientoEn: new Date(), responsableId: maria.id })
+          .values({ ...e, codigo: await siguienteCodigo(tx, todas.find((x) => x.id === e.viaId)!.familia), consentimientoPrivacidad: true, consentimientoEn: new Date(), responsableId: maria.id })
           .returning();
         await registrarEvento(tx, s!.id, { tipo: 'familia' }, 'CREADA', { aEstado: 'RECIBIDA', detalle: { canal: e.canal, seed: true } });
         console.log(`  solicitud ${s!.codigo} · ${e.alumnaNombre} ${e.alumnaApellidos}`);

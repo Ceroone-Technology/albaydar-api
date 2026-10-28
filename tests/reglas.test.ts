@@ -112,9 +112,13 @@ describe('pipeline y transiciones', () => {
       { estado: 'DESCARTADA', columna: null },
       { estado: 'PENDIENTE_COMPLETAR', columna: 'nueva', accion: 'PEDIR_QUE_COMPLETE' },
       { estado: 'CITACION_ENVIADA', columna: 'entrevista', accion: 'CITAR_A_ENTREVISTA' },
+      { estado: 'ENTREVISTA_REALIZADA', columna: 'evaluada', accion: 'REGISTRAR_ENTREVISTA_PREVIA' },
     ]);
-    // Incompleta: no se ofrece citar.
+    // Incompleta: no se ofrece citar ni registrar una entrevista previa.
     expect(siguientesEstados('EN_REVISION', { ...todo, puedeCitar: false }).map((s) => s.estado)).not.toContain('CITACION_ENVIADA');
+    expect(siguientesEstados('EN_REVISION', { ...todo, puedeCitar: false }).map((s) => s.estado)).not.toContain('ENTREVISTA_REALIZADA');
+    // Con la entrevista ya programada, el resultado se registra en ella, no como entrevista previa.
+    expect(siguientesEstados('ENTREVISTA_PROGRAMADA', todo).map((s) => s.accion)).not.toContain('REGISTRAR_ENTREVISTA_PREVIA');
     // Sin evaluacion.editar no se ofrecen las decisiones de admisión.
     expect(siguientesEstados('ENTREVISTA_REALIZADA', { ...todo, evaluar: false })).toEqual([]);
     // Las decisiones van por "Registrar decisión" (notifica y crea la reserva).
@@ -218,5 +222,38 @@ describe('agenda: jornada laboral', async () => {
   });
   it('respeta los días no lectivos', () => {
     expect(dentroDeJornada(...f('2026-12-08', '10:00', 45), { ...cfg, diasNoLectivos: ['2026-12-08'] })).toMatch(/no lectivo/);
+  });
+});
+
+describe('agenda: nunca el mismo día', async () => {
+  const { primerInicioPermitido } = await import('../src/modules/agenda/agenda.service');
+  const { AGENDA_POR_DEFECTO: cfg } = await import('../src/modules/ajustes/ajustes.service');
+  const { diaSiguiente } = await import('../src/lib/fechas');
+
+  it('por defecto no se permite el mismo día: lo primero es mañana a las 00:00 del centro', () => {
+    expect(cfg.permitirMismoDia).toBe(false);
+    const ahora = horaLocalAUtc('2026-11-02', '09:00');
+    const r = primerInicioPermitido(cfg, ahora);
+    expect(r.manana).toEqual(horaLocalAUtc('2026-11-03', '00:00'));
+    expect(r.desde).toEqual(r.manana);
+    expect(r.antelacion).toEqual(horaLocalAUtc('2026-11-02', '11:00'));
+  });
+
+  it('a última hora manda la antelación si cae ya en el día siguiente', () => {
+    const r = primerInicioPermitido({ ...cfg, antelacionMinHoras: 4 }, horaLocalAUtc('2026-11-02', '22:30'));
+    expect(r.desde).toEqual(horaLocalAUtc('2026-11-03', '02:30'));
+  });
+
+  it('con permitirMismoDia sólo cuenta la antelación', () => {
+    const ahora = horaLocalAUtc('2026-11-02', '09:00');
+    const r = primerInicioPermitido({ ...cfg, permitirMismoDia: true }, ahora);
+    expect(r.manana).toBeNull();
+    expect(r.desde).toEqual(horaLocalAUtc('2026-11-02', '11:00'));
+  });
+
+  it('día siguiente sin depender del cambio de hora ni del fin de mes', () => {
+    expect(diaSiguiente('2026-10-24')).toBe('2026-10-25');
+    expect(diaSiguiente('2026-10-25')).toBe('2026-10-26'); // cambio de hora en España
+    expect(diaSiguiente('2026-12-31')).toBe('2027-01-01');
   });
 });
