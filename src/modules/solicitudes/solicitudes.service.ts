@@ -90,7 +90,7 @@ export async function crearDesdeWeb(d: z.infer<typeof solicitudPublicaBody>, ip?
     const [s] = await tx
       .insert(solicitudes)
       .values({
-        codigo: await siguienteCodigo(tx, ahora),
+        codigo: await siguienteCodigo(tx, via.familia, ahora),
         viaId: via.id,
         alumnaNombre: d.alumnaNombre,
         alumnaApellidos: d.alumnaApellidos,
@@ -124,7 +124,7 @@ export async function crearInterna(d: z.infer<typeof solicitudInternaBody>, usua
     const [s] = await tx
       .insert(solicitudes)
       .values({
-        codigo: await siguienteCodigo(tx, ahora),
+        codigo: await siguienteCodigo(tx, via.familia, ahora),
         viaId: via.id,
         alumnaNombre: d.alumnaNombre,
         alumnaApellidos: d.alumnaApellidos,

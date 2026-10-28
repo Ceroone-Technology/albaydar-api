@@ -125,7 +125,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 
 ```json
 {
-  "ref": "SOL-2026-0001", "alumno": "Lucía Márquez Peña", "tutor": "Elena", "curso": "Bachillerato 1º",
+  "ref": "B-2026-0001", "alumno": "Lucía Márquez Peña", "tutor": "Elena", "curso": "Bachillerato 1º",
   "info": [{ "k": "Tipo", "v": "Presencial" }, { "k": "Con", "v": "Equipo directivo" },
            { "k": "Lugar", "v": "Sala de reuniones de Dirección · Avda. de la Palmera, 36" }],
   "estado": "propuesta | elegida | alternativa | caducada",
@@ -145,6 +145,8 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 - `cambioHasta` = 24 h después de la primera aceptación. Pasado ese momento `puedeCambiar: false` y `elegir` / `otra-franja` responden `CAMBIO_FUERA_DE_PLAZO`: el front debe ocultar "Cambiar la elección" y mostrar el teléfono de secretaría.
 
 ## Admisión
+
+**Código de la solicitud** (acordado el 21/10/2026, formato provisional): letra de la vía, año y contador por letra y año: `B-2026-0001` (Bachillerato) y `C-2026-0001` (Ciclos). Las solicitudes creadas antes conservan su `SOL-2026-NNNN`. El formato está solo en `siguienteCodigo()` (`solicitudes/comun.ts`), para cambiarlo cuando el centro dé sus series.
 
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
@@ -168,7 +170,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 
 ```json
 {
-  "id": "uuid", "codigo": "SOL-2026-0001",
+  "id": "uuid", "codigo": "B-2026-0001",
   "estado": "CITACION_ENVIADA", "estadoEtiqueta": "Esperando a la familia", "estadoTono": "violet", "columna": "entrevista",
   "alumna": "Lucía Márquez Peña", "tutor": "Elena Peña Ríos", "email": "…", "telefono": "…",
   "centroProcedencia": "…", "modalidadInteres": "Ciencias",
@@ -229,7 +231,7 @@ Al elegir fecha, la solicitud sale de la bandeja. `GET /solicitudes/respuestas-f
 ```json
 { "items": [{
   "eventoId": "uuid", "tipo": "CITA_CONFIRMADA | CITA_CAMBIADA", "fecha": "…",
-  "solicitud": { "id": "uuid", "codigo": "SOL-2026-0001", "alumna": "Lucía Márquez Peña", "estado": "ENTREVISTA_PROGRAMADA" },
+  "solicitud": { "id": "uuid", "codigo": "B-2026-0001", "alumna": "Lucía Márquez Peña", "estado": "ENTREVISTA_PROGRAMADA" },
   "cita": { "inicio": "…", "fin": "…", "dia": "Martes 27 de octubre", "franja": "12:00 – 13:00" }
 }] }
 ```
@@ -463,4 +465,4 @@ Base `PUBLIC_APP_URL`. Deben existir en Angular y ser públicas:
 
 - `/cita/:token` → página "Albaydar Cita"
 - `/solicitud/completar/:token` → completar solicitud
-- `/admision?ref=SOL-…` → solicitud en la bandeja (aviso interno a secretaría)
+- `/admision?ref=B-…` (o `C-…`) → solicitud en la bandeja (aviso interno a secretaría)
