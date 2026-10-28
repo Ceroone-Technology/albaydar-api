@@ -220,3 +220,36 @@ describe('agenda: jornada laboral', async () => {
     expect(dentroDeJornada(...f('2026-12-08', '10:00', 45), { ...cfg, diasNoLectivos: ['2026-12-08'] })).toMatch(/no lectivo/);
   });
 });
+
+describe('agenda: nunca el mismo día', async () => {
+  const { primerInicioPermitido } = await import('../src/modules/agenda/agenda.service');
+  const { AGENDA_POR_DEFECTO: cfg } = await import('../src/modules/ajustes/ajustes.service');
+  const { diaSiguiente } = await import('../src/lib/fechas');
+
+  it('por defecto no se permite el mismo día: lo primero es mañana a las 00:00 del centro', () => {
+    expect(cfg.permitirMismoDia).toBe(false);
+    const ahora = horaLocalAUtc('2026-11-02', '09:00');
+    const r = primerInicioPermitido(cfg, ahora);
+    expect(r.manana).toEqual(horaLocalAUtc('2026-11-03', '00:00'));
+    expect(r.desde).toEqual(r.manana);
+    expect(r.antelacion).toEqual(horaLocalAUtc('2026-11-02', '11:00'));
+  });
+
+  it('a última hora manda la antelación si cae ya en el día siguiente', () => {
+    const r = primerInicioPermitido({ ...cfg, antelacionMinHoras: 4 }, horaLocalAUtc('2026-11-02', '22:30'));
+    expect(r.desde).toEqual(horaLocalAUtc('2026-11-03', '02:30'));
+  });
+
+  it('con permitirMismoDia sólo cuenta la antelación', () => {
+    const ahora = horaLocalAUtc('2026-11-02', '09:00');
+    const r = primerInicioPermitido({ ...cfg, permitirMismoDia: true }, ahora);
+    expect(r.manana).toBeNull();
+    expect(r.desde).toEqual(horaLocalAUtc('2026-11-02', '11:00'));
+  });
+
+  it('día siguiente sin depender del cambio de hora ni del fin de mes', () => {
+    expect(diaSiguiente('2026-10-24')).toBe('2026-10-25');
+    expect(diaSiguiente('2026-10-25')).toBe('2026-10-26'); // cambio de hora en España
+    expect(diaSiguiente('2026-12-31')).toBe('2027-01-01');
+  });
+});

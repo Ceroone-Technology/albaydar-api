@@ -25,6 +25,7 @@
 | — | IBAN del centro (21 de octubre) | Provisional `ES91 2100 0418 4502 0005 1332` (ficticio) | En `ajustes.reserva`; llega a las plantillas como variable |
 | — | Formas de pago (21 de octubre) | Transferencia y efectivo | `ajustes.reserva.metodos` |
 | — | Conciliación (21 de octubre) | Registro manual, sin importar extractos | `POST /cobros` |
+| — | Agenda (21 de octubre) | Nunca el mismo día: entrevistas de 45 a 60 minutos a partir de mañana | `permitirMismoDia: false` en `ajustes.agenda`; motivo `Mismo día` y error `FECHA_MISMO_DIA` |
 | — | Plazo de pago | 15 días naturales desde la admisión (diagrama de flujo) | `ajustes.reserva.plazoDias` |
 
 ## Pendiente de validar
