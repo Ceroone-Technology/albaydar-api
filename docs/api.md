@@ -250,6 +250,8 @@ POST /solicitudes/:id/citar
 
 Respuesta `201`: `{ propuestaId, duracion, reservadasHasta, franjas: [{ id, inicio, fin, dia, franja, estado: "RESERVADA" }] }`.
 
+Nunca el mismo día (acordado el 21/10/2026): la disponibilidad marca las horas de hoy con `motivo: "Mismo día"` y `citar` las rechaza con 400 `FECHA_MISMO_DIA`. Lo controla `permitirMismoDia` en la configuración de la agenda (por defecto `false`); la antelación mínima (`antelacionMinHoras`, 400 `FECHA_DEMASIADO_PRONTO`) se sigue aplicando.
+
 Desde ese momento esas horas están bloqueadas para el resto. Si otra persona las acaba de coger: 409 `FRANJA_OCUPADA`. Volver a citar ("Cambiar la propuesta" / "Proponer nuevas fechas") anula la propuesta anterior, libera sus horas e invalida el enlace anterior.
 
 ## Agenda del equipo directivo
@@ -258,7 +260,7 @@ La disponibilidad no se crea a mano: es la **jornada** (por defecto lunes a vier
 
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
-| GET | `/agenda/disponibilidad?desde&hasta&duracion` | entrevistas.ver o solicitudes.editar | `{ duracion, dias: [{ fecha, dia, libres, huecos: [{ inicio, fin, hora, franja, disponible, motivo }] }] }`. `motivo`: `Ocupado`, `Bloqueado`, `Pasado`, `No lectivo` |
+| GET | `/agenda/disponibilidad?desde&hasta&duracion` | entrevistas.ver o solicitudes.editar | `{ duracion, dias: [{ fecha, dia, libres, huecos: [{ inicio, fin, hora, franja, disponible, motivo }] }] }`. `motivo`: `Ocupado`, `Bloqueado`, `Pasado`, `Mismo día`, `No lectivo` |
 | GET | `/agenda/ocupacion?desde&hasta` | ídem | Qué ocupa cada franja: reserva de propuesta (con la alumna), entrevista o bloqueo |
 | POST | `/agenda/bloqueos` | entrevistas.editar | `{ fecha, inicio: "09:00", fin: "11:00", motivo }` (reunión, ausencia…) |
 | DELETE | `/agenda/bloqueos/:id` | entrevistas.editar | Quitar un bloqueo |
@@ -272,6 +274,7 @@ La disponibilidad no se crea a mano: es la **jornada** (por defecto lunes a vier
   "duraciones": [45, 60], "duracionPorDefecto": 45,
   "pasoMin": 30,
   "antelacionMinHoras": 2,
+  "permitirMismoDia": false,
   "diasNoLectivos": ["2026-12-08"]
 }
 ```

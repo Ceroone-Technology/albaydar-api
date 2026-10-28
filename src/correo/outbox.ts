@@ -32,6 +32,9 @@ export async function encolarCorreo(
     solicitudId: o.solicitudId,
     adjuntos: o.adjuntos?.map((a) => ({ ...a, content: Buffer.from(a.content).toString('base64') })),
     programadoPara: o.programadoPara ?? new Date(),
+    // now() es el mismo durante toda la transacción: clock_timestamp() avanza y
+    // desempata, en microsegundos, los correos encolados en la misma.
+    createdAt: sql`clock_timestamp()`,
   });
 }
 
@@ -60,15 +63,19 @@ export async function procesarOutbox(lote = 20): Promise<{ enviados: number; fal
       .select({ id: correosSalientes.id })
       .from(correosSalientes)
       .where(and(eq(correosSalientes.estado, 'PENDIENTE'), lte(correosSalientes.programadoPara, new Date())))
-      .orderBy(correosSalientes.programadoPara)
+      .orderBy(correosSalientes.programadoPara, correosSalientes.createdAt)
       .limit(lote)
       .for('update', { skipLocked: true });
     if (!filas.length) return [];
-    return tx
+    const actualizadas = await tx
       .update(correosSalientes)
       .set({ estado: 'ENVIANDO', reclamadoEn: new Date(), intentos: sql`${correosSalientes.intentos} + 1` })
       .where(inArray(correosSalientes.id, filas.map((f) => f.id)))
       .returning();
+    // RETURNING no garantiza ningún orden: se envían en el de la consulta, que
+    // ordena PostgreSQL con microsegundos (en JavaScript se perderían).
+    const orden = new Map(filas.map((f, i) => [f.id, i]));
+    return actualizadas.sort((a, b) => orden.get(a.id)! - orden.get(b.id)!);
   });
 
   let enviados = 0;

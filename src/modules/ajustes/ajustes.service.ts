@@ -24,6 +24,8 @@ export const agendaConfigSchema = z
     pasoMin: z.number().int().refine((n) => [5, 10, 15, 20, 30, 60].includes(n), 'Paso de 5, 10, 15, 20, 30 o 60 minutos.'),
     /** Antelación mínima para proponer una hora (no se ofrecen horas de dentro de un rato). */
     antelacionMinHoras: z.number().min(0).max(168),
+    /** Proponer entrevistas para hoy. Acordado (21/10/2026): nunca el mismo día. */
+    permitirMismoDia: z.boolean().default(false),
     /** Fechas sin entrevistas (festivos, claustros…), AAAA-MM-DD. */
     diasNoLectivos: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).default([]),
   })
@@ -41,6 +43,7 @@ export const AGENDA_POR_DEFECTO: AgendaConfig = {
   duracionPorDefecto: 45,
   pasoMin: 30,
   antelacionMinHoras: 2,
+  permitirMismoDia: false,
   diasNoLectivos: [],
 };
 
