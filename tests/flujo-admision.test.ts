@@ -17,7 +17,7 @@ import { db, pool } from '../src/lib/db';
 import { correosSalientes, entrevistas, franjasAgenda, propuestasCita, reservas, solicitudes, usuarios, vias } from '../src/db/schema';
 import { recordatoriosPago, vencerReservas } from '../src/modules/reservas/reservas.service';
 import { sembrarBase } from '../src/db/datos-base';
-import { procesarOutbox, setTransporter } from '../src/correo/outbox';
+import { encolarCorreo, procesarOutbox, setTransporter } from '../src/correo/outbox';
 import { recordatoriosEntrevista, recordatoriosPropuesta } from '../src/jobs/recordatorios';
 import { hashPassword } from '../src/modules/auth/auth.service';
 import { invalidarCachePermisos } from '../src/modules/permisos/permisos.service';
@@ -842,5 +842,37 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     // Es idempotente: volver a ejecutarla no crea otra.
     await db.execute(sql.raw(await readFile('./drizzle/0004_reservas_admitidas_antiguas.sql', 'utf8')));
     expect((await db.select().from(reservas).where(eq(reservas.solicitudId, olga.id))).length).toBe(1);
+  });
+});
+
+describe('Cola de correos', () => {
+  it('envía en el orden en que se encolaron, también dentro de una misma transacción', async () => {
+    await enviarCorreos();
+    const para = 'orden.cola@example.com';
+    const asuntos = Array.from({ length: 15 }, (_, i) => `Correo ${String(i + 1).padStart(2, '0')}`);
+    await db.transaction(async (tx) => {
+      for (const asunto of asuntos) {
+        await encolarCorreo(tx, { plantilla: 'PRUEBA', para, correo: { asunto, html: `<p>${asunto}</p>`, texto: asunto } });
+      }
+    });
+    await enviarCorreos();
+    expect(buzon.filter((m) => m.to === para).map((m) => m.subject)).toEqual(asuntos);
+  });
+
+  it('respeta la hora programada aunque se encolaran en otro orden', async () => {
+    await enviarCorreos();
+    const para = 'orden.programado@example.com';
+    const base = Date.now() - 60_000;
+    // Se encolan del último al primero: el orden físico de las filas es el inverso al de envío.
+    for (let i = 15; i >= 1; i--) {
+      const asunto = `Programado ${String(i).padStart(2, '0')}`;
+      await db.transaction((tx) =>
+        encolarCorreo(tx, { plantilla: 'PRUEBA', para, correo: { asunto, html: `<p>${asunto}</p>`, texto: asunto }, programadoPara: new Date(base + i * 1000) }),
+      );
+    }
+    await enviarCorreos();
+    expect(buzon.filter((m) => m.to === para).map((m) => m.subject)).toEqual(
+      Array.from({ length: 15 }, (_, i) => `Programado ${String(i + 1).padStart(2, '0')}`),
+    );
   });
 });
