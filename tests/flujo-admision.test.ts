@@ -165,6 +165,15 @@ describe('Usuarios, roles y permisos', () => {
     expect(r2.body.error.code).toBe('EMAIL_EN_USO');
   });
 
+  it('el CORS deja al front usar PUT (agenda, reserva y permisos de un rol)', async () => {
+    const r = await request(app)
+      .options('/api/reservas/configuracion')
+      .set('Origin', 'http://localhost:4200')
+      .set('Access-Control-Request-Method', 'PUT');
+    expect(r.status).toBe(204);
+    expect(r.headers['access-control-allow-methods']).toContain('PUT');
+  });
+
   it('no deja quitar el último superadministrador', async () => {
     const [d] = await db.select().from(usuarios).where(eq(usuarios.email, 'direccion@albaydar.org'));
     const r = await request(app).patch(`/api/usuarios/${d!.id}`).set(auth('direccion')).send({ roles: ['SECRETARIA'] });
