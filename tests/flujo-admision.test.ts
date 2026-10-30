@@ -141,6 +141,13 @@ describe('Usuarios, roles y permisos', () => {
     expect((await request(app).get('/api/usuarios').set(auth('comercial'))).status).toBe(403);
   });
 
+  it('Administración (configuracion.ver) lee el horario de la agenda, pero no lo cambia', async () => {
+    const r = await request(app).get('/api/agenda/configuracion').set(auth('administracion'));
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ horaInicio: '08:00', permitirMismoDia: false });
+    expect((await request(app).put('/api/agenda/configuracion').set(auth('administracion')).send(r.body)).status).toBe(403);
+  });
+
   it('Dirección registra un usuario con rol y lo puede editar', async () => {
     const r = await request(app).post('/api/usuarios').set(auth('direccion')).send({ email: 'Nuevo@albaydar.org', nombre: 'Nueva Persona', roles: ['comercial'], password: 'OtraClave-2026' });
     expect(r.status).toBe(201);

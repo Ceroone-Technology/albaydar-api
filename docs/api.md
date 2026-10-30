@@ -291,7 +291,7 @@ La disponibilidad no se crea a mano: es la **jornada** (por defecto lunes a vier
 | GET | `/agenda/ocupacion?desde&hasta` | ídem | Qué ocupa cada franja: reserva de propuesta (con la alumna), entrevista o bloqueo |
 | POST | `/agenda/bloqueos` | entrevistas.editar | `{ fecha, inicio: "09:00", fin: "11:00", motivo }` (reunión, ausencia…) |
 | DELETE | `/agenda/bloqueos/:id` | entrevistas.editar | Quitar un bloqueo |
-| GET | `/agenda/configuracion` | entrevistas.ver | Horario actual |
+| GET | `/agenda/configuracion` | entrevistas.ver, solicitudes.editar o configuracion.ver | Horario actual |
 | PUT | `/agenda/configuracion` | configuracion.editar | Ver abajo |
 
 ```json
