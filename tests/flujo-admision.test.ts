@@ -141,6 +141,15 @@ describe('Usuarios, roles y permisos', () => {
     expect((await request(app).get('/api/usuarios').set(auth('comercial'))).status).toBe(403);
   });
 
+  it('el CORS deja al front usar PUT (agenda, reserva y permisos de un rol)', async () => {
+    const r = await request(app)
+      .options('/api/reservas/configuracion')
+      .set('Origin', 'http://localhost:4200')
+      .set('Access-Control-Request-Method', 'PUT');
+    expect(r.status).toBe(204);
+    expect(r.headers['access-control-allow-methods']).toContain('PUT');
+  });
+
   it('Dirección registra un usuario con rol y lo puede editar', async () => {
     const r = await request(app).post('/api/usuarios').set(auth('direccion')).send({ email: 'Nuevo@albaydar.org', nombre: 'Nueva Persona', roles: ['comercial'], password: 'OtraClave-2026' });
     expect(r.status).toBe(201);

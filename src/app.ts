@@ -31,7 +31,8 @@ export function crearApp() {
     cors({
       origin: env.CORS_ORIGINS,
       credentials: true, // para la cookie del refresh token
-      methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+      // PUT: configuración de la agenda y de la reserva, y permisos de un rol.
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
       allowedHeaders: ['Content-Type', 'Authorization'],
     }),
   );
