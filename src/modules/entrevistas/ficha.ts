@@ -136,3 +136,27 @@ export function faltanParaRealizada(f: Ficha | null): ('valoracion' | 'entrevist
   if (!f?.entrevistados.length) faltan.push('entrevistados');
   return faltan;
 }
+
+// ── Etiquetas (exportaciones) ─────────────────────────────────────────────────
+
+export const ETIQUETA_VALORACION: Record<(typeof VALORACIONES)[number], string> = {
+  FAVORABLE: 'Favorable',
+  CON_RESERVAS: 'Con reservas',
+  DESFAVORABLE: 'Desfavorable',
+};
+
+export const ETIQUETA_MODALIDAD: Record<(typeof MODALIDADES)[number], string> = {
+  HUMANIDADES_CCSS: 'Humanidades y CC. SS.',
+  CIENCIAS_TECNOLOGIA: 'Ciencias y Tecnología',
+};
+
+/** En 2º, «Latín II», como en la ficha. */
+export const etiquetaOptativa = (o: (typeof OPTATIVAS)[number], curso: number) =>
+  ({ LATIN: curso === 2 ? 'Latín II' : 'Latín', MATEMATICAS: 'Matemáticas', BIOLOGIA: 'Biología', DIBUJO_TECNICO: 'Dibujo Técnico' })[o];
+
+export const ETIQUETA_ENTREVISTADO: Record<(typeof ENTREVISTADOS)[number], string> = {
+  PADRE: 'Padre',
+  MADRE: 'Madre',
+  ALUMNA: 'Alumna',
+};
+

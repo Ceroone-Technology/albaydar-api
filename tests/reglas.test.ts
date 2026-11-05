@@ -7,6 +7,7 @@ import { diasRestantes, fechaTexto } from '../src/modules/reservas/reservas.serv
 import { columnaDe, cursoEscolarCorto, puedeTransicionar, siguientesEstados } from '../src/modules/solicitudes/dominio';
 import { revisar, type EntradaRevision } from '../src/modules/solicitudes/revision';
 import { combinarFicha, erroresFicha, faltanParaRealizada } from '../src/modules/entrevistas/ficha';
+import { aCsv, eurosCsv, fechaCsv } from '../src/lib/csv';
 
 const base: EntradaRevision = {
   alumnaNombre: 'Lucía',
@@ -270,6 +271,32 @@ describe('Ficha de la entrevista', () => {
   it('lo mínimo para darla por realizada', () => {
     expect(faltanParaRealizada(null)).toEqual(['valoracion', 'entrevistados']);
     expect(faltanParaRealizada(ficha({ valoracion: 'FAVORABLE', entrevistados: ['PADRE'] }))).toEqual([]);
+  });
+});
+
+describe('CSV para Excel', () => {
+  const cols = [
+    { titulo: 'Texto', valor: (f: { t: string }) => f.t },
+    { titulo: 'Número', valor: () => 8.5 },
+    { titulo: 'Sí/No', valor: () => true },
+    { titulo: 'Vacío', valor: () => null },
+  ];
+  it('separador ;, comillas, BOM y coma decimal', () => {
+    const s = aCsv(cols, [{ t: 'Sevilla; "centro"\nnorte' }]);
+    expect(s.startsWith('\uFEFF')).toBe(true);
+    expect(s).toBe('\uFEFFTexto;Número;Sí/No;Vacío\r\n"Sevilla; ""centro""\nnorte";8,5;Sí;\r\n');
+  });
+  it('neutraliza fórmulas y deja los teléfonos como texto', () => {
+    const fila = (t: string) => aCsv([cols[0]!], [{ t }]).split('\r\n')[1];
+    expect(fila('=HYPERLINK("http://x")')).toBe('"\'=HYPERLINK(""http://x"")"');
+    expect(fila('@SUM(A1)')).toBe("'@SUM(A1)");
+    expect(fila('-2+3')).toBe("'-2+3");
+    expect(fila('+34 600 000 001')).toBe(' +34 600 000 001');
+  });
+  it('fechas y euros', () => {
+    expect(fechaCsv('2026-11-05')).toBe('05/11/2026');
+    expect(eurosCsv(30000)).toBe('300,00');
+    expect(eurosCsv(null)).toBeNull();
   });
 });
 

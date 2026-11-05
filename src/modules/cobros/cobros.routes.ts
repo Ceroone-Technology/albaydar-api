@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { requirePermiso } from '../../middleware/auth';
 import { v, validate } from '../../middleware/validate';
 import * as srv from './cobros.service';
+import { todasLasPaginas } from '../../lib/csv';
+import { COLUMNAS_COBROS } from '../exportaciones/columnas';
+import { responderCsv } from '../exportaciones/exportar';
 
 const idParam = z.object({ id: z.string().uuid() });
 
@@ -14,6 +17,12 @@ cobrosRouter.get('/', requirePermiso('cobros.ver'), validate({ query: srv.listar
 });
 
 /** KPIs: cobrado (en el periodo), pendiente y parcial. */
+/** CSV de la pestaña Pagos, con sus filtros: GET /cobros/exportar?desde&hasta&metodo… */
+cobrosRouter.get('/exportar', requirePermiso('cobros.ver'), validate({ query: srv.listarCobrosQuery }), async (req, res) => {
+  const filas = await todasLasPaginas(srv.listar, v<typeof srv.listarCobrosQuery>(req, 'query'));
+  responderCsv(req, res, 'cobros', COLUMNAS_COBROS, filas);
+});
+
 cobrosRouter.get('/resumen', requirePermiso('cobros.ver'), validate({ query: srv.resumenQuery }), async (req, res) => {
   res.json(await srv.resumen(v<typeof srv.resumenQuery>(req, 'query')));
 });

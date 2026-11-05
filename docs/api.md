@@ -508,6 +508,19 @@ Reglas:
 
 Al arrancar, una plantilla de una fase que ya está construida y que sigue en borrador **sin haberse editado nunca** se sustituye por la predeterminada actual y se activa. Si el centro ya la ha tocado, no se cambia.
 
+## Exportaciones (CSV para Excel)
+
+Cada listado tiene su descarga con **los mismos filtros y permisos**, sin paginar (`page` y `pageSize` se ignoran; tope de 10 000 filas). Responden `text/csv; charset=utf-8` con `Content-Disposition: attachment; filename="<nombre>-AAAA-MM-DD.csv"` (expuesta por CORS) y `Cache-Control: no-store`.
+
+| Ruta | Permiso | Filtros | Columnas |
+|---|---|---|---|
+| `GET /solicitudes/exportar` | solicitudes.ver | los de `GET /solicitudes` (`vista`, `columna`, `estado`, `familiaVia`, `q`…) | datos de la solicitud y del tutor, comprobaciones pendientes, entrevista con su ficha, lista de espera y reserva |
+| `GET /entrevistas/exportar` | entrevistas.ver | los de `GET /entrevistas` (`desde` y `hasta` obligatorios); sin las fechas sin confirmar | cita, familia, boletín y la ficha completa con observaciones |
+| `GET /reservas/exportar` | cobros.ver o evaluacion.ver | los de `GET /reservas` (`porVencer`, `estado`, `q`) | alumna, familia, estado, fechas, importe, pagado y pendiente |
+| `GET /cobros/exportar` | cobros.ver | los de `GET /cobros` (`desde`, `hasta`, `metodo`, `incluirAnulados`…) | recibo, fecha, alumna, concepto, forma de pago, importe (los anulados en su propia columna), anulación y quién lo registró |
+
+Formato pensado para abrir con doble clic en Excel en español: separador `;`, coma decimal, BOM UTF-8, CRLF, fechas `dd/mm/aaaa` (y hora de Madrid), importes en euros sin símbolo y Sí/No. Una celda que empieza por `= + - @` lleva un apóstrofo delante (inyección de fórmulas); los teléfonos `+34 …`, un espacio. Cada exportación queda en el log (usuario, tipo, filas y nombres de los filtros, sin sus valores).
+
 ## Catálogo
 
 | Método | Ruta | Permiso | Uso |

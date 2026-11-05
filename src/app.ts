@@ -34,6 +34,8 @@ export function crearApp() {
       // PUT: configuración de la agenda y de la reserva, y permisos de un rol.
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
       allowedHeaders: ['Content-Type', 'Authorization'],
+      // El front lee el nombre de las descargas (exportaciones CSV).
+      exposedHeaders: ['Content-Disposition'],
     }),
   );
   app.use(express.json({ limit: '200kb' }));

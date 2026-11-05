@@ -10,6 +10,9 @@ import * as documentosSrv from '../documentos/documentos.service';
 import { decidir, decisionBody, previaDecisionBody, previsualizar } from '../evaluacion/evaluacion.service';
 import { DECISIONES_ADMISION } from './dominio';
 import * as srv from './solicitudes.service';
+import { todasLasPaginas } from '../../lib/csv';
+import { COLUMNAS_SOLICITUDES } from '../exportaciones/columnas';
+import { responderCsv } from '../exportaciones/exportar';
 import {
   cambiarEstadoBody,
   gestionBody,
@@ -46,6 +49,13 @@ solicitudesRouter.get('/', ver, validate({ query: listarQuery }), async (req, re
 });
 
 /** Kanban: totales y primeras tarjetas por columna. */
+/** CSV con los mismos filtros que la lista (sin paginar): GET /solicitudes/exportar?vista=bandeja… */
+solicitudesRouter.get('/exportar', ver, validate({ query: listarQuery }), async (req, res) => {
+  const p = await permisos(req);
+  const filas = await todasLasPaginas((q) => srv.listar(q, p), v<typeof listarQuery>(req, 'query'));
+  responderCsv(req, res, 'solicitudes', COLUMNAS_SOLICITUDES, filas);
+});
+
 solicitudesRouter.get('/pipeline', ver, validate({ query: pipelineQuery }), async (req, res) => {
   res.json(await srv.pipeline(v<typeof pipelineQuery>(req, 'query'), await permisos(req)));
 });
