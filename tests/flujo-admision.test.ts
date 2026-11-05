@@ -1024,10 +1024,45 @@ describe('La familia cancela su cita desde el enlace (reunión del 21/10/2026)',
       const { id, token } = await conCita(nombre, dias);
       const [e] = await db.select().from(entrevistas).where(eq(entrevistas.solicitudId, id));
       await db.update(entrevistas).set({ inicio: sumarDias(new Date(), -1), fin: sumarDias(new Date(), -0.9) }).where(eq(entrevistas.id, e!.id));
-      expect((await request(app).patch(`/api/entrevistas/${e!.id}`).set(auth()).send({ estado })).status).toBe(200);
+      const ficha = { valoracion: 'FAVORABLE', entrevistados: ['MADRE', 'ALUMNA'] };
+      expect((await request(app).patch(`/api/entrevistas/${e!.id}`).set(auth()).send({ estado, ...(estado === 'REALIZADA' ? { ficha } : {}) })).status).toBe(200);
       const r = await request(app).get(`/api/public/citas/${token}`);
       expect(r.body).toMatchObject({ estado: pagina, puedeCancelar: false, puedeCambiar: false });
     }
+  });
+
+  it('ficha de la entrevista: realizada exige valoración y entrevistados; se combina y se devuelve con la entrevista', async () => {
+    const { id } = await conCita('Paloma', 18);
+    const [e] = await db.select().from(entrevistas).where(eq(entrevistas.solicitudId, id));
+    await db.update(entrevistas).set({ inicio: sumarDias(new Date(), -1), fin: sumarDias(new Date(), -0.9) }).where(eq(entrevistas.id, e!.id));
+    const patch = (body: object) => request(app).patch(`/api/entrevistas/${e!.id}`).set(auth()).send(body);
+
+    // Sin ficha (o incompleta), no se da por realizada y la solicitud no cambia.
+    const sin = await patch({ estado: 'REALIZADA', notas: 'Muy motivada.' });
+    expect(sin.status).toBe(400);
+    expect(sin.body.error).toMatchObject({ code: 'FICHA_INCOMPLETA', details: { faltan: ['valoracion', 'entrevistados'] } });
+    expect((await request(app).get(`/api/solicitudes/${id}`).set(auth())).body.estado).toBe('ENTREVISTA_PROGRAMADA');
+
+    // Antes de la entrevista se puede ir rellenando; lo que no llega se conserva.
+    expect((await patch({ ficha: { otroCentro: true, otroCentroNombre: 'IES Murillo', notaMedia: 8.456, modalidad: 'CIENCIAS_TECNOLOGIA', optativa: 'BIOLOGIA' } })).status).toBe(200);
+    const mala = await patch({ ficha: { optativa: 'LATIN' } });
+    expect(mala.body.error).toMatchObject({ code: 'DATOS_INVALIDOS', message: 'Esa optativa no corresponde a la modalidad elegida.' });
+
+    const ok = await patch({ estado: 'REALIZADA', ficha: { valoracion: 'CON_RESERVAS', entrevistados: ['ALUMNA', 'MADRE', 'MADRE'], realizadaPor: 'Rosa Jurado' } });
+    expect(ok.status).toBe(200);
+    expect(ok.body.ficha).toMatchObject({
+      otroCentro: true, otroCentroNombre: 'IES Murillo', notaMedia: 8.46, modalidad: 'CIENCIAS_TECNOLOGIA', optativa: 'BIOLOGIA',
+      valoracion: 'CON_RESERVAS', entrevistados: ['MADRE', 'ALUMNA'], realizadaPor: 'Rosa Jurado', motivoEleccion: null,
+    });
+    // Ya realizada, no se puede vaciar lo mínimo.
+    expect((await patch({ ficha: { entrevistados: [] } })).body.error.code).toBe('FICHA_INCOMPLETA');
+
+    const sol = (await request(app).get(`/api/solicitudes/${id}`).set(auth())).body;
+    expect(sol.estado).toBe('ENTREVISTA_REALIZADA');
+    expect(sol.entrevista.ficha).toMatchObject({ valoracion: 'CON_RESERVAS', notaMedia: 8.46 });
+    const ayer = fechaLocal(sumarDias(new Date(), -1));
+    const cal = (await request(app).get(`/api/entrevistas?desde=${ayer}&hasta=${ayer}`).set(auth())).body;
+    expect(cal.items.find((i: { id: string }) => i.id === e!.id)).toMatchObject({ familiaVia: 'BACHILLERATO', cursoNumero: 1, ficha: { valoracion: 'CON_RESERVAS' } });
   });
 
   it('libera la hora, vuelve a revisión y avisa a secretaría', async () => {

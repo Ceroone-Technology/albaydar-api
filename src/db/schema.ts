@@ -398,6 +398,8 @@ export const entrevistas = pgTable(
     modalidad: text('modalidad').notNull().default('PRESENCIAL'),
     estado: estadoEntrevistaEnum('estado').notNull().default('PROGRAMADA'),
     notas: text('notas'),
+    /** Ficha de la entrevista (la de la solicitud en papel): ver modules/entrevistas/ficha.ts. Las observaciones son `notas`. */
+    ficha: jsonb('ficha').$type<import('../modules/entrevistas/ficha').Ficha>(),
     /** Versión de la invitación .ics: sube en cada cambio de fecha. */
     secuenciaIcs: integer('secuencia_ics').notNull().default(0),
     /** Recordatorio "el día antes" a la familia. */

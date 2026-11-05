@@ -340,7 +340,7 @@ async function enriquecer(filas: FilaResumen[], p: Permisos) {
       entrevista: e
         ? {
             id: e.id, inicio: e.inicio, fin: e.fin, dia: diaLargo(e.inicio), franja: franja(e.inicio, e.fin),
-            estado: e.estado, estadoEtiqueta: ETIQUETA_ESTADO_ENTREVISTA[e.estado], notas: e.notas,
+            estado: e.estado, estadoEtiqueta: ETIQUETA_ESTADO_ENTREVISTA[e.estado], notas: e.notas, ficha: e.ficha ?? null,
           }
         : null,
       notasSubidas: conNotas.has(f.id),
