@@ -133,7 +133,7 @@ async function anularPropuestasVigentes(tx: Tx, solicitudId: string) {
 }
 
 export const AVISO_NOTAS_HTML =
-  '<p><strong>Recuerda subir el boletín de notas del último curso</strong> desde tu enlace antes de la entrevista.</p>';
+  '<p><strong>Recuerden subir el boletín de notas del último curso</strong> desde su enlace antes de la entrevista.</p>';
 
 // ── Secretaría: proponer de 1 a 3 fechas ────────────────────────────────────
 

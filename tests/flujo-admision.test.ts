@@ -14,7 +14,8 @@ import { and, eq, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { crearApp } from '../src/app';
 import { db, pool } from '../src/lib/db';
-import { correosSalientes, entrevistas, franjasAgenda, propuestasCita, reservas, solicitudes, usuarios, vias } from '../src/db/schema';
+import { correosSalientes, entrevistas, franjasAgenda, plantillasCorreo, propuestasCita, reservas, solicitudes, usuarios, vias } from '../src/db/schema';
+import { EVENTOS } from '../src/correo/eventos';
 import { recordatoriosPago, vencerReservas } from '../src/modules/reservas/reservas.service';
 import { sembrarBase } from '../src/db/datos-base';
 import { encolarCorreo, procesarOutbox, setTransporter } from '../src/correo/outbox';
@@ -280,7 +281,8 @@ describe('Admisión y citación', () => {
 
     await enviarCorreos();
     const m = ultimoPara('epena@correo.es');
-    expect(m.subject).toBe(`Elige la fecha de la entrevista de Lucía Márquez Peña · ${codigoLucia}`);
+    expect(m.subject).toBe(`Fechas para la entrevista de admisión de Lucía Márquez Peña · ${codigoLucia}`);
+    expect(m.html).toContain('Estimada familia:');
     expect(m.html).toContain('11:00 – 12:00');
     tokenCita = tokenDe(m.text, '/cita');
   });
@@ -329,7 +331,8 @@ describe('Admisión y citación', () => {
     const m = ultimoPara('epena@correo.es');
     expect(m.subject).toMatch(/^Entrevista de admisión · Lucía Márquez Peña · /);
     expect(m.html).toContain('Rogamos traigan el DNI'); // texto de la plantilla del mockup
-    expect(m.html).toContain('Recuerda subir el boletín de notas');
+    expect(m.html).toContain('Recuerden subir el boletín de notas');
+    expect(m.html).not.toContain('y el último boletín'); // lo pide el aviso solo si falta
     expect(m.attachments[0]!.filename).toBe('entrevista-albaydar.ics');
 
     const det = await request(app).get(`/api/solicitudes/${lucia}`).set(auth());
@@ -376,7 +379,7 @@ describe('Admisión y citación', () => {
     await enviarCorreos();
     const m = ultimoPara('epena@correo.es');
     expect(m.subject).toBe('Mañana: entrevista de admisión de Lucía Márquez Peña a las 16:00');
-    expect(m.html).not.toContain('Recuerda subir el boletín');
+    expect(m.html).not.toContain('Recuerden subir el boletín');
   });
 
   it('"Ninguna me encaja": libera la fecha, anula en el calendario y avisa a secretaría', async () => {
@@ -403,8 +406,8 @@ describe('Admisión y citación', () => {
     expect(await recordatoriosPropuesta()).toBe(0);
     await enviarCorreos();
     const m = ultimoPara('epena@correo.es');
-    expect(m.subject).toBe('Recordatorio: elige la fecha de la entrevista de Lucía Márquez Peña');
-    expect(m.html).toContain('Te las tenemos reservadas');
+    expect(m.subject).toBe('Recordatorio: falta elegir la fecha de la entrevista de Lucía Márquez Peña');
+    expect(m.html).toContain('Se las tenemos reservadas');
     expect((await request(app).get(`/api/public/citas/${tokenDe(m.text, '/cita')}`)).status).toBe(200);
   });
 
@@ -476,7 +479,7 @@ describe('Plantillas de correo (Comunicaciones)', () => {
     const s = (await request(app).get('/api/solicitudes?q=Carmen').set(auth())).body.items[0];
     await request(app).post(`/api/solicitudes/${s.id}/citar`).set(auth()).send({ inicios: [iso(dia(4), '13:00')] });
     await enviarCorreos();
-    expect(ultimoPara('rsalas@correo.es').subject).toMatch(/^Elige la fecha de la entrevista de Carmen/);
+    expect(ultimoPara('rsalas@correo.es').subject).toMatch(/^Fechas para la entrevista de admisión de Carmen/);
   });
 
   it('crear una plantilla activada pasa la anterior del evento a borrador', async () => {
@@ -484,6 +487,18 @@ describe('Plantillas de correo (Comunicaciones)', () => {
     expect(r.body.estado).toBe('ACTIVADA');
     const lista = (await request(app).get('/api/comunicaciones/plantillas').set(auth())).body.items.filter((p: { evento: string }) => p.evento === 'SOLICITUD_RECIBIDA');
     expect(lista.map((p: { estado: string }) => p.estado).sort()).toEqual(['ACTIVADA', 'BORRADOR']);
+  });
+
+  it('al arrancar, las plantillas que nadie ha editado pasan a la predeterminada actual; las editadas no', async () => {
+    // Texto antiguo de la semilla (sin actualizadoPorId) frente a una editada desde Comunicaciones.
+    await db.update(plantillasCorreo).set({ asunto: 'Asunto antiguo {{alumna}}' }).where(eq(plantillasCorreo.evento, 'NO_ADMITIDA'));
+    await sembrarBase(db);
+    const porEvento = (evento: string) => db.select().from(plantillasCorreo).where(eq(plantillasCorreo.evento, evento));
+    const [noAdmitida] = await porEvento('NO_ADMITIDA');
+    expect(noAdmitida!.asunto).toBe(EVENTOS.find((e) => e.clave === 'NO_ADMITIDA')!.predeterminada.asunto);
+    expect(noAdmitida!.estado).toBe('ACTIVADA');
+    const [recordatorio] = await porEvento('CITACION_RECORDATORIO');
+    expect(recordatorio!.estado).toBe('BORRADOR'); // la pasó a borrador secretaría
   });
 
   it('"Enviar prueba" y el histórico de envíos', async () => {

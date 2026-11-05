@@ -133,9 +133,9 @@ export function renderizar(o: { evento: string; asunto: string; cuerpoHtml: stri
 /** Variables con los valores de ejemplo del catálogo (vista previa y "Enviar prueba"). */
 export function varsDeEjemplo(ev: EventoDef): Vars {
   const vars: Vars = Object.fromEntries(ev.variables.map((x) => [x.nombre, x.ejemplo]));
-  if (vars.boton !== undefined) vars.boton = boton(String(vars.enlace ?? '#'), 'Abrir mi enlace');
+  if (vars.boton !== undefined) vars.boton = boton(String(vars.enlace ?? '#'), 'Abrir el enlace');
   if (vars.fechas_propuestas !== undefined) vars.fechas_propuestas = lista(['Martes 3 de noviembre · 10:00 – 10:45', 'Miércoles 4 de noviembre · 12:30 – 13:15', 'Jueves 5 de noviembre · 17:00 – 17:45']);
   if (vars.campos !== undefined) vars.campos = lista(['Centro de procedencia']);
-  if (vars.aviso_notas !== undefined) vars.aviso_notas = '<p><strong>Recuerda subir el boletín de notas del último curso</strong> desde tu enlace antes de la entrevista.</p>';
+  if (vars.aviso_notas !== undefined) vars.aviso_notas = '<p><strong>Recuerden subir el boletín de notas del último curso</strong> desde su enlace antes de la entrevista.</p>';
   return vars;
 }

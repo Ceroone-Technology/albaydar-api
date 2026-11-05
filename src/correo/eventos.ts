@@ -69,12 +69,14 @@ const PAGO = [
   v('titular', 'Titular de la cuenta', 'Centro Educativo Albaydar'),
   v('formas_pago', 'Formas de pago admitidas', 'transferencia o en efectivo en administración'),
 ];
-const AVISO_NOTAS = v('aviso_notas', 'Recordatorio de subir el boletín de notas (vacío si ya lo subió)', '<p>Recuerda subir el boletín de notas.</p>', true);
+const AVISO_NOTAS = v('aviso_notas', 'Recordatorio de subir el boletín de notas (vacío si ya lo subió)', '<p>Recuerden subir el boletín de notas.</p>', true);
 
 const p = (t: string) => `<p>${t}</p>`;
 const caja = (t: string) =>
   `<p style="background:#fafbfc;border:1px solid #e4e7ec;border-radius:9px;padding:12px 14px">${t}</p>`;
-const saludo = p('Hola, {{tutor}}:');
+// Correos a la familia: «Estimada familia» y de usted, como en los mockups validados (19/10/2026).
+// Las páginas públicas (/cita, /solicitud) van de tú.
+const saludo = p('Estimada familia:');
 
 export const EVENTOS: EventoDef[] = [
   {
@@ -91,8 +93,8 @@ export const EVENTOS: EventoDef[] = [
       cuerpoHtml: [
         '<h2>Solicitud recibida</h2>',
         saludo,
-        p('Hemos recibido la solicitud de admisión de <strong>{{alumna}}</strong> para <strong>{{curso}}</strong>. Secretaría la revisará y te escribiremos a este correo con los siguientes pasos.'),
-        p('Guarda este código por si necesitas contactar con nosotros: <strong>{{codigo}}</strong>.'),
+        p('Hemos recibido la solicitud de admisión de <strong>{{alumna}}</strong> para <strong>{{curso}}</strong>. Secretaría la revisará y les escribiremos a este correo con los siguientes pasos.'),
+        p('Guarden este código por si necesitan contactar con nosotros: <strong>{{codigo}}</strong>.'),
       ].join('\n'),
     },
   },
@@ -103,17 +105,17 @@ export const EVENTOS: EventoDef[] = [
     destinatario: 'familia',
     obligatorio: true,
     disponible: true,
-    variables: [...BASE, v('campos', 'Lista de datos que faltan', '<ul><li>Centro de procedencia</li></ul>', true), v('mensaje', 'Nota opcional de secretaría', 'Indícanos el centro actual.'), ...ENLACE],
+    variables: [...BASE, v('campos', 'Lista de datos que faltan', '<ul><li>Centro de procedencia</li></ul>', true), v('mensaje', 'Nota opcional de secretaría', 'Indíquennos el centro actual.'), ...ENLACE],
     predeterminada: {
       nombre: 'Solicitud incompleta',
       asunto: 'Faltan datos en la solicitud de {{alumna}} · {{codigo}}',
       cuerpoHtml: [
-        '<h2>Necesitamos que completes la solicitud</h2>',
+        '<h2>Necesitamos completar la solicitud</h2>',
         saludo,
         p('Para continuar con la solicitud de <strong>{{alumna}}</strong> nos falta:'),
         '{{campos}}',
         p('{{mensaje}}'),
-        p('Puedes completarla desde tu enlace personal, sin crear una cuenta.'),
+        p('Pueden completarla desde su enlace personal, sin crear una cuenta.'),
         '{{boton}}',
       ].join('\n'),
     },
@@ -135,16 +137,16 @@ export const EVENTOS: EventoDef[] = [
       ...ENLACE,
     ],
     predeterminada: {
-      nombre: 'Elige la fecha de la entrevista',
-      asunto: 'Elige la fecha de la entrevista de {{alumna}} · {{codigo}}',
+      nombre: 'Propuesta de fechas de entrevista',
+      asunto: 'Fechas para la entrevista de admisión de {{alumna}} · {{codigo}}',
       cuerpoHtml: [
-        '<h2>Elige la fecha de la entrevista</h2>',
+        '<h2>Elijan la fecha de la entrevista</h2>',
         saludo,
-        p('Hemos revisado la solicitud de <strong>{{alumna}}</strong> para {{curso}}. Te proponemos estas fechas para la entrevista de admisión; elige la que mejor te venga:'),
+        p('Hemos revisado la solicitud de <strong>{{alumna}}</strong> para {{curso}}. Les proponemos estas fechas para la entrevista de admisión; elijan la que mejor les venga:'),
         '{{fechas_propuestas}}',
         p('La entrevista es presencial, con el {{con}}, en la {{sala}} ({{centro_direccion}}). Dura unos {{duracion}} minutos.'),
         p('{{mensaje}}'),
-        p('Si ninguna te encaja, desde el mismo enlace puedes indicarnos otra franja. Allí también puedes subir el boletín de notas del último curso.'),
+        p('Si ninguna les encaja, desde el mismo enlace pueden indicarnos otra franja. Allí también pueden subir el boletín de notas del último curso.'),
         '{{boton}}',
       ].join('\n'),
     },
@@ -164,13 +166,13 @@ export const EVENTOS: EventoDef[] = [
     ],
     predeterminada: {
       nombre: 'Recordatorio de elección de fecha',
-      asunto: 'Recordatorio: elige la fecha de la entrevista de {{alumna}}',
+      asunto: 'Recordatorio: falta elegir la fecha de la entrevista de {{alumna}}',
       cuerpoHtml: [
-        '<h2>Te estamos esperando</h2>',
+        '<h2>Seguimos esperando su respuesta</h2>',
         saludo,
-        p('Hace unos días te propusimos fechas para la entrevista de admisión de <strong>{{alumna}}</strong> y todavía no hemos recibido tu respuesta. Te las tenemos reservadas:'),
+        p('Hace unos días les propusimos fechas para la entrevista de admisión de <strong>{{alumna}}</strong> y todavía no hemos recibido su respuesta. Se las tenemos reservadas:'),
         '{{fechas_propuestas}}',
-        p('Elige la que mejor te venga o indícanos otra franja desde tu enlace personal.'),
+        p('Elijan la que mejor les venga o indíquennos otra franja desde su enlace personal.'),
         '{{boton}}',
       ].join('\n'),
     },
@@ -188,10 +190,10 @@ export const EVENTOS: EventoDef[] = [
       asunto: 'Entrevista de admisión · {{alumna}} · {{fecha_entrevista}}',
       cuerpoHtml: [
         '<h2>{{fecha_entrevista}}, {{hora}}</h2>',
-        p('Estimada familia:'),
+        saludo,
         p('Confirmamos la entrevista de admisión de <strong>{{alumna}}</strong>:'),
         caja('<strong>{{fecha_entrevista}}</strong> · {{hora}} – {{hora_fin}}<br>Presencial, con el {{con}}<br>{{sala}} · {{centro_direccion}}'),
-        p('Rogamos traigan el DNI de los tutores legales y el último boletín de notas. Adjuntamos la invitación para añadirla a su calendario; el día antes les enviaremos un recordatorio.'),
+        p('Rogamos traigan el DNI de los tutores legales. Adjuntamos la invitación para añadirla a su calendario; el día antes les enviaremos un recordatorio.'),
         '{{aviso_notas}}',
         p('Si necesitan cambiar la fecha, pueden hacerlo desde el mismo enlace hasta el {{cambio_hasta}}. Después, llamen a secretaría ({{centro_telefono}}).'),
         '{{boton}}',
@@ -214,7 +216,7 @@ export const EVENTOS: EventoDef[] = [
         saludo,
         p('La entrevista de admisión de <strong>{{alumna}}</strong> queda así:'),
         caja('<strong>{{fecha_entrevista}}</strong> · {{hora}} – {{hora_fin}}<br>Presencial, con el {{con}}<br>{{sala}} · {{centro_direccion}}'),
-        p('Adjuntamos la invitación actualizada para tu calendario.'),
+        p('Adjuntamos la invitación actualizada para su calendario.'),
         '{{aviso_notas}}',
         '{{boton}}',
       ].join('\n'),
@@ -232,13 +234,13 @@ export const EVENTOS: EventoDef[] = [
       nombre: 'Recordatorio del día antes',
       asunto: 'Mañana: entrevista de admisión de {{alumna}} a las {{hora}}',
       cuerpoHtml: [
-        '<h2>Te esperamos mañana</h2>',
+        '<h2>Les esperamos mañana</h2>',
         saludo,
-        p('Te recordamos la entrevista de admisión de <strong>{{alumna}}</strong>:'),
+        p('Les recordamos la entrevista de admisión de <strong>{{alumna}}</strong>:'),
         caja('<strong>{{fecha_entrevista}}</strong> · {{hora}} – {{hora_fin}}<br>{{sala}} · {{centro_direccion}}'),
-        p('No olvides traer el DNI de los tutores legales.'),
+        p('No olviden traer el DNI de los tutores legales.'),
         '{{aviso_notas}}',
-        p('¿No podéis venir? Desde tu enlace puedes cancelar la cita y te propondremos otra fecha.'),
+        p('¿No pueden venir? Desde su enlace pueden cancelar la cita y les propondremos otra fecha.'),
         '{{boton}}',
       ].join('\n'),
     },
@@ -258,7 +260,7 @@ export const EVENTOS: EventoDef[] = [
         '<h2>Entrevista anulada</h2>',
         saludo,
         p('La entrevista de <strong>{{alumna}}</strong> prevista para el {{fecha_entrevista}} a las {{hora}} queda anulada. {{motivo}}'),
-        p('Secretaría se pondrá en contacto contigo para proponerte una nueva fecha.'),
+        p('Secretaría se pondrá en contacto con ustedes para proponerles una nueva fecha.'),
       ].join('\n'),
     },
   },
@@ -336,7 +338,7 @@ export const EVENTOS: EventoDef[] = [
       nombre: 'Admisión y reserva de plaza',
       asunto: 'Plaza admitida para {{alumna}} · reserva antes del {{fecha_limite}}',
       cuerpoHtml: [
-        p('Estimada familia:'),
+        saludo,
         p('Nos complace comunicarles que <strong>{{alumna}}</strong> ha sido admitida en {{etapa}} para el curso {{curso_escolar}}.'),
         p('Para confirmar la plaza, realicen el pago de <strong>{{importe}}</strong> antes del <strong>{{fecha_limite}}</strong> ({{plazo_dias}} días naturales). Pueden pagar por {{formas_pago}}.'),
         caja('Transferencia a {{titular}}<br>IBAN <strong>{{iban}}</strong><br>Concepto: {{codigo}} · {{alumna}}'),
@@ -356,7 +358,7 @@ export const EVENTOS: EventoDef[] = [
       nombre: 'Lista de espera',
       asunto: 'Solicitud de {{alumna}}: lista de espera · {{codigo}}',
       cuerpoHtml: [
-        p('Estimada familia:'),
+        saludo,
         p('Tras la entrevista, la solicitud de <strong>{{alumna}}</strong> para {{etapa}} (curso {{curso_escolar}}) queda en lista de espera, en la posición <strong>{{posicion}}</strong>.'),
         p('{{motivo}}'),
         p('Si se libera una plaza, nos pondremos en contacto con ustedes por este mismo correo.'),
@@ -376,7 +378,7 @@ export const EVENTOS: EventoDef[] = [
       nombre: 'Solicitud no admitida',
       asunto: 'Resolución de la solicitud de {{alumna}} · {{codigo}}',
       cuerpoHtml: [
-        p('Estimada familia:'),
+        saludo,
         p('Lamentamos comunicarles que la solicitud de <strong>{{alumna}}</strong> para {{etapa}} (curso {{curso_escolar}}) no ha sido admitida.'),
         p('{{motivo}}'),
         p('Agradecemos su interés en el centro. Para cualquier aclaración pueden llamar a secretaría ({{centro_telefono}}).'),
@@ -396,7 +398,7 @@ export const EVENTOS: EventoDef[] = [
       nombre: 'Recordatorio de pago',
       asunto: 'Recordatorio: {{concepto}} de {{alumna}}',
       cuerpoHtml: [
-        p('Estimada familia:'),
+        saludo,
         p('Les recordamos que el pago de {{concepto}} ({{importe}}) vence el {{fecha_limite}}.'),
         p('Pueden abonarlo por {{formas_pago}}.'),
         caja('Transferencia a {{titular}}<br>IBAN <strong>{{iban}}</strong><br>Concepto: {{codigo}} · {{alumna}}'),
@@ -424,7 +426,7 @@ export const EVENTOS: EventoDef[] = [
       nombre: 'Pago recibido',
       asunto: 'Pago recibido · {{alumna}} · recibo {{recibo}}',
       cuerpoHtml: [
-        p('Estimada familia:'),
+        saludo,
         p('Hemos recibido <strong>{{importe_pagado}}</strong> ({{forma_pago}}, {{fecha_pago}}) para la reserva de plaza de <strong>{{alumna}}</strong> en {{curso}}.'),
         caja('Recibo <strong>{{recibo}}</strong> · {{codigo}}'),
         p('{{situacion}}'),
@@ -476,7 +478,7 @@ export const EVENTOS: EventoDef[] = [
       nombre: 'Confirmación de matrícula',
       asunto: 'Matrícula confirmada · {{alumna}} · curso {{curso_escolar}}',
       cuerpoHtml: [
-        p('Estimada familia:'),
+        saludo,
         p('La matrícula de <strong>{{alumna}}</strong> en {{etapa}} ha quedado registrada. Adjuntamos el listado de libros y el calendario de acogida.'),
         p('Secretaría · {{centro_nombre}}'),
       ].join('\n'),
