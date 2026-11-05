@@ -43,6 +43,13 @@
       "when": 1793071536264,
       "tag": "0005_propuesta_cancelada_familia",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793855627451,
+      "tag": "0006_ficha_entrevista",
+      "breakpoints": true
     }
   ]
 }

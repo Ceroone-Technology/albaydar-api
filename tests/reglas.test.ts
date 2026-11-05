@@ -6,6 +6,7 @@ import { euros, formatearIban, ibanValido } from '../src/lib/dinero';
 import { diasRestantes, fechaTexto } from '../src/modules/reservas/reservas.service';
 import { columnaDe, cursoEscolarCorto, puedeTransicionar, siguientesEstados } from '../src/modules/solicitudes/dominio';
 import { revisar, type EntradaRevision } from '../src/modules/solicitudes/revision';
+import { combinarFicha, erroresFicha, faltanParaRealizada } from '../src/modules/entrevistas/ficha';
 
 const base: EntradaRevision = {
   alumnaNombre: 'Lucía',
@@ -257,3 +258,18 @@ describe('agenda: nunca el mismo día', async () => {
     expect(diaSiguiente('2026-12-31')).toBe('2027-01-01');
   });
 });
+
+describe('Ficha de la entrevista', () => {
+  const ficha = (d: object) => combinarFicha(null, d as never);
+  it('modalidad y optativa: coherentes y solo en Bachillerato', () => {
+    expect(erroresFicha(ficha({ modalidad: 'HUMANIDADES_CCSS', optativa: 'LATIN' }), 'BACHILLERATO', '2026-11-05')).toEqual([]);
+    expect(erroresFicha(ficha({ optativa: 'LATIN' }), 'BACHILLERATO', '2026-11-05')[0]!.campo).toBe('ficha.optativa');
+    expect(erroresFicha(ficha({ modalidad: 'CIENCIAS_TECNOLOGIA' }), 'CICLOS_CONCERTADOS_GM', '2026-11-05')[0]!.campo).toBe('ficha.modalidad');
+    expect(erroresFicha(ficha({ fechaEntregaNotas: '2026-11-06' }), 'BACHILLERATO', '2026-11-05')[0]!.campo).toBe('ficha.fechaEntregaNotas');
+  });
+  it('lo mínimo para darla por realizada', () => {
+    expect(faltanParaRealizada(null)).toEqual(['valoracion', 'entrevistados']);
+    expect(faltanParaRealizada(ficha({ valoracion: 'FAVORABLE', entrevistados: ['PADRE'] }))).toEqual([]);
+  });
+});
+

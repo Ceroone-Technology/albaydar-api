@@ -108,6 +108,7 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 - La familia puede cambiar durante 24 h desde la primera aceptación. Tiene "Ninguna me encaja" y subida del boletín de notas (se valida el tipo real del fichero).
 - Recordatorios a los 3 días sin elegir y el día antes de la entrevista. Las propuestas caducan solas.
 - Calendario con `items` (confirmadas, con `notas`) y `pendientes`. Resultado de la entrevista y cancelación con `.ics`.
+- **Ficha de la entrevista** (`entrevistas/ficha.ts`, 05/11/2026): la de la solicitud en papel (otro centro, por qué Albaydar, repetición, nota media, modalidad y optativa de Bachillerato, boletín entregado, valoración Favorable / Con reservas / Desfavorable con comentario, entrevistados y quién entrevistó; observaciones = `notas`). JSON en `entrevistas.ficha`, parcial en `PATCH /entrevistas/:id`. Dar por realizada exige valoración y entrevistados (`FICHA_INCOMPLETA`).
 
 **Fase 03: evaluación, reserva y cobros** (detalle en `docs/api.md`)
 - `POST /solicitudes/:id/decision` (`evaluacion.editar`):
@@ -153,6 +154,7 @@ Tablas:
 | `0003_reserva_y_cobros` | `reservas`, `cobros`, enumerados y `solicitudes.en_espera_desde` |
 | `0004_reservas_admitidas_antiguas` | A mano, solo datos |
 | `0005_propuesta_cancelada_familia` | Valor `CANCELADA` en `estado_propuesta` (la familia cancela su cita) |
+| `0006_ficha_entrevista` | `entrevistas.ficha` (jsonb): ficha de la entrevista de la solicitud en papel |
 
 ## Convenciones
 

@@ -312,9 +312,34 @@ La disponibilidad no se crea a mano: es la **jornada** (por defecto lunes a vier
 
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
-| GET | `/entrevistas?desde&hasta&familiaVia&curso&q&estado&incluirPendientes` | entrevistas.ver | Calendario y lista. `items` = confirmadas (con `notas` y `notasRecibidas`); `pendientes` = fechas reservadas esperando a la familia ("Sin confirmar · reservada") |
-| PATCH | `/entrevistas/:id` | entrevistas.editar | `{ estado?: "REALIZADA" \| "NO_PRESENTADA", notas? }` |
+| GET | `/entrevistas?desde&hasta&familiaVia&curso&q&estado&incluirPendientes` | entrevistas.ver | Calendario y lista. `items` = confirmadas (con `notas`, `notasRecibidas`, `ficha`, `familiaVia` y `cursoNumero`); `pendientes` = fechas reservadas esperando a la familia ("Sin confirmar · reservada") |
+| PATCH | `/entrevistas/:id` | entrevistas.editar | `{ estado?: "REALIZADA" \| "NO_PRESENTADA", notas?, ficha? }` (ver «Ficha de la entrevista») |
 | POST | `/entrevistas/:id/cancelar` | entrevistas.editar | `{ motivo?, notificar }`: libera la hora, envía la anulación con .ics y la solicitud vuelve a revisión |
+
+### Ficha de la entrevista
+
+La parte «Entrevista» y «Datos a rellenar por el centro» de la solicitud en papel de Bachillerato. Viaja como `ficha` en `PATCH /entrevistas/:id` y vuelve en la entrevista (`GET /entrevistas › items[].ficha`, `solicitud.entrevista.ficha` en listas, bandeja, kanban y `GET /solicitudes/:id`); `null` si nunca se rellenó. Las **observaciones** de la ficha son `notas`.
+
+```json
+{
+  "otroCentro": true, "otroCentroNombre": "IES Murillo",
+  "motivoEleccion": "Por el ambiente y la cercanía",
+  "haRepetido": false, "repeticionDetalle": null,
+  "notaMedia": 8.46,
+  "modalidad": "HUMANIDADES_CCSS | CIENCIAS_TECNOLOGIA",
+  "optativa": "LATIN | MATEMATICAS | BIOLOGIA | DIBUJO_TECNICO",
+  "boletinEntregado": true, "fechaEntregaNotas": "2026-11-04",
+  "valoracion": "FAVORABLE | CON_RESERVAS | DESFAVORABLE",
+  "valoracionComentario": "opcional",
+  "entrevistados": ["PADRE", "MADRE", "ALUMNA"],
+  "realizadaPor": "Rosa Jurado"
+}
+```
+
+- **Parcial:** lo que no llega se conserva; `null` borra el dato. Campos desconocidos → 400.
+- **Coherencia** (400 `DATOS_INVALIDOS` con `details`): optativa de su modalidad (Humanidades y CC. SS.: Latín o Matemáticas; Ciencias y Tecnología: Biología o Dibujo Técnico; en 2º, «Latín II»); modalidad y optativa solo en Bachillerato; `fechaEntregaNotas` no futura; `notaMedia` de 0 a 10, redondeada a 2 decimales.
+- **Realizada** (acordado el 05/11/2026): `estado: "REALIZADA"` exige `valoracion` y al menos un `entrevistados`; si falta, 400 `FICHA_INCOMPLETA` con `details.faltan` (`["valoracion", "entrevistados"]`) y no cambia nada. Una vez realizada, editar la ficha no puede vaciar esos dos. Las realizadas antes de la ficha pueden seguir editando solo `notas`.
+- `boletinEntregado` es el boletín entregado en mano; el subido por la familia ya consta como `notasRecibidas` / `notasSubidas`.
 
 ## Evaluación y reserva de plaza
 
