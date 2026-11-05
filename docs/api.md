@@ -130,7 +130,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
   "ref": "B-2026-0001", "alumno": "Lucía Márquez Peña", "tutor": "Elena", "curso": "Bachillerato 1º",
   "info": [{ "k": "Tipo", "v": "Presencial" }, { "k": "Con", "v": "Equipo directivo" },
            { "k": "Lugar", "v": "Sala de reuniones de Dirección · Avda. de la Palmera, 36" }],
-  "estado": "propuesta | elegida | alternativa | caducada | cancelada",
+  "estado": "propuesta | elegida | realizada | no_presentada | alternativa | caducada | cancelada",
   "duracion": 60,
   "slots": [{ "id": "uuid", "day": "Martes 27 de octubre", "time": "12:00 – 13:00", "inicio": "…", "fin": "…", "elegido": false, "disponible": true }],
   "elegida": null,
@@ -145,6 +145,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 
 - Mientras la familia no elige, sus fechas están **reservadas**: `disponible: true`.
 - Al elegir, las otras se liberan para otras familias. Si después quiere cambiar, puede volver a una de ellas solo si sigue libre.
+- Con la entrevista ya registrada, el estado es `realizada` (se celebró) o `no_presentada` (la familia no vino), con `puedeCambiar` y `puedeCancelar` a `false`: el front deja de decir «Te esperamos».
 - `cambioHasta` = 24 h después de la primera aceptación. Pasado ese momento `puedeCambiar: false` y `elegir` / `otra-franja` responden `CAMBIO_FUERA_DE_PLAZO`: el front debe ocultar "Cambiar la elección" y mostrar el teléfono de secretaría.
 
 **Cancelar la cita** (acordado el 21/10/2026; el recordatorio del día antes lleva el enlace): `puedeCancelar` es `true` con la fecha elegida y hasta la hora de la cita, también pasadas las 24 h del cambio. `POST /public/citas/:token/cancelar { motivo? }`:

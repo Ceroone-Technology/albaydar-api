@@ -263,6 +263,17 @@ const cambioFueraDePlazo = () =>
     `Han pasado más de ${HORAS_PARA_CAMBIAR} horas desde que confirmaste la fecha. Para cambiarla, llama a secretaría (${CENTRO.telefono}).`,
   );
 
+/** Estado de la página pública. Con la entrevista ya celebrada (o sin presentarse), eso manda sobre la propuesta. */
+function estadoPagina(propuesta: string, entrevista: string | undefined) {
+  if (entrevista === 'REALIZADA') return 'realizada';
+  if (entrevista === 'NO_PRESENTADA') return 'no_presentada';
+  if (propuesta === 'CONFIRMADA') return 'elegida';
+  if (propuesta === 'OTRA_FRANJA') return 'alternativa';
+  if (propuesta === 'CADUCADA') return 'caducada';
+  if (propuesta === 'CANCELADA') return 'cancelada';
+  return 'propuesta';
+}
+
 /** Estado de la página pública (mismo vocabulario que el mockup). */
 export async function verCita(token: string) {
   const { t, p, s, via } = await contextoToken(db, token);
@@ -291,17 +302,8 @@ export async function verCita(token: string) {
       { k: 'Con', v: CENTRO.entrevista.con },
       { k: 'Lugar', v: `${CENTRO.entrevista.lugar} · ${CENTRO.direccion.split(' · ')[0]}` },
     ],
-    /** propuesta | elegida | alternativa | caducada | cancelada */
-    estado:
-      p.estado === 'CONFIRMADA'
-        ? 'elegida'
-        : p.estado === 'OTRA_FRANJA'
-          ? 'alternativa'
-          : p.estado === 'CADUCADA'
-            ? 'caducada'
-            : p.estado === 'CANCELADA'
-              ? 'cancelada'
-              : 'propuesta',
+    /** propuesta | elegida | realizada | no_presentada | alternativa | caducada | cancelada */
+    estado: estadoPagina(p.estado, entrevista?.estado),
     duracion: p.duracionMin,
     mensaje: p.mensaje,
     slots: fs.map((f) => {
