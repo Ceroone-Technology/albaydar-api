@@ -999,6 +999,17 @@ describe('La familia cancela su cita desde el enlace (reunión del 21/10/2026)',
     return { id, token };
   }
 
+  it('tras la entrevista, la página de la cita dice «realizada» o «no presentada» y ya no deja cancelar', async () => {
+    for (const [nombre, estado, pagina, dias] of [['Ines', 'REALIZADA', 'realizada', 16], ['Olivia', 'NO_PRESENTADA', 'no_presentada', 17]] as const) {
+      const { id, token } = await conCita(nombre, dias);
+      const [e] = await db.select().from(entrevistas).where(eq(entrevistas.solicitudId, id));
+      await db.update(entrevistas).set({ inicio: sumarDias(new Date(), -1), fin: sumarDias(new Date(), -0.9) }).where(eq(entrevistas.id, e!.id));
+      expect((await request(app).patch(`/api/entrevistas/${e!.id}`).set(auth()).send({ estado })).status).toBe(200);
+      const r = await request(app).get(`/api/public/citas/${token}`);
+      expect(r.body).toMatchObject({ estado: pagina, puedeCancelar: false, puedeCambiar: false });
+    }
+  });
+
   it('libera la hora, vuelve a revisión y avisa a secretaría', async () => {
     const { id, token } = await conCita('Irene', 11);
     expect((await request(app).get(`/api/public/citas/${token}`)).body).toMatchObject({ estado: 'elegida', puedeCancelar: true });
