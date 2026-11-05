@@ -1144,3 +1144,45 @@ describe('La familia cancela su cita desde el enlace (reunión del 21/10/2026)',
     expect((await request(app).post(`/api/public/citas/${token}/cancelar`).send({})).body.error.code).toBe('SIN_CITA_CONFIRMADA');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Exportaciones CSV', () => {
+  const csv = (r: { text: string }) => r.text.replace(/^\uFEFF/, '').trimEnd().split('\r\n');
+
+  it('solicitudes: mismos filtros que la lista, sin paginar, como descarga para Excel', async () => {
+    const r = await request(app).get('/api/solicitudes/exportar?vista=todas&pageSize=1').set(auth());
+    expect(r.status).toBe(200);
+    expect(r.headers['content-type']).toMatch(/^text\/csv; charset=utf-8/);
+    expect(r.headers['content-disposition']).toMatch(/^attachment; filename="solicitudes-\d{4}-\d{2}-\d{2}\.csv"$/);
+    expect(r.text.startsWith('\uFEFF')).toBe(true);
+    const lineas = csv(r);
+    expect(lineas[0]!.split(';').slice(0, 4)).toEqual(['Código', 'Fecha de solicitud', 'Estado', 'Alumna']);
+    const total = (await request(app).get('/api/solicitudes?vista=todas&pageSize=1').set(auth())).body.total;
+    expect(lineas.length - 1).toBe(total); // pageSize no limita la exportación
+    // La ficha de la entrevista viaja en la fila (Paloma, del bloque anterior).
+    expect(lineas.find((l) => l.includes('Paloma'))).toMatch(/;Con reservas;.*;Madre, Alumna;Rosa Jurado;8,46;Ciencias y Tecnología;Biología;Sí · IES Murillo;/);
+
+    const filtrada = csv(await request(app).get('/api/solicitudes/exportar?q=Paloma').set(auth()));
+    expect(filtrada).toHaveLength(2);
+  });
+
+  it('entrevistas, reservas y cobros', async () => {
+    const ent = csv(await request(app).get(`/api/entrevistas/exportar?desde=${dia(-30)}&hasta=${dia(30)}`).set(auth()));
+    expect(ent[0]).toMatch(/^Fecha;Hora;Estado;Código;Alumna;/);
+    expect(ent.some((l) => l.includes('Paloma') && l.includes('Con reservas'))).toBe(true);
+
+    const res = csv(await request(app).get('/api/reservas/exportar').set(auth('administracion')));
+    expect(res[0]).toMatch(/^Código;Alumna;Etapa;Tutor\/a;Correo;Teléfono;Estado;/);
+    expect(res.length).toBeGreaterThan(1);
+
+    const cob = await request(app).get('/api/cobros/exportar').set(auth('administracion'));
+    const filas = csv(cob);
+    expect(filas[0]).toMatch(/^Recibo;Fecha;Código;Alumna;Etapa;Concepto;Forma de pago;Importe \(€\);Importe anulado \(€\);Estado;/);
+    expect(filas.slice(1).every((l) => /^R-\d{4}-\d{4};\d{2}\/\d{2}\/\d{4};/.test(l))).toBe(true);
+  });
+
+  it('con los permisos de su listado', async () => {
+    expect((await request(app).get('/api/cobros/exportar').set(auth('comercial'))).status).toBe(403);
+  });
+});
+

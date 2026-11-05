@@ -128,6 +128,9 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 - `GET /cobros` (pestaña Pagos), `GET /cobros/resumen` (KPIs: cobrado, pendiente, parcial) y `GET /cobros/:id/recibo` (HTML imprimible, con mención de exención de IVA, art. 20.Uno.9.º LIVA).
 - La migración `0004` creó la reserva de las solicitudes admitidas antes de la fase 03, sin enviar correo.
 
+**Exportaciones** (05/11/2026)
+- `GET /solicitudes|entrevistas|reservas|cobros/exportar`: CSV para Excel con los mismos filtros y permisos que su listado, sin paginar (`todasLasPaginas` en `lib/csv.ts`; columnas en `modules/exportaciones/columnas.ts`). Separador `;`, BOM, coma decimal, protección contra inyección de fórmulas y registro en el log de cada exportación.
+
 **Comunicaciones**
 - Todos los correos salen de plantillas HTML editables, una activada por evento. Saneado al guardar y variables validadas. Vista previa, prueba e histórico.
 - Eventos:
