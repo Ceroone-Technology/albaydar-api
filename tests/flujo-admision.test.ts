@@ -124,6 +124,13 @@ describe('Autenticación', () => {
     expect(r2.body.error.code).toBe('SESION_REVOCADA');
   });
 
+  it('los inicios de sesión correctos no gastan el límite por IP (personal del centro tras la misma IP)', async () => {
+    for (let i = 0; i < 25; i++) {
+      const r = await request(app).post('/api/auth/login').send({ email: 'juan.diaz@albaydar.org', password: 'Albaydar-2026' });
+      expect(r.status).toBe(200);
+    }
+  });
+
   it('inicia sesión con los cinco perfiles', async () => {
     await login('secretaria', 'maria.reyes@albaydar.org');
     await login('secretaria2', 'juan.diaz@albaydar.org');

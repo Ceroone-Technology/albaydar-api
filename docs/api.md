@@ -29,6 +29,7 @@ Siempre con la misma forma, para un interceptor único en Angular:
 - **Refresh token** en cookie `alb_rt` httpOnly, `path=/api/auth`. El front solo llama con `withCredentials: true`.
 - Rotación: cada `/refresh` emite cookie nueva; si alguien reutiliza una antigua se cierra la sesión entera (`SESION_REVOCADA`).
 - 5 intentos fallidos → bloqueo de 15 minutos.
+- Además, por IP: 20 intentos **fallidos** cada 15 minutos → 429 `DEMASIADAS_PETICIONES`. Los correctos no cuentan (en el centro todo el personal comparte IP). En producción, `TRUST_PROXY=true` para que la API vea la IP real.
 
 | Método | Ruta | Cuerpo | Respuesta |
 |---|---|---|---|
