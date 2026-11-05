@@ -27,7 +27,7 @@ export const boton = (url: string, texto: string) =>
   `<table role="presentation" cellspacing="0" cellpadding="0" style="margin:22px 0 8px"><tr><td style="border-radius:10px;background:${ROJO}">` +
   `<a href="${escapar(url)}" style="display:inline-block;padding:13px 22px;font:700 14px/1 Montserrat,Arial,sans-serif;color:#ffffff;text-decoration:none;border-radius:10px">${escapar(texto)}</a>` +
   `</td></tr></table>` +
-  `<p style="font:400 12px/1.5 Arial,sans-serif;color:#8a9099;margin:6px 0 0">Si el botón no funciona, copia este enlace en el navegador:<br><span style="word-break:break-all;color:#9C0026">${escapar(url)}</span></p>`;
+  `<p style="font:400 12px/1.5 Arial,sans-serif;color:#8a9099;margin:6px 0 0">Si el botón no funciona, este es el enlace para copiarlo en el navegador:<br><span style="word-break:break-all;color:#9C0026">${escapar(url)}</span></p>`;
 
 export const lista = (items: string[]) =>
   `<ul style="padding-left:18px;margin:10px 0">${items.map((i) => `<li style="margin:5px 0">${escapar(i)}</li>`).join('')}</ul>`;
@@ -133,9 +133,9 @@ export function renderizar(o: { evento: string; asunto: string; cuerpoHtml: stri
 /** Variables con los valores de ejemplo del catálogo (vista previa y "Enviar prueba"). */
 export function varsDeEjemplo(ev: EventoDef): Vars {
   const vars: Vars = Object.fromEntries(ev.variables.map((x) => [x.nombre, x.ejemplo]));
-  if (vars.boton !== undefined) vars.boton = boton(String(vars.enlace ?? '#'), 'Abrir mi enlace');
+  if (vars.boton !== undefined) vars.boton = boton(String(vars.enlace ?? '#'), 'Abrir el enlace');
   if (vars.fechas_propuestas !== undefined) vars.fechas_propuestas = lista(['Martes 3 de noviembre · 10:00 – 10:45', 'Miércoles 4 de noviembre · 12:30 – 13:15', 'Jueves 5 de noviembre · 17:00 – 17:45']);
   if (vars.campos !== undefined) vars.campos = lista(['Centro de procedencia']);
-  if (vars.aviso_notas !== undefined) vars.aviso_notas = '<p><strong>Recuerda subir el boletín de notas del último curso</strong> desde tu enlace antes de la entrevista.</p>';
+  if (vars.aviso_notas !== undefined) vars.aviso_notas = '<p><strong>Recuerden subir el boletín de notas del último curso</strong> desde su enlace antes de la entrevista.</p>';
   return vars;
 }

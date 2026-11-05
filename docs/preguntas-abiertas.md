@@ -67,5 +67,10 @@
 15. **Devolución de la reserva.** Si la alumna no llega a matricularse, ¿se devuelve? Hoy se puede anular el cobro con un motivo (por ejemplo, "devuelto"), pero la devolución del dinero se hace fuera de la plataforma.
 16. **Numeración de los recibos.** Hoy es correlativa por año natural: R-2026-0001, R-2026-0002… ¿Debe reiniciarse por curso escolar (2027/28)? ¿El centro emite ya recibos o facturas en otra herramienta? Si es así, conviene usar una sola numeración.
 17. **Textos de los correos de lista de espera y de no admitida.** Hoy llevan un texto provisional; el centro puede cambiarlo desde Comunicaciones.
+
+**Correos a la familia**
+
+20. **Trato en los correos** (propuesto el 04/11/2026). Todos los correos a la familia empiezan con «Estimada familia:» y van de usted, como las plantillas del mockup. Hasta ahora, los de la citación y los recordatorios iban de tú («Hola, Rosa») y el resto de usted. Las páginas públicas (`/cita`, `/solicitud`) siguen de tú, como en sus mockups. ¿Confirmáis este criterio?
+21. **Motivo de «No admitida».** Hoy es opcional; sin motivo, el correo no da ninguna explicación (el párrafo vacío se quita). ¿Debe ser obligatorio?
 18. **IBAN real del centro** para sustituir al provisional.
 19. **Datos fiscales del centro para el recibo:** razón social y NIF. Hoy el recibo lleva el nombre, la dirección y el teléfono del centro, y la mención de exención de IVA.
