@@ -4,7 +4,7 @@ import { env } from '../../config/env';
 import { cobros, estadoReservaEnum, reservas, solicitudes, vias, type Reserva, type Solicitud, type Via } from '../../db/schema';
 import { db, type Tx } from '../../lib/db';
 import { euros, formatearIban } from '../../lib/dinero';
-import { conflict, notFound } from '../../lib/errors';
+import { badRequest, conflict, notFound } from '../../lib/errors';
 import { diaLargo, fechaLocal, horaLocalAUtc, sumarDias } from '../../lib/fechas';
 import { logger } from '../../lib/logger';
 import { enviarEvento } from '../../correo/enviar';
@@ -80,14 +80,37 @@ export function varsPago(cfg: ReservaConfig, r: Pick<Reserva, 'fechaLimite'>, pe
   };
 }
 
-/** Al admitir: crea la reserva con el importe de la vía y el plazo configurados. */
-export async function crearReserva(tx: Tx, s: Solicitud, via: Via, usuarioId: string, cfg: ReservaConfig, ahora = new Date()) {
+/** Fecha límite por defecto si se admite hoy: hoy + plazo de ajustes.reserva (15 días naturales). */
+export const fechaLimitePorDefecto = (cfg: ReservaConfig, ahora = new Date()) => fechaLocal(sumarDias(ahora, cfg.plazoDias));
+
+/** Días naturales que da una fecha límite contados desde hoy (para «… (N días naturales)» del correo). */
+export const diasDePlazo = (fechaLimite: string, ahora = new Date()) => diasRestantes(fechaLimite, fechaLocal(ahora));
+
+/** Tope para ampliar el plazo de una reserva ya creada (fuerza mayor): 90 días desde hoy. */
+export const MAX_DIAS_AMPLIACION = 90;
+
+/**
+ * Fecha límite elegida al admitir (acortar el plazo si quedan pocas plazas, informe funcional):
+ * de mañana al plazo general. Sin indicarla, el plazo general.
+ */
+export function fechaLimiteAlAdmitir(cfg: ReservaConfig, fecha: string | null | undefined, ahora = new Date()): string {
+  const porDefecto = fechaLimitePorDefecto(cfg, ahora);
+  if (!fecha) return porDefecto;
+  const manana = fechaLocal(sumarDias(ahora, 1));
+  if (fecha < manana || fecha > porDefecto) {
+    throw badRequest('FECHA_LIMITE_FUERA_DE_PLAZO', `La fecha límite tiene que estar entre mañana y el ${fechaTexto(porDefecto)} (plazo general de ${cfg.plazoDias} días).`);
+  }
+  return fecha;
+}
+
+/** Al admitir: crea la reserva con el importe de la vía y la fecha límite (la del plazo general u otra más corta). */
+export async function crearReserva(tx: Tx, s: Solicitud, via: Via, usuarioId: string, cfg: ReservaConfig, fechaLimite?: string | null, ahora = new Date()) {
   const [r] = await tx
     .insert(reservas)
     .values({
       solicitudId: s.id,
       importe: importeReserva(cfg, via.familia),
-      fechaLimite: fechaLocal(sumarDias(ahora, cfg.plazoDias)),
+      fechaLimite: fechaLimiteAlAdmitir(cfg, fechaLimite, ahora),
       creadaPorId: usuarioId,
     })
     .returning();
@@ -258,6 +281,59 @@ export async function recordar(id: string, usuarioId: string) {
     const [act] = await tx.update(reservas).set({ recordatorioEnviadoEn: ahora }).where(eq(reservas.id, r.id)).returning();
     const pagado = (await pagadoPorReserva(tx, [r.id])).get(r.id) ?? 0;
     return vistaReserva(act!, pagado);
+  });
+}
+
+export const cambiarPlazoBody = z.object({
+  fechaLimite: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha con formato AAAA-MM-DD.'),
+  /** Por qué (pocas plazas, fuerza mayor…): queda en el historial de la solicitud. */
+  motivo: z.string().trim().max(500).optional().nullable(),
+  /** Avisar a la familia con el recordatorio de pago, que lleva la nueva fecha. */
+  notificar: z.boolean().default(true),
+});
+
+/**
+ * "Cambiar plazo" de una reserva pendiente o vencida: acortarlo (pocas plazas) o ampliarlo
+ * (fuerza mayor). Nunca antes de hoy ni a más de 90 días. Una vencida con fecha de hoy en
+ * adelante vuelve a pendiente. El recordatorio automático de 3 días vuelve a contar con la
+ * nueva fecha, salvo que el aviso de ahora ya caiga dentro de esos 3 días.
+ */
+export async function cambiarPlazo(id: string, d: z.infer<typeof cambiarPlazoBody>, usuarioId: string) {
+  const cfg = await reservaConfig();
+  return db.transaction(async (tx) => {
+    const [r] = await tx.select().from(reservas).where(eq(reservas.id, id)).for('update');
+    if (!r) throw notFound('Reserva no encontrada.', 'RESERVA_NO_ENCONTRADA');
+    if (r.estado !== 'PENDIENTE' && r.estado !== 'VENCIDA') {
+      throw conflict('RESERVA_NO_PENDIENTE', `La reserva está ${ETIQUETA_ESTADO_RESERVA[r.estado].toLowerCase()}: su plazo ya no se puede cambiar.`);
+    }
+    const ahora = new Date();
+    const hoy = fechaLocal(ahora);
+    const tope = fechaLocal(sumarDias(ahora, MAX_DIAS_AMPLIACION));
+    if (d.fechaLimite < hoy) throw badRequest('FECHA_LIMITE_PASADA', 'La nueva fecha límite no puede ser anterior a hoy.');
+    if (d.fechaLimite > tope) throw badRequest('FECHA_LIMITE_FUERA_DE_PLAZO', `La fecha límite no puede pasar del ${fechaTexto(tope)} (${MAX_DIAS_AMPLIACION} días).`);
+    if (d.fechaLimite === r.fechaLimite) throw badRequest('MISMA_FECHA_LIMITE', 'Esa ya es la fecha límite de la reserva.');
+
+    const actor: Actor = { tipo: 'usuario', usuarioId };
+    const motivo = d.motivo?.trim() || null;
+    const [act] = await tx
+      .update(reservas)
+      .set({ fechaLimite: d.fechaLimite, estado: 'PENDIENTE', vencidaEn: null, recordatorioEnviadoEn: null })
+      .where(eq(reservas.id, r.id))
+      .returning();
+    await registrarEvento(tx, r.solicitudId, actor, 'PLAZO_RESERVA_CAMBIADO', {
+      detalle: { reservaId: r.id, antes: r.fechaLimite, despues: d.fechaLimite, motivo, notificar: d.notificar },
+    });
+
+    let notificada = false;
+    if (d.notificar) {
+      notificada = await enviarRecordatorioPago(tx, act!, cfg, actor);
+      // Si la nueva fecha ya está a 3 días o menos, este aviso hace de recordatorio (uno solo).
+      const enVentana = d.fechaLimite <= fechaLocal(sumarDias(ahora, DIAS_RESERVA_POR_VENCER));
+      if (notificada && enVentana) await tx.update(reservas).set({ recordatorioEnviadoEn: ahora }).where(eq(reservas.id, r.id));
+    }
+    const pagado = (await pagadoPorReserva(tx, [r.id])).get(r.id) ?? 0;
+    const [final] = await tx.select().from(reservas).where(eq(reservas.id, r.id));
+    return { ...vistaReserva(final!, pagado, hoy), notificada };
   });
 }
 

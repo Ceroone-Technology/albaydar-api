@@ -118,6 +118,7 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 
   Arrastrar a una decisión responde 409 `ACCION_REQUERIDA` con `accion: "DECIDIR"`.
 - `POST /solicitudes/:id/decision/previsualizar`: el correo que recibiría la familia, con sus datos reales, sin cambiar nada.
+- **Plazo de la reserva por solicitud** (05/11/2026): al admitir, `fechaLimite` opcional para acortarlo (de mañana al plazo general); después, `PATCH /reservas/:id/plazo` para acortarlo o ampliarlo (hasta 90 días; una vencida vuelve a pendiente), con motivo en el historial y aviso opcional a la familia.
 - **Reserva:** 300 € por defecto, con excepciones por vía; 15 días naturales; transferencia o efectivo. IBAN provisional y ficticio, validado. Todo en `ajustes.reserva`, vía `GET/PUT /reservas/configuracion`.
 - **Control de reservas:** `GET /reservas?porVencer=true`, con días restantes. "Recordar" (`POST /reservas/:id/recordar`), con un mínimo de 1 h entre envíos.
 - **Recordatorio automático** a 3 días del plazo, uno solo, que no sale si ya se usó "Recordar". Vencida: aviso a secretaría y administración; la plaza no se libera sola y el pago tardío se acepta.

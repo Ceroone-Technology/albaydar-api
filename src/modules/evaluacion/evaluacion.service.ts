@@ -3,11 +3,10 @@ import { z } from 'zod';
 import { solicitudes, type Reserva, type Solicitud, type Via } from '../../db/schema';
 import { db } from '../../lib/db';
 import { conflict } from '../../lib/errors';
-import { fechaLocal, sumarDias } from '../../lib/fechas';
 import { enviarEvento, prepararEvento } from '../../correo/enviar';
 import type { Vars } from '../../correo/plantillas';
 import { importeReserva, reservaConfig, type ReservaConfig } from '../ajustes/ajustes.service';
-import { anularReservaVigente, crearReserva, varsPago, vistaReserva } from '../reservas/reservas.service';
+import { anularReservaVigente, crearReserva, diasDePlazo, fechaLimiteAlAdmitir, varsPago, vistaReserva } from '../reservas/reservas.service';
 import { cambiarEstado, datosCorreo, obtenerSolicitud, posicionesEnEspera, type Actor } from '../solicitudes/comun';
 import { ETIQUETA_ESTADO, cursoEscolarCorto, puedeTransicionar } from '../solicitudes/dominio';
 
@@ -25,9 +24,14 @@ export const decisionBody = z.object({
   notificar: z.boolean().default(true),
   /** Para la familia (no admitida o lista de espera). Queda también en el historial. */
   motivo: z.string().trim().max(1000).optional().nullable(),
+  /**
+   * Solo ADMITIDA: fecha límite de la reserva (AAAA-MM-DD) más corta que el plazo general, si
+   * quedan pocas plazas. De mañana al plazo general; sin ella, el plazo general.
+   */
+  fechaLimite: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha con formato AAAA-MM-DD.').optional().nullable(),
 });
 
-export const previaDecisionBody = decisionBody.pick({ decision: true, motivo: true });
+export const previaDecisionBody = decisionBody.pick({ decision: true, motivo: true, fechaLimite: true });
 
 type Decision = z.infer<typeof decisionBody>['decision'];
 
@@ -44,7 +48,7 @@ function varsDecision(
   o: { decision: Decision; motivo: string | null; cfg: ReservaConfig; reserva: Pick<Reserva, 'fechaLimite' | 'importe'> | null; posicion: number | null },
 ): Vars {
   const base = { ...datosCorreo(s, via), etapa: via.nombre, curso_escolar: cursoEscolarCorto(via.cursoEscolar) };
-  if (o.decision === 'ADMITIDA') return { ...base, ...varsPago(o.cfg, o.reserva!, o.reserva!.importe), plazo_dias: o.cfg.plazoDias };
+  if (o.decision === 'ADMITIDA') return { ...base, ...varsPago(o.cfg, o.reserva!, o.reserva!.importe), plazo_dias: diasDePlazo(o.reserva!.fechaLimite) };
   if (o.decision === 'EN_ESPERA') return { ...base, posicion: o.posicion ?? '', motivo: o.motivo ?? '' };
   return { ...base, motivo: o.motivo ?? '' };
 }
@@ -54,14 +58,16 @@ export async function decidir(id: string, d: z.infer<typeof decisionBody>, usuar
   return db.transaction(async (tx) => {
     const { s, via } = await obtenerSolicitud(tx, id, true);
     comprobarTransicion(s, d.decision);
+    // Antes de cambiar nada: una fecha fuera de plazo no deja la solicitud a medias.
+    if (d.decision === 'ADMITIDA') fechaLimiteAlAdmitir(cfg, d.fechaLimite);
     const actor: Actor = { tipo: 'usuario', usuarioId };
     const motivo = d.motivo?.trim() || null;
 
     if (s.estado === 'ADMITIDA') await anularReservaVigente(tx, s.id, `Cambio de decisión: ${ETIQUETA_ESTADO[d.decision]}`, actor);
     if (d.decision === 'EN_ESPERA') await tx.update(solicitudes).set({ enEsperaDesde: new Date() }).where(eq(solicitudes.id, s.id));
-    await cambiarEstado(tx, s, d.decision, actor, 'DECISION_REGISTRADA', { decision: d.decision, motivo, notificar: d.notificar });
+    await cambiarEstado(tx, s, d.decision, actor, 'DECISION_REGISTRADA', { decision: d.decision, motivo, notificar: d.notificar, ...(d.fechaLimite ? { fechaLimite: d.fechaLimite } : {}) });
 
-    const reserva = d.decision === 'ADMITIDA' ? await crearReserva(tx, s, via, usuarioId, cfg) : null;
+    const reserva = d.decision === 'ADMITIDA' ? await crearReserva(tx, s, via, usuarioId, cfg, d.fechaLimite) : null;
     const posicion = d.decision === 'EN_ESPERA' ? ((await posicionesEnEspera(tx, [via.id])).get(s.id) ?? null) : null;
 
     const notificada = d.notificar
@@ -89,7 +95,7 @@ export async function previsualizar(id: string, d: z.infer<typeof previaDecision
   comprobarTransicion(s, d.decision);
   const motivo = d.motivo?.trim() || null;
 
-  const reserva = d.decision === 'ADMITIDA' ? { importe: importeReserva(cfg, via.familia), fechaLimite: fechaLocal(sumarDias(new Date(), cfg.plazoDias)) } : null;
+  const reserva = d.decision === 'ADMITIDA' ? { importe: importeReserva(cfg, via.familia), fechaLimite: fechaLimiteAlAdmitir(cfg, d.fechaLimite) } : null;
   let posicion: number | null = null;
   if (d.decision === 'EN_ESPERA') {
     // Entraría al final de la lista de su vía.

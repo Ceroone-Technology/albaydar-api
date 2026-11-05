@@ -895,6 +895,58 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     await db.execute(sql.raw(await readFile('./drizzle/0004_reservas_admitidas_antiguas.sql', 'utf8')));
     expect((await db.select().from(reservas).where(eq(reservas.solicitudId, olga.id))).length).toBe(1);
   });
+
+  it('admitir con un plazo más corto: entre mañana y el plazo general; el correo dice los días reales', async () => {
+    const pilar = await evaluada('Pilar');
+    const hoy = fechaLocal(new Date());
+    const en = (n: number) => fechaLocal(sumarDias(new Date(), n));
+    for (const fecha of [hoy, en(16)]) {
+      const r = await decidir(pilar.id, { decision: 'ADMITIDA', fechaLimite: fecha });
+      expect(r.body.error.code).toBe('FECHA_LIMITE_FUERA_DE_PLAZO');
+    }
+    expect((await ficha(pilar.id)).estado).toBe('ENTREVISTA_REALIZADA'); // nada a medias
+
+    const previa = await request(app).post(`/api/solicitudes/${pilar.id}/decision/previsualizar`).set(auth('direccion')).send({ decision: 'ADMITIDA', fechaLimite: en(5) });
+    expect(previa.body.html).toContain('(5 días naturales)');
+
+    const r = await decidir(pilar.id, { decision: 'ADMITIDA', fechaLimite: en(5) });
+    expect(r.status).toBe(200);
+    expect(r.body.reserva).toMatchObject({ fechaLimite: en(5), diasRestantes: 5 });
+    await enviarCorreos();
+    expect(ultimoPara(pilar.email).html).toContain('(5 días naturales)');
+  });
+
+  it('cambiar el plazo de una reserva: acortar, ampliar una vencida (vuelve a pendiente), límites y aviso', async () => {
+    const rocio = await evaluada('Rocio');
+    const reservaId = (await decidir(rocio.id, { decision: 'ADMITIDA', notificar: false })).body.reserva.id as string;
+    const plazo = (body: Record<string, unknown>, quien = 'direccion') => request(app).patch(`/api/reservas/${reservaId}/plazo`).set(auth(quien)).send(body);
+    const en = (n: number) => fechaLocal(sumarDias(new Date(), n));
+
+    expect((await plazo({ fechaLimite: en(-1) })).body.error.code).toBe('FECHA_LIMITE_PASADA');
+    expect((await plazo({ fechaLimite: en(91) })).body.error.code).toBe('FECHA_LIMITE_FUERA_DE_PLAZO');
+    expect((await plazo({ fechaLimite: en(15) })).body.error.code).toBe('MISMA_FECHA_LIMITE');
+    expect((await plazo({ fechaLimite: en(5) }, 'comercial')).status).toBe(403);
+
+    // Acortar (pocas plazas), sin avisar.
+    const corto = await plazo({ fechaLimite: en(7), motivo: 'Quedan pocas plazas', notificar: false });
+    expect(corto.body).toMatchObject({ estado: 'PENDIENTE', fechaLimite: en(7), diasRestantes: 7, notificada: false });
+
+    // Vence… y se amplía por fuerza mayor, avisando: vuelve a pendiente y la familia recibe la nueva fecha.
+    await db.update(reservas).set({ fechaLimite: en(-2) }).where(eq(reservas.id, reservaId));
+    await vencerReservas();
+    expect((await ficha(rocio.id)).reserva.estado).toBe('VENCIDA');
+    const largo = await plazo({ fechaLimite: en(2), motivo: 'Fuerza mayor: hospitalización' });
+    expect(largo.body).toMatchObject({ estado: 'PENDIENTE', fechaLimite: en(2), notificada: true });
+    await enviarCorreos();
+    expect(ultimoPara(rocio.email).subject).toMatch(/^Recordatorio: la reserva de plaza de Rocio/);
+    // A 2 días, el aviso hace de recordatorio: el automático no repite.
+    expect(await recordatoriosPago()).toBe(0);
+
+    const f = await ficha(rocio.id);
+    const cambios = f.eventos.filter((e: { tipo: string }) => e.tipo === 'PLAZO_RESERVA_CAMBIADO');
+    expect(cambios).toHaveLength(2);
+    expect(cambios.map((e: { detalle: { motivo: string } }) => e.detalle.motivo).sort()).toEqual(['Fuerza mayor: hospitalización', 'Quedan pocas plazas']);
+  });
 });
 
 describe('Cola de correos', () => {

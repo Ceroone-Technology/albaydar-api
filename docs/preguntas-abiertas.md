@@ -74,3 +74,4 @@
 21. **Motivo de «No admitida».** Hoy es opcional; sin motivo, el correo no da ninguna explicación (el párrafo vacío se quita). ¿Debe ser obligatorio?
 18. **IBAN real del centro** para sustituir al provisional.
 19. **Datos fiscales del centro para el recibo:** razón social y NIF. Hoy el recibo lleva el nombre, la dirección y el teléfono del centro, y la mención de exención de IVA.
+22. **Plazo de la reserva por solicitud** (propuesto el 04/11/2026). Al admitir se puede acortar (de mañana al plazo general de 15 días) si quedan pocas plazas, como pedía el informe funcional; después, Dirección o Administración pueden acortarlo o ampliarlo (fuerza mayor) hasta 90 días, con motivo y aviso a la familia. ¿Os vale? ¿Quién debe poder ampliarlo?

@@ -350,7 +350,7 @@ La parte «Entrevista» y «Datos a rellenar por el centro» de la solicitud en 
 `POST /solicitudes/:id/decision` (`evaluacion.editar`):
 
 ```json
-{ "decision": "ADMITIDA | EN_ESPERA | NO_ADMITIDA", "notificar": true, "motivo": "opcional, para la familia" }
+{ "decision": "ADMITIDA | EN_ESPERA | NO_ADMITIDA", "notificar": true, "motivo": "opcional, para la familia", "fechaLimite": "AAAA-MM-DD, opcional, solo ADMITIDA" }
 ```
 
 | Decisión | Desde | Qué hace |
@@ -363,7 +363,9 @@ Respuesta: `{ estado, estadoEtiqueta, reserva, posicionEspera, notificada }`. `n
 
 ### Vista previa de la "Comunicación automática"
 
-`POST /solicitudes/:id/decision/previsualizar` (`evaluacion.ver`), con `{ decision, motivo? }`. Devuelve el correo que recibiría la familia con **sus datos reales**: el importe de su vía, el IBAN configurado, la fecha límite si se decide hoy y la posición que tendría en la lista de espera. No cambia nada.
+`fechaLimite` (05/11/2026): acorta el plazo de la reserva si quedan pocas plazas. Va de mañana al plazo general (`ajustes.reserva.plazoDias`); fuera de ese rango, 400 `FECHA_LIMITE_FUERA_DE_PLAZO` sin cambiar nada. Sin ella, el plazo general. El correo dice los días naturales que da esa fecha.
+
+`POST /solicitudes/:id/decision/previsualizar` (`evaluacion.ver`), con `{ decision, motivo?, fechaLimite? }`. Devuelve el correo que recibiría la familia con **sus datos reales**: el importe de su vía, el IBAN configurado, la fecha límite si se decide hoy y la posición que tendría en la lista de espera. No cambia nada.
 
 ```json
 { "para": "familia@correo.es", "seEnviaria": true, "asunto": "Plaza admitida para …", "html": "<!doctype html>…", "texto": "…" }
@@ -390,6 +392,7 @@ Respuesta: `{ estado, estadoEtiqueta, reserva, posicionEspera, notificada }`. `n
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
 | GET | `/reservas?estado=&porVencer=true&q=&page=&pageSize=` | cobros.ver o evaluacion.ver | "Control de reservas" y "Reservas por vencer". Cada ítem: la reserva + `solicitud { id, codigo, estado, alumna, tutor, email, telefono, via }`. Sin `estado`, todas menos las anuladas; ordenadas por fecha límite |
+| PATCH | `/reservas/:id/plazo` | evaluacion.editar o cobros.editar | «Cambiar plazo» de una reserva pendiente o vencida: `{ fechaLimite, motivo?, notificar = true }`. Acortar (pocas plazas) o ampliar (fuerza mayor): de hoy a 90 días. Una vencida vuelve a `PENDIENTE`. Queda en el historial (`PLAZO_RESERVA_CAMBIADO` con `antes`, `despues` y `motivo`). Con `notificar`, la familia recibe `RECORDATORIO_PAGO` con la nueva fecha; si esta cae a 3 días o menos, cuenta como el recordatorio y el automático no repite; si no, el automático vuelve a salir 3 días antes. Devuelve la reserva y `notificada`. 400 `FECHA_LIMITE_PASADA`, `FECHA_LIMITE_FUERA_DE_PLAZO` o `MISMA_FECHA_LIMITE`; 409 `RESERVA_NO_PENDIENTE` si está pagada o anulada |
 | POST | `/reservas/:id/recordar` | cobros.editar o solicitudes.editar | Botón "Recordar": envía ya `RECORDATORIO_PAGO` a la familia y devuelve la reserva con `recordatorioEnviadoEn` actualizado. Cuenta como el recordatorio de la reserva: el automático de 3 días ya no sale. 409 `RECORDATORIO_RECIENTE` si se envió otro hace menos de una hora; 409 `RESERVA_NO_PENDIENTE` si está pagada o anulada; 409 `RECORDATORIO_NO_ENVIADO` si no hay correo o la plantilla está en borrador |
 | GET | `/reservas/configuracion` | configuracion.ver, cobros.ver o evaluacion.ver | Configuración (abajo) |
 | PUT | `/reservas/configuracion` | configuracion.editar | Guardar configuración |
