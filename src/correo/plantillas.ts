@@ -27,7 +27,7 @@ export const boton = (url: string, texto: string) =>
   `<table role="presentation" cellspacing="0" cellpadding="0" style="margin:22px 0 8px"><tr><td style="border-radius:10px;background:${ROJO}">` +
   `<a href="${escapar(url)}" style="display:inline-block;padding:13px 22px;font:700 14px/1 Montserrat,Arial,sans-serif;color:#ffffff;text-decoration:none;border-radius:10px">${escapar(texto)}</a>` +
   `</td></tr></table>` +
-  `<p style="font:400 12px/1.5 Arial,sans-serif;color:#8a9099;margin:6px 0 0">Si el botón no funciona, copia este enlace en el navegador:<br><span style="word-break:break-all;color:#9C0026">${escapar(url)}</span></p>`;
+  `<p style="font:400 12px/1.5 Arial,sans-serif;color:#8a9099;margin:6px 0 0">Si el botón no funciona, este es el enlace para copiarlo en el navegador:<br><span style="word-break:break-all;color:#9C0026">${escapar(url)}</span></p>`;
 
 export const lista = (items: string[]) =>
   `<ul style="padding-left:18px;margin:10px 0">${items.map((i) => `<li style="margin:5px 0">${escapar(i)}</li>`).join('')}</ul>`;
