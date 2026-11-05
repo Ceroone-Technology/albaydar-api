@@ -680,6 +680,12 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     expect(r.body.reserva).toMatchObject({ estado: 'PENDIENTE', pagado: 10000, pendiente: 20000 });
     primerCobro = r.body.cobro.id;
     expect((await ficha(sara.id)).estado).toBe('ADMITIDA');
+    // Justificante a la familia: el recibo y lo que falta.
+    expect(r.body.notificado).toBe(true);
+    await enviarCorreos();
+    const justificante = ultimoPara(sara.email);
+    expect(justificante.subject).toBe(`Pago recibido · Sara Fase Tres · recibo ${r.body.cobro.reciboNumero}`);
+    expect(justificante.html).toMatch(/Quedan 200,00.€ por pagar antes del/);
     const demasiado = await cobrar({ solicitudId: sara.id, importe: 25000, metodo: 'TRANSFERENCIA' });
     expect(demasiado.body.error).toMatchObject({ code: 'IMPORTE_SUPERIOR_AL_PENDIENTE', details: { pendiente: 20000 } });
   });
@@ -688,6 +694,8 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     const r = await cobrar({ solicitudId: sara.id, importe: 20000, metodo: 'TRANSFERENCIA', observaciones: 'Transferencia del 20/10' });
     expect(r.body.reserva).toMatchObject({ estado: 'PAGADA', pendiente: 0 });
     expect(r.body.cobro.reciboNumero).toMatch(/^R-\d{4}-0002$/);
+    await enviarCorreos();
+    expect(ultimoPara(sara.email).html).toContain('Con este pago, la plaza de Sara Fase Tres queda reservada.');
     expect((await ficha(sara.id)).estado).toBe('PLAZA_RESERVADA');
     const pagos = await request(app).get(`/api/cobros?solicitudId=${sara.id}`).set(auth('administracion'));
     expect(pagos.body).toMatchObject({ total: 2, suma: 30000 });
@@ -733,8 +741,12 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     const tarjeta = k.body.columnas.flatMap((c: { items: { id: string }[] }) => c.items).find((i: { id: string }) => i.id === lucas.id);
     expect(tarjeta.reserva).toMatchObject({ estado: 'VENCIDA', diasRestantes: -1 });
     // La plaza no se libera sola: si la familia paga tarde, se registra igual.
-    const r = await cobrar({ solicitudId: lucas.id, importe: 30000, metodo: 'TRANSFERENCIA' });
+    // Sin notificar: no sale el justificante.
+    const r = await cobrar({ solicitudId: lucas.id, importe: 30000, metodo: 'TRANSFERENCIA', notificar: false });
     expect(r.body.reserva.estado).toBe('PAGADA');
+    expect(r.body.notificado).toBe(false);
+    await enviarCorreos();
+    expect(ultimoPara(lucas.email).subject).not.toMatch(/^Pago recibido/);
     expect((await ficha(lucas.id)).estado).toBe('PLAZA_RESERVADA');
   });
 
@@ -848,6 +860,7 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     const olga = await evaluada('Olga');
     await db.update(solicitudes).set({ estado: 'ADMITIDA' }).where(eq(solicitudes.id, olga.id)); // como con el PATCH antiguo
     expect((await ficha(olga.id)).siguientes.map((s: { estado: string }) => s.estado)).not.toContain('PLAZA_RESERVADA');
+    await enviarCorreos(); // lo que dejaron en cola los tests anteriores (p. ej. justificantes de pago)
     const correosAntes = buzon.length;
     await db.execute(sql.raw(await readFile('./drizzle/0004_reservas_admitidas_antiguas.sql', 'utf8')));
     const f = await ficha(olga.id);

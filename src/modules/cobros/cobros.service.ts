@@ -7,10 +7,11 @@ import { euros } from '../../lib/dinero';
 import { badRequest, conflict, notFound } from '../../lib/errors';
 import { fechaLocal } from '../../lib/fechas';
 import { CENTRO } from '../../config/env';
+import { enviarEvento } from '../../correo/enviar';
 import { escapar } from '../../correo/plantillas';
 import { reservaConfig } from '../ajustes/ajustes.service';
 import { fechaTexto, pagadoPorReserva, vistaReserva } from '../reservas/reservas.service';
-import { cambiarEstado, obtenerSolicitud, registrarEvento, siguienteValor, type Actor } from '../solicitudes/comun';
+import { cambiarEstado, datosCorreo, obtenerSolicitud, registrarEvento, siguienteValor, type Actor } from '../solicitudes/comun';
 import { ETIQUETA_CONCEPTO_COBRO, ETIQUETA_METODO_PAGO, cursoEscolarCorto } from '../solicitudes/dominio';
 
 /**
@@ -31,6 +32,8 @@ export const registrarCobroBody = z.object({
   /** Día en que se pagó (no el de registro). Por defecto, hoy. */
   fecha: fecha.optional(),
   observaciones: z.string().trim().max(1000).optional().nullable(),
+  /** Enviar a la familia el correo PAGO_RECIBIDO con el recibo y cómo queda la reserva. */
+  notificar: z.boolean().default(true),
 });
 
 export const anularCobroBody = z.object({
@@ -82,7 +85,7 @@ export async function registrar(d: z.infer<typeof registrarCobroBody>, usuarioId
   if (fechaPago > hoy) throw badRequest('FECHA_FUTURA', 'La fecha del cobro no puede ser posterior a hoy.');
 
   return db.transaction(async (tx) => {
-    const { s } = await obtenerSolicitud(tx, d.solicitudId, true);
+    const { s, via } = await obtenerSolicitud(tx, d.solicitudId, true);
     const [r] = await tx
       .select()
       .from(reservas)
@@ -121,8 +124,30 @@ export async function registrar(d: z.infer<typeof registrarCobroBody>, usuarioId
       [reserva] = (await tx.update(reservas).set({ estado: 'PAGADA', pagadaEn: new Date() }).where(eq(reservas.id, r.id)).returning()) as [typeof r];
       if (s.estado === 'ADMITIDA') await cambiarEstado(tx, s, 'PLAZA_RESERVADA', actor, 'PLAZA_RESERVADA', { reservaId: r.id, recibo });
     }
+    // Justificante a la familia (outbox: sale si la transacción se confirma).
+    let notificado = false;
+    if (d.notificar && s.email) {
+      const quedan = r.importe - pagado - d.importe;
+      notificado = await enviarEvento(tx, 'PAGO_RECIBIDO', {
+        para: s.email,
+        solicitudId: s.id,
+        vars: {
+          ...datosCorreo(s, via),
+          importe_pagado: euros(d.importe),
+          forma_pago: ETIQUETA_METODO_PAGO[d.metodo],
+          fecha_pago: fechaTexto(fechaPago),
+          recibo,
+          pendiente: euros(quedan),
+          situacion:
+            quedan <= 0
+              ? `Con este pago, la plaza de ${`${s.alumnaNombre} ${s.alumnaApellidos}`.trim()} queda reservada.`
+              : `Quedan ${euros(quedan)} por pagar antes del ${fechaTexto(r.fechaLimite)} para confirmar la plaza.`,
+        },
+      });
+    }
+
     const [u] = await tx.select({ nombre: usuarios.nombre }).from(usuarios).where(eq(usuarios.id, usuarioId));
-    return { cobro: vista(c!, { registradoPor: u?.nombre ?? null }), reserva: vistaReserva(reserva, pagado + d.importe) };
+    return { cobro: vista(c!, { registradoPor: u?.nombre ?? null }), reserva: vistaReserva(reserva, pagado + d.importe), notificado };
   });
 }
 

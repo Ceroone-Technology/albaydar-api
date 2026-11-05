@@ -386,7 +386,7 @@ Las solicitudes que se admitieron antes de existir la reserva (con el `PATCH /es
 
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
-| POST | `/cobros` | cobros.editar | "Registrar cobro manual" |
+| POST | `/cobros` | cobros.editar | "Registrar cobro manual": `{ solicitudId, importe, metodo, fecha?, observaciones?, notificar = true }`. Con `notificar`, la familia recibe `PAGO_RECIBIDO` con el recibo; la respuesta trae `notificado` |
 | GET | `/cobros?solicitudId=&concepto=&metodo=&desde=&hasta=&incluirAnulados=&page=&pageSize=` | cobros.ver | Pestaña "Pagos". Devuelve también `suma` (de los no anulados, en céntimos) y `sumaTexto` |
 | POST | `/cobros/:id/anular` | cobros.editar | `{ motivo }` (obligatorio). Un cobro nunca se borra |
 | GET | `/cobros/resumen?desde=&hasta=` | cobros.ver | KPIs (abajo) |
@@ -475,6 +475,7 @@ Reglas:
 | `EN_ESPERA` | "Registrar decisión" → En espera (posición) | Activada · texto provisional |
 | `NO_ADMITIDA` | "Registrar decisión" → No admitida (motivo) | Activada · texto provisional |
 | `RECORDATORIO_PAGO` | Reserva sin pagar a 3 días del plazo (uno solo) | Activada |
+| `PAGO_RECIBIDO` | Se registra un cobro de la reserva: importe, recibo y si la plaza queda reservada o cuánto falta (`{{situacion}}`) | Activada |
 | `RESERVA_VENCIDA` | Pasa el plazo sin pagar (a secretaría y administración) | Activada |
 | `MATRICULA_CONFIRMADA` | Fase 04 (texto del mockup) | Borrador |
 
