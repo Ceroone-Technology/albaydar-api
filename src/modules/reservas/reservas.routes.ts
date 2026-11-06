@@ -27,6 +27,11 @@ reservasRouter.get('/exportar', requirePermiso('cobros.ver', 'evaluacion.ver'), 
   responderCsv(req, res, 'reservas', COLUMNAS_RESERVAS, filas);
 });
 
+/** "Cambiar plazo": acortar o ampliar la fecha límite de una reserva pendiente o vencida. */
+reservasRouter.patch('/:id/plazo', requirePermiso('evaluacion.editar', 'cobros.editar'), validate({ params: idParam, body: srv.cambiarPlazoBody }), async (req, res) => {
+  res.json(await srv.cambiarPlazo(v<typeof idParam>(req, 'params').id, v<typeof srv.cambiarPlazoBody>(req, 'body'), req.user!.id));
+});
+
 reservasRouter.post('/:id/recordar', requirePermiso('cobros.editar', 'solicitudes.editar'), validate({ params: idParam }), async (req, res) => {
   res.json(await srv.recordar(v<typeof idParam>(req, 'params').id, req.user!.id));
 });
