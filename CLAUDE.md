@@ -48,7 +48,7 @@ DATABASE_URL=postgresql://albaydar:albaydar@localhost:5432/albaydar npm run db:m
   Superadministrador: `admin@albaydar.org` / `CambiaEsto-2026!`.
 - **Configuración de Docker:** `.env` junto a `docker-compose.yml` (plantilla: `.env.docker.example`). **Nunca se sube a git.** Las variables SMTP de Docker llevan el prefijo `DOCKER_`.
 - **Correo real.** En el equipo del desarrollador, el `.env` apunta a Gmail con contraseña de aplicación, sin `MAIL_DESVIO`: los correos llegan de verdad a la dirección de cada solicitud. `MAIL_SECRETARIA` y `MAIL_ADMINISTRACION` apuntan al buzón del desarrollador, no a `@albaydar.org`, que es un dominio real del centro. Sin `.env`, todo va a Mailpit (http://localhost:8025).
-  - ⚠️ Las 3 solicitudes de ejemplo de la semilla usan correos `@correo.es`, un dominio real. No las cites ni les envíes nada. Está pendiente pasarlas a `@example.com`.
+  - Las solicitudes de ejemplo de la semilla usan `@example.com` (dominio reservado, nunca entrega). Hasta el 05/11/2026 usaban `@correo.es`, un dominio real: la semilla corrige esas filas en una BD de demo ya creada. Las de prueba, con `@example.com` o alias propios.
   - Para probar, usa alias propios (`buzon+prueba1@gmail.com`).
 - **Ficheros subidos:** carpeta `storage/uploads` del equipo (ignorada por git; puede contener boletines reales de prueba).
 
@@ -302,7 +302,7 @@ Lo que propuso el front:
   - `NODE_ENV=production`, `COOKIE_SECURE=true`, `TRUST_PROXY=true`;
   - `JWT_ACCESS_SECRET` aleatorio;
   - `SEED_DEMO=false`.
-- **Semilla de demo:** pasar los correos `@correo.es` a `@example.com`, y opcionalmente ampliarla (~40 solicitudes en todos los estados) para demos.
+- **Semilla de demo:** opcionalmente, ampliarla (~40 solicitudes en todos los estados) para demos.
 - **Posible mejora:** que secretaría pueda adjuntar el boletín de notas ella misma (hoy solo la familia, desde su enlace).
 - **Deuda menor:** `z.string().uuid()` y `.email()` están obsoletos en Zod 4 (se usan en todo el código, migrar de una vez a `z.uuid()` y `z.email()`); avisos de estilo de Sonar (`await` en bucles intencionado en las tareas, ternarios anidados).
 

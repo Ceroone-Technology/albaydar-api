@@ -7,7 +7,7 @@
  * Es idempotente: se puede ejecutar varias veces.
  */
 import 'dotenv/config';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { env } from '../config/env';
 import { db, pool } from '../lib/db';
 import { hashPassword } from '../modules/auth/auth.service';
@@ -69,15 +69,22 @@ async function main() {
   const todas = await db.select().from(vias).where(eq(vias.cursoEscolar, CURSO_ESCOLAR));
   const via = (f: string, c: number) => todas.find((x) => x.familia === f && x.curso === c)!.id;
 
-  await db.insert(familias).values({ email: 'epena@correo.es', nombre: 'Familia Márquez Peña', vinculo: 'Hermana en 2º Bachillerato · Clara Márquez Peña' }).onConflictDoNothing();
+  // Hasta el 05/11/2026 la semilla usaba @correo.es, un dominio real: en una BD de demo ya
+  // creada se pasan a @example.com (reservado, nunca entrega). Solo las filas de la semilla,
+  // por correo y nombre exactos: nunca una familia real que use ese proveedor.
+  await db.execute(sql`update familias set email = 'epena@example.com' where email = 'epena@correo.es' and nombre = 'Familia Márquez Peña'`);
+  await db.execute(sql`update solicitudes set email = replace(email, '@correo.es', '@example.com')
+    where (email, alumna_nombre, alumna_apellidos) in (('epena@correo.es', 'Lucía', 'Márquez Peña'), ('mromero@correo.es', 'Paula', 'Gil Romero'))`);
+
+  await db.insert(familias).values({ email: 'epena@example.com', nombre: 'Familia Márquez Peña', vinculo: 'Hermana en 2º Bachillerato · Clara Márquez Peña' }).onConflictDoNothing();
 
   const [hay] = await db.select({ id: solicitudes.id }).from(solicitudes).limit(1);
   if (!hay) {
     const ejemplos = [
-      { viaId: via('BACHILLERATO', 1), alumnaNombre: 'Lucía', alumnaApellidos: 'Márquez Peña', tutorNombre: 'Elena Peña Ríos', email: 'epena@correo.es', telefono: '+34 622 418 903', centroProcedencia: 'IES Martínez Montañés', modalidadInteres: 'Ciencias', canal: 'SOLICITUD_WEB' as const, asignadaSnec: false },
+      { viaId: via('BACHILLERATO', 1), alumnaNombre: 'Lucía', alumnaApellidos: 'Márquez Peña', tutorNombre: 'Elena Peña Ríos', email: 'epena@example.com', telefono: '+34 622 418 903', centroProcedencia: 'IES Martínez Montañés', modalidadInteres: 'Ciencias', canal: 'SOLICITUD_WEB' as const, asignadaSnec: false },
       // Correo incompleto a propósito, como en el mockup: la revisión lo marca y no deja citar.
       { viaId: via('CICLOS_CONCERTADOS_GS', 1), alumnaNombre: 'Daniel', alumnaApellidos: 'Ortiz Cano', tutorNombre: 'Andrés Ortiz Luque', email: 'aortiz@correo', telefono: '+34 611 902 447', centroProcedencia: 'IES Velázquez', modalidadInteres: null, canal: 'SOLICITUD_WEB' as const, asignadaSnec: true },
-      { viaId: via('CICLOS_PRIVADOS_GS', 1), alumnaNombre: 'Paula', alumnaApellidos: 'Gil Romero', tutorNombre: 'Marta Romero Vela', email: 'mromero@correo.es', telefono: '+34 687 330 128', centroProcedencia: 'Colegio Portaceli', modalidadInteres: 'Marketing y publicidad', canal: 'SOLICITUD_WEB' as const, asignadaSnec: false },
+      { viaId: via('CICLOS_PRIVADOS_GS', 1), alumnaNombre: 'Paula', alumnaApellidos: 'Gil Romero', tutorNombre: 'Marta Romero Vela', email: 'mromero@example.com', telefono: '+34 687 330 128', centroProcedencia: 'Colegio Portaceli', modalidadInteres: 'Marketing y publicidad', canal: 'SOLICITUD_WEB' as const, asignadaSnec: false },
     ];
     for (const e of ejemplos) {
       await db.transaction(async (tx) => {

@@ -113,7 +113,7 @@ Cuerpo de `POST /public/solicitudes` (todos obligatorios salvo `modalidadInteres
   "alumnaNombre": "Lucía", "alumnaApellidos": "Márquez Peña",
   "centroProcedencia": "IES Martínez Montañés",
   "modalidadInteres": "Ciencias",
-  "tutorNombre": "Elena Peña Ríos", "email": "epena@correo.es", "telefono": "+34 622 418 903",
+  "tutorNombre": "Elena Peña Ríos", "email": "epena@example.com", "telefono": "+34 622 418 903",
   "consentimientoPrivacidad": true,
   "asignadaSnec": false,
   "website": ""
@@ -366,7 +366,7 @@ Respuesta: `{ estado, estadoEtiqueta, reserva, posicionEspera, notificada }`. `n
 `POST /solicitudes/:id/decision/previsualizar` (`evaluacion.ver`), con `{ decision, motivo? }`. Devuelve el correo que recibiría la familia con **sus datos reales**: el importe de su vía, el IBAN configurado, la fecha límite si se decide hoy y la posición que tendría en la lista de espera. No cambia nada.
 
 ```json
-{ "para": "familia@correo.es", "seEnviaria": true, "asunto": "Plaza admitida para …", "html": "<!doctype html>…", "texto": "…" }
+{ "para": "familia@example.com", "seEnviaria": true, "asunto": "Plaza admitida para …", "html": "<!doctype html>…", "texto": "…" }
 ```
 
 - `seEnviaria: false` si la solicitud no tiene correo o la plantilla del evento está en borrador.

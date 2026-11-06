@@ -13,7 +13,7 @@ const base: EntradaRevision = {
   alumnaNombre: 'Lucía',
   alumnaApellidos: 'Márquez Peña',
   tutorNombre: 'Elena Peña Ríos',
-  email: 'epena@correo.es',
+  email: 'epena@example.com',
   telefono: '+34 622 418 903',
   centroProcedencia: 'IES Martínez Montañés',
   asignadaSnec: false,
