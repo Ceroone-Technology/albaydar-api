@@ -210,14 +210,14 @@ describe('Admisión y citación', () => {
   let codigoLucia = '';
 
   it('el formulario web exige todos los campos menos la modalidad', async () => {
-    const base = { viaId: viaBach, alumnaNombre: 'Paula', alumnaApellidos: 'Gil Romero', tutorNombre: 'Marta Romero Vela', email: 'mromero@correo.es', telefono: '+34 687 330 128', consentimientoPrivacidad: true };
+    const base = { viaId: viaBach, alumnaNombre: 'Paula', alumnaApellidos: 'Gil Romero', tutorNombre: 'Marta Romero Vela', email: 'mromero@example.com', telefono: '+34 687 330 128', consentimientoPrivacidad: true };
     const sinCentro = await request(app).post('/api/public/solicitudes').send(base);
     expect(sinCentro.status).toBe(400);
     expect(sinCentro.body.error.details.map((d: { campo: string }) => d.campo)).toContain('centroProcedencia');
     const ok = await request(app).post('/api/public/solicitudes').send({ ...base, centroProcedencia: 'Colegio Portaceli' });
     expect(ok.status).toBe(201);
     await enviarCorreos();
-    const acuse = ultimoPara('mromero@correo.es');
+    const acuse = ultimoPara('mromero@example.com');
     expect(acuse.subject).toContain(ok.body.codigo);
     expect(acuse.html).toContain('cropped-logo-final.png'); // diseño común
     paula = (await request(app).get('/api/solicitudes?q=Paula').set(auth())).body.items[0].id;
@@ -226,7 +226,7 @@ describe('Admisión y citación', () => {
   it('alta telefónica sin centro → incompleta → pedir que complete → la familia completa', async () => {
     const r = await request(app).post('/api/solicitudes').set(auth()).send({
       viaId: viaBach, alumnaNombre: 'Lucía', alumnaApellidos: 'Márquez Peña', tutorNombre: 'Elena Peña Ríos',
-      email: 'epena@correo.es', telefono: '+34 622 418 903', canal: 'TELEFONO', consentimientoPrivacidad: true,
+      email: 'epena@example.com', telefono: '+34 622 418 903', canal: 'TELEFONO', consentimientoPrivacidad: true,
     });
     expect(r.status).toBe(201);
     lucia = r.body.id;
@@ -237,7 +237,7 @@ describe('Admisión y citación', () => {
 
     await request(app).post(`/api/solicitudes/${lucia}/pedir-completar`).set(auth()).send({ mensaje: 'Indícanos el centro actual.' });
     await enviarCorreos();
-    const m = ultimoPara('epena@correo.es');
+    const m = ultimoPara('epena@example.com');
     expect(m.html).toContain('<li style="margin:5px 0">Centro de procedencia</li>');
     expect(m.html).toContain('Indícanos el centro actual.');
     const t = tokenDe(m.text, '/solicitud/completar');
@@ -280,7 +280,7 @@ describe('Admisión y citación', () => {
     expect(otra.body.error.code).toBe('FRANJA_OCUPADA');
 
     await enviarCorreos();
-    const m = ultimoPara('epena@correo.es');
+    const m = ultimoPara('epena@example.com');
     expect(m.subject).toBe(`Fechas para la entrevista de admisión de Lucía Márquez Peña · ${codigoLucia}`);
     expect(m.html).toContain('Estimada familia:');
     expect(m.html).toContain('11:00 – 12:00');
@@ -289,7 +289,7 @@ describe('Admisión y citación', () => {
 
   it('dos secretarias citan la misma hora a la vez: solo una lo consigue', async () => {
     const carmen = await request(app).post('/api/solicitudes').set(auth()).send({
-      viaId: viaBach, alumnaNombre: 'Carmen', alumnaApellidos: 'Vega Salas', tutorNombre: 'Rocío Salas', email: 'rsalas@correo.es',
+      viaId: viaBach, alumnaNombre: 'Carmen', alumnaApellidos: 'Vega Salas', tutorNombre: 'Rocío Salas', email: 'rsalas@example.com',
       telefono: '+34 600 111 222', centroProcedencia: 'IES Murillo', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
     });
     const [a, b] = await Promise.all([
@@ -328,7 +328,7 @@ describe('Admisión y citación', () => {
     expect(disp.body.dias[0].huecos.find((h: { hora: string }) => h.hora === '11:00').disponible).toBe(true);
 
     await enviarCorreos();
-    const m = ultimoPara('epena@correo.es');
+    const m = ultimoPara('epena@example.com');
     expect(m.subject).toMatch(/^Entrevista de admisión · Lucía Márquez Peña · /);
     expect(m.html).toContain('Rogamos traigan el DNI'); // texto de la plantilla del mockup
     expect(m.html).toContain('Recuerden subir el boletín de notas');
@@ -351,7 +351,7 @@ describe('Admisión y citación', () => {
     const [e] = await db.select().from(entrevistas).where(eq(entrevistas.solicitudId, lucia));
     expect(e).toMatchObject({ estado: 'REPROGRAMADA', secuenciaIcs: 1 });
     await enviarCorreos();
-    expect(ultimoPara('epena@correo.es').subject).toMatch(/^Nueva fecha de entrevista/);
+    expect(ultimoPara('epena@example.com').subject).toMatch(/^Nueva fecha de entrevista/);
   });
 
   it('pasadas 24 h desde que aceptó, ya no puede cambiar ni pedir otra franja', async () => {
@@ -377,7 +377,7 @@ describe('Admisión y citación', () => {
     expect(await recordatoriosEntrevista(ahora)).toBe(1);
     expect(await recordatoriosEntrevista(ahora)).toBe(0);
     await enviarCorreos();
-    const m = ultimoPara('epena@correo.es');
+    const m = ultimoPara('epena@example.com');
     expect(m.subject).toBe('Mañana: entrevista de admisión de Lucía Márquez Peña a las 16:00');
     expect(m.html).not.toContain('Recuerden subir el boletín');
   });
@@ -389,7 +389,7 @@ describe('Admisión y citación', () => {
     expect(activas).toHaveLength(0);
     await enviarCorreos();
     expect(ultimoPara('secretaria@albaydar.org').html).toContain('Martes o jueves a partir de las 17:00');
-    expect(ultimoPara('epena@correo.es').attachments[0]!.content.toString()).toContain('METHOD:CANCEL');
+    expect(ultimoPara('epena@example.com').attachments[0]!.content.toString()).toContain('METHOD:CANCEL');
   });
 
   it('"Proponer nuevas fechas" invalida el enlace anterior', async () => {
@@ -397,7 +397,7 @@ describe('Admisión y citación', () => {
     expect(r.status).toBe(201);
     expect((await request(app).get(`/api/public/citas/${tokenCita}`)).body.error.code).toBe('PROPUESTA_SUSTITUIDA');
     await enviarCorreos();
-    tokenCita = tokenDe(ultimoPara('epena@correo.es').text, '/cita');
+    tokenCita = tokenDe(ultimoPara('epena@example.com').text, '/cita');
   });
 
   it('sin respuesta en 3 días: un único recordatorio con plantilla HTML', async () => {
@@ -405,7 +405,7 @@ describe('Admisión y citación', () => {
     expect(await recordatoriosPropuesta()).toBeGreaterThanOrEqual(1);
     expect(await recordatoriosPropuesta()).toBe(0);
     await enviarCorreos();
-    const m = ultimoPara('epena@correo.es');
+    const m = ultimoPara('epena@example.com');
     expect(m.subject).toBe('Recordatorio: falta elegir la fecha de la entrevista de Lucía Márquez Peña');
     expect(m.html).toContain('Se las tenemos reservadas');
     expect((await request(app).get(`/api/public/citas/${tokenDe(m.text, '/cita')}`)).status).toBe(200);
@@ -464,7 +464,7 @@ describe('Plantillas de correo (Comunicaciones)', () => {
     const r = await request(app).post(`/api/solicitudes/${s.id}/citar`).set(auth()).send({ inicios: [iso(dia(4), '09:00')] });
     expect(r.status).toBe(201);
     await enviarCorreos();
-    const m = ultimoPara('rsalas@correo.es');
+    const m = ultimoPara('rsalas@example.com');
     expect(m.subject).toBe('Carmen Vega Salas: elige tu entrevista');
     expect(m.html).toMatch(/<a href="http:\/\/localhost:4200\/cita\/[A-Za-z0-9_-]+">Elegir<\/a>/);
   });
@@ -479,7 +479,7 @@ describe('Plantillas de correo (Comunicaciones)', () => {
     const s = (await request(app).get('/api/solicitudes?q=Carmen').set(auth())).body.items[0];
     await request(app).post(`/api/solicitudes/${s.id}/citar`).set(auth()).send({ inicios: [iso(dia(4), '13:00')] });
     await enviarCorreos();
-    expect(ultimoPara('rsalas@correo.es').subject).toMatch(/^Fechas para la entrevista de admisión de Carmen/);
+    expect(ultimoPara('rsalas@example.com').subject).toMatch(/^Fechas para la entrevista de admisión de Carmen/);
   });
 
   it('crear una plantilla activada pasa la anterior del evento a borrador', async () => {
@@ -532,7 +532,7 @@ describe('Contrato con el front: bandeja, kanban y avisos', () => {
   it('el formulario público acepta "Asignada por la Junta (SNEC)"', async () => {
     const r = await request(app).post('/api/public/solicitudes').send({
       viaId: viaBach, alumnaNombre: 'Ana', alumnaApellidos: 'Ruiz Campos', centroProcedencia: 'IES Bécquer', tutorNombre: 'Pilar Campos Ortega',
-      email: 'pcampos@correo.es', telefono: '+34 655 210 334', consentimientoPrivacidad: true, asignadaSnec: true, website: '',
+      email: 'pcampos@example.com', telefono: '+34 655 210 334', consentimientoPrivacidad: true, asignadaSnec: true, website: '',
     });
     expect(r.status).toBe(201);
     const [item] = (await request(app).get('/api/solicitudes?q=Ana Ruiz').set(auth())).body.items;
@@ -553,7 +553,7 @@ describe('Contrato con el front: bandeja, kanban y avisos', () => {
       ['10:00 – 10:45', 'RESERVADA'],
     ]);
     await enviarCorreos();
-    tokenAna = tokenDe(ultimoPara('pcampos@correo.es').text, '/cita');
+    tokenAna = tokenDe(ultimoPara('pcampos@example.com').text, '/cita');
   });
 
   it('elegir devuelve la cita completa, como GET /citas/:token', async () => {
@@ -654,7 +654,7 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
 
   /** Solicitud con la entrevista ya hecha, lista para decidir (alta interna: no gasta el límite del formulario público). */
   async function evaluada(nombre: string) {
-    const email = `${nombre.toLowerCase()}.f3@correo.es`;
+    const email = `${nombre.toLowerCase()}.f3@example.com`;
     const r = await request(app)
       .post('/api/solicitudes')
       .set(auth())
@@ -832,7 +832,7 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     // Nada ha cambiado.
     expect(await ficha(nora.id)).toMatchObject({ estado: 'ENTREVISTA_REALIZADA', reserva: null });
     const recibida = (await request(app).post('/api/solicitudes').set(auth()).send({
-      viaId: viaBach, alumnaNombre: 'Sin', alumnaApellidos: 'Entrevista', tutorNombre: 'Tutor', email: 'sin.entrevista@correo.es',
+      viaId: viaBach, alumnaNombre: 'Sin', alumnaApellidos: 'Entrevista', tutorNombre: 'Tutor', email: 'sin.entrevista@example.com',
       telefono: '+34 611 399 999', centroProcedencia: 'IES Bécquer', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
     })).body;
     expect((await request(app).post(`/api/solicitudes/${recibida.id}/decision/previsualizar`).set(auth('direccion')).send({ decision: 'ADMITIDA' })).body.error.code).toBe('TRANSICION_NO_PERMITIDA');
