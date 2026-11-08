@@ -8,6 +8,7 @@ import { v, validate } from '../../middleware/validate';
 import { viasPublicas } from '../catalogo/catalogo.routes';
 import * as citacion from '../citacion/citacion.service';
 import * as documentosSrv from '../documentos/documentos.service';
+import { matriculaPublicaRouter } from '../matricula/matricula.routes';
 import * as solicitudesSrv from '../solicitudes/solicitudes.service';
 import { completarBody, solicitudPublicaBody, tokenParam } from '../solicitudes/solicitudes.schemas';
 
@@ -29,6 +30,9 @@ publicoRouter.use((_req, res, next) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   next();
 });
+
+/** Matrícula digital desde el enlace de la familia (límites propios, por enlace). */
+publicoRouter.use('/matricula', matriculaPublicaRouter);
 
 publicoRouter.get('/vias', async (_req, res) => {
   res.json(await viasPublicas());

@@ -9,6 +9,10 @@ import { revisar, type EntradaRevision } from '../src/modules/solicitudes/revisi
 import { combinarFicha, erroresFicha, faltanParaRealizada } from '../src/modules/entrevistas/ficha';
 import { aCsv, eurosCsv, fechaCsv } from '../src/lib/csv';
 import { documentoValido, normalizarDocumento } from '../src/lib/documento-identidad';
+import { borradorSchema, borradorVacio } from '../src/modules/matricula/borrador';
+import { caducidadEnlace, cursoEscolarSiguiente, formatoCodigoMatricula } from '../src/modules/matricula/dominio';
+import { jsonCanonico } from '../src/modules/matricula/matricula.service';
+import { canSubmit, enrollmentFlow, stepMissing } from '../src/modules/matricula/reglas';
 
 const base: EntradaRevision = {
   alumnaNombre: 'Lucía',
@@ -324,3 +328,34 @@ describe('CSV para Excel', () => {
   });
 });
 
+describe('Matrícula: borrador y reglas', () => {
+  const exp = () => ({ ...borradorVacio(), photo: null, documents: {}, signatures: {} });
+
+  it('el borrador vacío cumple el esquema estricto y uno con un campo de más no', () => {
+    expect(borradorSchema.safeParse(borradorVacio()).success).toBe(true);
+    expect(borradorSchema.safeParse({ ...borradorVacio(), otro: 1 }).success).toBe(false);
+  });
+
+  it('las reglas copiadas del front: flujo por vía y alumna nueva, y lo que falta por paso', () => {
+    const d = { ...exp(), via: 'gs' as const, course: '2' as const };
+    expect(enrollmentFlow(d, false)).toEqual(['student', 'family', 'annex', 'economic', 'documents', 'review']);
+    expect(enrollmentFlow({ ...d, newStudent: true }, true)).toContain('ideario');
+    expect(stepMissing(exp(), 'via')).toEqual(['via', 'course']);
+    expect(stepMissing(d, 'student')).toContain('student.nuss'); // ciclos: NUSS
+    expect(canSubmit(d)).toBe(false);
+  });
+
+  it('código, curso siguiente y caducidad del enlace', () => {
+    expect(formatoCodigoMatricula('2027-2028', 7)).toBe('M-2027-0007');
+    expect(cursoEscolarSiguiente('2026-2027')).toBe('2027-2028');
+    const ahora = new Date('2027-06-10T10:00:00Z');
+    expect(caducidadEnlace('2027-2028', ahora).toISOString()).toBe('2027-09-30T21:59:00.000Z');
+    // Matrícula tardía: al menos 30 días.
+    expect(caducidadEnlace('2027-2028', new Date('2027-09-20T10:00:00Z')).toISOString()).toBe('2027-10-20T10:00:00.000Z');
+  });
+
+  it('jsonCanonico no depende del orden de las claves (jsonb las reordena)', () => {
+    expect(jsonCanonico({ b: 1, a: { d: [1, { y: 2, x: 1 }], c: null } })).toBe(jsonCanonico({ a: { c: null, d: [1, { x: 1, y: 2 }] }, b: 1 }));
+    expect(jsonCanonico({ a: 1 })).not.toBe(jsonCanonico({ a: 2 }));
+  });
+});

@@ -8,6 +8,7 @@ import {
   correosSalientes,
   entrevistas,
   estadoAlumnaEnum,
+  matriculas,
   familiaViaEnum,
   solicitudes,
   usuarios,
@@ -22,6 +23,7 @@ import { documentoValido, normalizarDocumento } from '../../lib/documento-identi
 import { badRequest, codigoPg, conflict, notFound } from '../../lib/errors';
 import { diaLargo, fechaLocal, franja } from '../../lib/fechas';
 import { ETIQUETA_VALORACION } from '../entrevistas/ficha';
+import { ETIQUETA_ESTADO_MATRICULA } from '../matricula/dominio';
 import { siguienteValor } from '../solicitudes/comun';
 import {
   ETAPA,
@@ -205,8 +207,8 @@ async function contactosDe(tx: Tx, ids: string[]) {
 // ── Listado ──────────────────────────────────────────────────────────────────
 
 /** Minúsculas y sin tildes, en JS y en SQL igual (sin depender de la extensión unaccent). */
-const plegar = (t: string) => t.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
-const plegarSql = (col: SQL) => sql`translate(lower(${col}), 'áàäâéèëêíìïîóòöôúùüûñç', 'aaaaeeeeiiiioooouuuunc')`;
+export const plegar = (t: string) => t.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+export const plegarSql = (col: SQL) => sql`translate(lower(${col}), 'áàäâéèëêíìïîóòöôúùüûñç', 'aaaaeeeeiiiioooouuuunc')`;
 
 function filtros(q: z.infer<typeof listarAlumnasQuery>): SQL | undefined {
   const c: SQL[] = [];
@@ -352,12 +354,21 @@ async function cargar(tx: Tx, id: string, bloquear = false) {
 
 export async function detalle(id: string) {
   const a = await cargar(db, id);
-  const [cs, s, h] = await Promise.all([
+  const [cs, s, h, ms] = await Promise.all([
     db.select().from(alumnaContactos).where(eq(alumnaContactos.alumnaId, id)),
     a.solicitudId ? db.select({ id: solicitudes.id, codigo: solicitudes.codigo }).from(solicitudes).where(eq(solicitudes.id, a.solicitudId)) : Promise.resolve([]),
     historial(a),
+    db
+      .select({ id: matriculas.id, codigo: matriculas.codigo, cursoEscolar: matriculas.cursoEscolar, curso: matriculas.curso, estado: matriculas.estado })
+      .from(matriculas)
+      .where(eq(matriculas.alumnaId, id))
+      .orderBy(desc(matriculas.cursoEscolar)),
   ]);
-  return { ...vista(a, cs, s[0] ?? null), historial: h };
+  return {
+    ...vista(a, cs, s[0] ?? null),
+    matriculas: ms.map((m) => ({ ...m, estadoEtiqueta: ETIQUETA_ESTADO_MATRICULA[m.estado] })),
+    historial: h,
+  };
 }
 
 // ── Alta, edición, baja y notas ──────────────────────────────────────────────
@@ -590,6 +601,24 @@ export async function retirarAltaDeReserva(tx: Tx, solicitudId: string, usuarioI
   }
   await tx.update(alumnas).set({ estado: 'BAJA', fechaBaja: fechaLocal(new Date()), motivoBaja: MOTIVO_RESERVA_ANULADA }).where(eq(alumnas.id, a.id));
   await evento(tx, a.id, 'BAJA', usuarioId, MOTIVO_RESERVA_ANULADA, { deEstado: 'RESERVA' });
+}
+
+// ── Desde la matrícula ───────────────────────────────────────────────────────
+
+/** La matrícula cambia el estado del expediente (abrirla, exportarla). Deja el cambio en su historial. */
+export async function estadoPorMatricula(
+  tx: Tx,
+  alumnaId: string,
+  a: Exclude<Alumna['estado'], 'BAJA'>,
+  texto: string,
+  usuarioId: string | null,
+  cambios: Partial<Pick<Alumna, 'curso' | 'cursoEscolar' | 'familia'>> = {},
+) {
+  const actual = await cargar(tx, alumnaId, true);
+  if (actual.estado !== a) {
+    await evento(tx, alumnaId, 'ESTADO', usuarioId, `De «${ETIQUETA_ESTADO_ALUMNA[actual.estado]}» a «${ETIQUETA_ESTADO_ALUMNA[a]}» · ${texto}`, { deEstado: actual.estado, aEstado: a });
+  }
+  await tx.update(alumnas).set({ estado: a, ...cambios }).where(eq(alumnas.id, alumnaId));
 }
 
 // ── «Familia ya vinculada» ───────────────────────────────────────────────────

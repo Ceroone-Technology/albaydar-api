@@ -465,6 +465,49 @@ export const EVENTOS: EventoDef[] = [
       ].join('\n'),
     },
   },
+  // ── Fase 04: matrícula digital ──
+  {
+    clave: 'MATRICULA_ENLACE',
+    nombre: 'Enlace de la matrícula',
+    cuando: 'Secretaría abre la matrícula o envía un enlace nuevo',
+    destinatario: 'familia',
+    obligatorio: true,
+    disponible: true,
+    variables: [...BASE, v('curso_escolar', 'Curso escolar', '2027/28'), v('fecha_limite', 'Último día en que sirve el enlace', 'jueves 30 de septiembre'), ...ENLACE],
+    predeterminada: {
+      nombre: 'Enlace de la matrícula',
+      asunto: 'Matrícula de {{alumna}} · curso {{curso_escolar}}',
+      cuerpoHtml: [
+        '<h2>Ya pueden hacer la matrícula</h2>',
+        saludo,
+        p('Ya está abierta la matrícula de <strong>{{alumna}}</strong> en {{curso}} para el curso {{curso_escolar}}.'),
+        p('Desde su enlace personal, sin crear una cuenta, podrán completar los datos, subir los documentos y firmar. Lo que rellenen se guarda solo, así que pueden hacerlo en varias veces.'),
+        '{{boton}}',
+        p('El enlace es personal: no lo compartan. Sirve hasta el {{fecha_limite}}.'),
+      ].join('\n'),
+    },
+  },
+  {
+    clave: 'MATRICULA_ENLACE_PROGENITOR',
+    nombre: 'Enlace para la firma del otro progenitor',
+    cuando: 'Secretaría envía un enlace al otro progenitor para que firme',
+    destinatario: 'familia',
+    obligatorio: true,
+    disponible: true,
+    variables: [...BASE, v('curso_escolar', 'Curso escolar', '2027/28'), v('fecha_limite', 'Último día en que sirve el enlace', 'jueves 30 de septiembre'), ...ENLACE],
+    predeterminada: {
+      nombre: 'Firma del otro progenitor',
+      asunto: 'Su firma en la matrícula de {{alumna}}',
+      cuerpoHtml: [
+        '<h2>Necesitamos su firma</h2>',
+        saludo,
+        p('En la matrícula de <strong>{{alumna}}</strong> para el curso {{curso_escolar}} hay documentos que debe firmar usted: la información sobre protección de datos y sus autorizaciones.'),
+        p('Desde este enlace podrá leerlos y firmarlos, sin crear una cuenta.'),
+        '{{boton}}',
+        p('El enlace es personal: no lo comparta. Sirve hasta el {{fecha_limite}}.'),
+      ].join('\n'),
+    },
+  },
   // ── Fases siguientes: se guardan como borrador para editarlas desde ya ──
   {
     clave: 'MATRICULA_CONFIRMADA',

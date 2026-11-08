@@ -552,6 +552,121 @@ La ficha añade `historial`, del más reciente al más antiguo:
 - `COBRO`: concepto, importe, recibo y forma de pago, también los anulados.
 - `NOTA`: notas internas.
 
+La ficha añade también `matriculas`: `[{ id, codigo, cursoEscolar, curso, estado, estadoEtiqueta }]`, la más reciente primero.
+
+## Matrícula digital
+
+Fase 04, primera entrega (08/11/2026): apertura, renovación 1º → 2º, borrador con versión, páginas leídas y enlaces de la familia. Lo que falta (archivos, documentos con huella, firmas, mandatos SEPA, envío, PDF y Séneca) llega en las siguientes. Diseño completo en `docs/matricula.md`.
+
+### Secretaría
+
+| Método | Ruta | Permiso | Uso |
+|---|---|---|---|
+| GET | `/matriculas?q=&estado=&cursoEscolar=&familia=&curso=&page=&pageSize=` | matricula.ver | Listado, lo último guardado primero. `q` busca en nombre, apellidos y expediente de la alumna y en el código de la matrícula, sin importar tildes |
+| POST | `/matriculas` | matricula.editar | `{ alumnaId, enviarEnlace? }`: abre la matrícula (201) |
+| POST | `/matriculas/renovacion` | matricula.editar | `{ familia, cursoEscolar, alumnaIds?, enviarEnlace? }`: abre en bloque la de 2º |
+| GET | `/matriculas/:id` | matricula.ver | Ficha con `enlaces` e `historial` |
+| PUT | `/matriculas/:id` | matricula.editar | `{ borrador, version }`: guarda el borrador |
+| POST | `/matriculas/:id/paginas-leidas` | matricula.editar | `{ paginas: ["lopd-1", …] }` (Modo firma con la familia delante) |
+| POST | `/matriculas/:id/enlaces` | matricula.editar | `{ alcance, progenitor?, enviar?, email? }`: enlace nuevo (201) |
+| DELETE | `/matriculas/:id/enlaces/:enlaceId` | matricula.editar | Anula un enlace. Devuelve la ficha |
+
+**Abrir** (`POST /matriculas`) depende del estado del expediente:
+
+| Expediente | Matrícula |
+|---|---|
+| «Reserva confirmada» o «En proceso» (admisión, alta manual, Séneca) | Su curso escolar y curso, alumna nueva. El expediente pasa a «En proceso» |
+| «Matriculada» en 1º | **Renovación:** 2º del curso escolar siguiente, alumna que continúa (sin ideario ni LOPD). Se precarga con su matrícula de 1º. El expediente sigue «Matriculada» |
+
+- **Errores:** 409 `MATRICULA_YA_EXISTE` (una por alumna y curso escolar), `ALUMNA_DE_BAJA`, `SIN_CURSO_SIGUIENTE` (ya está en 2º) y `NO_PROMOCIONA` (`promociona: false` en el expediente; `null` sí se abre).
+- **Enlace:** siempre se crea el enlace de la familia. Con `enviarEnlace` (por defecto `true`) se envía `MATRICULA_ENLACE` al primer contacto con correo, empezando por el principal.
+- **Respuesta:** `{ matricula, enlace: { id, alcance, progenitor, url, enviadoA, expiraEn } }`. `url` solo se devuelve aquí (en la BD queda el hash del token): secretaría la puede copiar si la familia no tiene correo. `enviadoA` es `null` si no se envió.
+- **Borrador inicial (alumnado nuevo):**
+  - del expediente: nombre, apellidos (con dos palabras exactas se separan en primer y segundo apellido; si no, todo va al primero), DNI, nacimiento (`dd/mm/aaaa`), correo, teléfono y domicilio, vía y curso;
+  - los dos primeros contactos pasan a ser la madre o tutora y el padre o tutor;
+  - de la solicitud: el centro de procedencia;
+  - `annex.minor`, por la fecha de nacimiento si la hay.
+- **Borrador de la renovación:** copia el de 1º, con curso `2`, la modalidad de 1º como `previousModality`, materias vacías, Albaydar como curso anterior y la promoción del expediente. Se vacían las becas, los documentos en papel, las páginas leídas y la declaración. Se conservan la familia y la cuenta.
+
+**Renovación en bloque** (`POST /matriculas/renovacion`):
+- **A quién incluye:** alumnas «Matriculada» de 1º de esa `familia` y `cursoEscolar` (el que termina) con `promociona: true`. Con `alumnaIds`, solo esas, sin mirar `promociona`.
+- **Transacciones:** cada alumna va en la suya, así que una que falle no frena al resto.
+- **Respuesta:** `{ creadas: [{ alumnaId, expediente, matriculaId, codigo, enlaceEnviadoA }], omitidas: [{ alumnaId, expediente, motivo }] }`.
+
+**Cada matrícula** (ficha de secretaría):
+
+```json
+{
+  "id": "uuid", "codigo": "M-2027-0001", "estado": "BORRADOR", "estadoEtiqueta": "Borrador",
+  "cursoEscolar": "2027-2028", "familia": "BACHILLERATO", "curso": 1, "cursoEtiqueta": "Bachillerato 1º", "nuevaAlumna": true,
+  "version": 3,
+  "alumna": { "id": "uuid", "expediente": "EXP-2026-0008", "nombreCompleto": "Carmen Márquez Peña" },
+  "solicitud": { "id": "uuid", "codigo": "B-2026-0006" },
+  "borrador": { "via": "bach", "course": "1", "newStudent": null, "student": { … }, "…": "…", "photo": null, "documents": {}, "signatures": {}, "readPages": { "lopd-1": true } },
+  "pendientes": { "student": ["student.birthDate"], "ideario": ["signature.ideario", "lopd.dop", "signature.lopd"] },
+  "puedeEnviar": false,
+  "documentos": { "done": 1, "total": 6 },
+  "guardado": { "en": "…", "por": "familia | secretaria", "nombre": "María Reyes" },
+  "enviadaEn": null, "exportadaEn": null, "devuelta": null,
+  "creadaEn": "…", "actualizadaEn": "…",
+  "enlaces": [{ "id": "uuid", "alcance": "FAMILIA", "progenitor": null, "enviadoA": "familia@example.com", "expiraEn": "…", "revocadoEn": null, "ultimoUsoEn": "…", "creadoEn": "…", "activo": true }],
+  "historial": [{ "id": "uuid", "tipo": "CREADA | ENLACE | ENLACE_ANULADO | EDITADA", "texto": "Cambia: datos de la alumna, familia", "fecha": "…", "autor": "Familia" }]
+}
+```
+
+- **`borrador`:** tiene **la forma exacta de `EnrollmentDraft` del front**, con sus nombres en inglés. Las reglas de la API son una copia de `enrollment.rules.ts` (`src/modules/matricula/reglas.ts`).
+  - `photo`, `documents` y `signatures` los pone el servidor: hoy siempre vacíos; se llenan con la entrega de archivos y firmas.
+  - `readPages` sale de las páginas leídas guardadas.
+- **`pendientes`:** lo que falta en cada paso del flujo, con la vía como primer paso (`stepMissing`). Solo trae los pasos incompletos, y vacío significa que se puede enviar (`puedeEnviar`).
+- **`documentos`:** el progreso del checklist (`checklistProgress`).
+- **Listado:** cada fila trae lo mismo sin `borrador`, `pendientes`, `enlaces` ni `historial`, y con `alumna: { id, expediente, nombreCompleto }`.
+- **`historial`:** la familia y cada usuario de secretaría tienen **un evento `EDITADA` por sesión de trabajo** (15 min), con las partes tocadas y nunca los valores. Así el autoguardado no llena el historial.
+
+### Guardar el borrador y la versión
+
+`PUT /matriculas/:id` (secretaría) y `PUT /public/matricula/:token` (familia) reciben `{ borrador, version }`.
+
+- **`borrador`:** completo, como lo tiene el front. Se aceptan `photo`, `documents` y `signatures`, pero se ignoran.
+- **Validación:** objetos estrictos. Un campo desconocido, un valor fuera de catálogo (`via: "eso"`) o un texto demasiado largo dan 400 con su ruta. Los textos no se validan al guardar (el borrador se guarda a medias): lo obligatorio está en `pendientes`.
+- **Versión:**
+  - `version` tiene que ser la actual. Si otro guardó antes: 409 `VERSION_ANTIGUA`, con `details: { version, guardadoPor: "familia" | "secretaria", guardadoPorNombre, guardadoEn }` y un `message` listo para el aviso («La familia ha cambiado esta matrícula mientras la tenías abierta. Recarga para ver sus cambios.»).
+  - El front detiene el autoguardado y ofrece recargar; no mezcla nada.
+  - Toda respuesta trae la `version` nueva. Un guardado **sin cambios no sube la versión**, así que el autoguardado puede repetir.
+- **Lo que la familia no cambia:** desde el enlace, la API conserva la vía, el curso, `newStudent` y `manualChecks` (los documentos en papel), aunque lleguen cambiados. Eso lo decide secretaría.
+- **Matrícula ya enviada o exportada:**
+  - la familia recibe 409 `MATRICULA_ENVIADA` en cuanto la matrícula deja de ser borrador;
+  - secretaría puede seguir editando una `ENVIADA`; una `EXPORTADA`, ya no (409 `MATRICULA_EXPORTADA`).
+
+**Páginas leídas** (Modo firma):
+- **Hora:** cuando una página pasa a leída, se guarda con la hora del servidor. Nunca se quitan; un `false` no las borra.
+- **Páginas válidas:** solo cuentan las que existen (`impreso-1`, `lopd-1`…`lopd-7`…). El resto se ignora, y una clave mal formada da 400.
+- **Dos vías:**
+  - en el `PUT`, dentro de `borrador.readPages`;
+  - con `POST …/paginas-leidas { paginas }`, que **no sube la versión**. Así un progenitor puede leer mientras la familia rellena, sin conflictos.
+
+### Enlaces de la familia
+
+- **Alcance `FAMILIA`:** todo el asistente. Es el que se crea al abrir la matrícula.
+- **Alcance `PROGENITOR`:** con `progenitor: "padre" | "madre"`. El borrador le llega en solo lectura (`soloLectura: true`): puede marcar páginas leídas y, cuando existan las firmas, firmar sus huecos de la LOPD. Si se envía, el correo (`MATRICULA_ENLACE_PROGENITOR`) es obligatorio.
+- **Enlace nuevo:** sustituye al anterior del mismo alcance y progenitor. El anterior responde 410 `ENLACE_SUSTITUIDO`.
+- **Envío:**
+  - con `enviar: false` solo se crea, y la `url` de la respuesta se puede copiar;
+  - con `enviar` y sin `email`, el de `FAMILIA` va al contacto principal (400 `SIN_CORREO` si no hay ninguno).
+- **Cuándo se puede crear:** solo con la matrícula en `BORRADOR`.
+- **Caducidad:** el 30 de septiembre del curso de la matrícula (a las 23:59 de Madrid), y nunca antes de 30 días desde que se crea. Caducado, 410 `ENLACE_CADUCADO`. Un token que no existe es 404 `ENLACE_NO_VALIDO`.
+
+### Familia (sin login)
+
+| Método | Ruta | Límite (por enlace) | Uso |
+|---|---|---|---|
+| GET | `/public/matricula/:token` | 600 cada 15 min | La matrícula |
+| PUT | `/public/matricula/:token` | 900 cada 15 min | `{ borrador, version }` |
+| POST | `/public/matricula/:token/paginas-leidas` | 900 cada 15 min | `{ paginas }` |
+
+- **Límites:** cuentan por enlace (el hash del token), no por IP, porque una red de colegio o de casa comparte IP. Los tokens inexistentes o caducados (404/410) cuentan aparte, por IP: 120 cada 15 min. Pasado el límite: 429 `DEMASIADAS_PETICIONES`.
+- **Cabeceras:** `Cache-Control: no-store` y `Referrer-Policy: no-referrer`, como el resto de enlaces.
+- **Respuesta:** la misma ficha sin `enlaces` ni `historial`, con `alumna: { nombreCompleto }`, `solicitud: { codigo }`, `enlace: { alcance, progenitor, expiraEn }` y `soloLectura` (enviada, exportada o enlace de progenitor).
+
 ## Comunicaciones: plantillas de correo
 
 Todos los correos salen de plantillas HTML editables, una **activada** por evento. El cuerpo es HTML con variables `{{alumna}}`; se envuelve automáticamente en el diseño común (logo, colores y pie del centro).
@@ -594,6 +709,8 @@ Reglas:
 | `RECORDATORIO_PAGO` | Reserva sin pagar a 3 días del plazo (uno solo) | Activada |
 | `PAGO_RECIBIDO` | Se registra un cobro de la reserva: importe, recibo y si la plaza queda reservada o cuánto falta (`{{situacion}}`) | Activada |
 | `RESERVA_VENCIDA` | Pasa el plazo sin pagar (a secretaría y administración) | Activada |
+| `MATRICULA_ENLACE` | Se abre la matrícula o se envía un enlace nuevo a la familia | Activada · imprescindible |
+| `MATRICULA_ENLACE_PROGENITOR` | Enlace al otro progenitor para que firme | Activada · imprescindible |
 | `MATRICULA_CONFIRMADA` | Fase 04 (texto del mockup) | Borrador |
 
 Al arrancar, una plantilla de una fase que ya está construida y que sigue en borrador **sin haberse editado nunca** se sustituye por la predeterminada actual y se activa. Si el centro ya la ha tocado, no se cambia.
@@ -625,4 +742,5 @@ Base `PUBLIC_APP_URL`. Deben existir en Angular y ser públicas:
 
 - `/cita/:token` → página "Albaydar Cita"
 - `/solicitud/completar/:token` → completar solicitud
+- `/matricula/:token` → asistente de matrícula de la familia (pendiente en el front)
 - `/admision?ref=B-…` (o `C-…`) → solicitud en la bandeja (aviso interno a secretaría)
