@@ -233,7 +233,7 @@ Filtros rápidos del kanban (solo se aplican con `=true`):
 | Filtro | Qué devuelve |
 |---|---|
 | `notasPendientes=true` | "Entrevista sin notas": entrevista programada sin boletín |
-| `familiaVinculada=true` | "Familia ya vinculada": la misma regla que la comprobación de la revisión (familia conocida, u otra solicitud con el mismo correo o teléfono; un correo vacío no cuenta) |
+| `familiaVinculada=true` | "Familia ya vinculada": la misma regla que la comprobación de la revisión (familia conocida, una alumna del centro que no esté de baja con un contacto con ese correo o teléfono, u otra solicitud con el mismo correo o teléfono; un correo vacío no cuenta, y la alumna que nació de esa misma solicitud tampoco) |
 | `reservaPorVencer=true` | "Reserva por vencer": reserva pendiente a 3 días o menos del plazo, o vencida |
 | `estado=EN_ESPERA` | "En lista de espera" |
 
@@ -465,6 +465,93 @@ Respuesta de registrar y anular: `{ cobro, reserva }`. Cada `cobro`:
 
 `anulado`, si lo está: `{ en, motivo, por }`. En el listado cada cobro trae además `solicitud { id, codigo, alumna, via }`.
 
+## Alumnado
+
+Expedientes, familias e histórico de interacciones (pantalla Alumnado del mockup).
+
+| Método | Ruta | Permiso | Uso |
+|---|---|---|---|
+| GET | `/alumnado?q=&familia=&curso=&cursoEscolar=&estado=&promociona=&page=&pageSize=` | alumnado.ver | Listado ordenado por apellidos. `q` busca en nombre y apellidos (también «Apellidos, Nombre»), DNI/NIE y expediente, sin importar tildes ni mayúsculas. `pageSize` por defecto 25, máximo 200 |
+| GET | `/alumnado/exportar` (mismos filtros) | alumnado.ver | CSV (ver Exportaciones) |
+| GET | `/alumnado/:id` | alumnado.ver | Ficha con contactos e `historial` |
+| POST | `/alumnado` | alumnado.editar | Alta manual (201, devuelve la ficha) |
+| PATCH | `/alumnado/:id` | alumnado.editar | Editar datos, contactos o estado. Devuelve la ficha |
+| POST | `/alumnado/:id/baja` | alumnado.editar | `{ motivo, fecha? }` (fecha por defecto hoy, nunca futura). 409 `YA_DE_BAJA` |
+| POST | `/alumnado/:id/notas` | alumnado.editar | `{ texto }`: nota interna en el historial (201, devuelve la ficha) |
+
+**Estados** (textos y tonos del mockup):
+
+| `estado` | `estadoEtiqueta` | `estadoTono` | Cuándo |
+|---|---|---|---|
+| `RESERVA` | Reserva confirmada | blue | Al pagar la reserva de plaza |
+| `EN_PROCESO` | En proceso | amber | Matrícula en curso (también el alumnado que asigna la Junta) |
+| `MATRICULADA` | Matriculada | green | Alumna del centro |
+| `BAJA` | Baja | gray | Con `baja: { fecha, motivo }` |
+
+Mientras no exista la matrícula digital, secretaría cambia el estado con `PATCH { estado }` (`RESERVA`, `EN_PROCESO` o `MATRICULADA`). En una baja, ese mismo PATCH la reactiva. La baja va por su propia ruta, porque exige motivo.
+
+**De dónde sale un expediente** (`origen`):
+- `ADMISION`: lo crea solo el cobro que completa la reserva, en la misma operación. Lleva el nombre, la vía y la modalidad de la solicitud, y el tutor como contacto principal (parentesco «Madre, padre o tutor»). DNI, nacimiento y domicilio quedan vacíos: la solicitud no los recoge. Si se anula ese cobro, el expediente se borra si nadie lo ha tocado; si tiene notas o cambios, pasa a baja con el motivo «Reserva anulada…», y vuelve a «Reserva confirmada» si se paga otra vez.
+- `MANUAL`: `POST /alumnado`.
+- `SENECA`: reservado para la importación de Séneca (aún no existe).
+
+Cuerpo del alta (`POST /alumnado`):
+
+```json
+{
+  "nombre": "Julia", "apellidos": "Herrera Cifuentes", "documento": "49218735T", "fechaNacimiento": "2010-06-02",
+  "email": null, "telefono": null, "domicilio": "C/ Feria 12, 41003 Sevilla",
+  "familia": "BACHILLERATO", "curso": 1, "cursoEscolar": "2026-2027", "estudios": "Ciencias y Tecnología",
+  "estado": "MATRICULADA", "promociona": null,
+  "contactos": [
+    { "parentesco": "Madre", "nombre": "Lucía Cifuentes Mora", "telefono": "+34 699 100 200", "email": "lcifuentes@example.com", "principal": true }
+  ]
+}
+```
+
+- **Obligatorios:** nombre, apellidos, `documento`, `fechaNacimiento`, `familia`, `curso` (1 o 2), `cursoEscolar` (`2026-2027`) y `estado`.
+- **`documento`:** DNI o NIE con su letra de control. Se guarda normalizado (`49.218.735-t` → `49218735T`). Es único: si ya existe, 409 `DOCUMENTO_DUPLICADO` con `details.expediente` del que lo tiene.
+- **Contactos:**
+  - como mucho 6, y cada uno con parentesco, nombre y teléfono;
+  - el correo es opcional (`''` cuenta como vacío) y se guarda en minúsculas;
+  - como mucho uno `principal` (si no, 400 `VARIOS_CONTACTOS_PRINCIPALES`); si no se marca ninguno, lo es el primero.
+- **Expediente:** `EXP-AAAA-NNNN` (formato del mockup), correlativo por año de alta. Lo pone la API.
+
+`PATCH /alumnado/:id`: los mismos campos, todos opcionales. `null` borra un dato opcional. `contactos`, si llega, sustituye la lista entera. Un campo desconocido (p. ej. `expediente`) da 400.
+
+Cada expediente (listado y ficha):
+
+```json
+{
+  "id": "uuid", "expediente": "EXP-2026-0001",
+  "nombre": "Clara", "apellidos": "Márquez Peña", "nombreCompleto": "Clara Márquez Peña",
+  "documento": "49218734E", "email": null, "telefono": null, "fechaNacimiento": "2009-04-12", "domicilio": "C/ Asunción 18, 41011 Sevilla",
+  "familia": "BACHILLERATO", "familiaEtiqueta": "Bachillerato", "etapa": "Bachillerato",
+  "curso": 2, "cursoEtiqueta": "Bachillerato 2º", "cursoEscolar": "2026-2027", "estudios": "Ciencias y Tecnología",
+  "estado": "MATRICULADA", "estadoEtiqueta": "Matriculada", "estadoTono": "green",
+  "origen": "MANUAL", "origenEtiqueta": "Alta manual", "promociona": null,
+  "fechaAlta": "2026-09-01", "baja": null, "solicitud": null,
+  "contactos": [{ "id": "uuid", "parentesco": "Madre", "nombre": "Elena Peña Ríos", "telefono": "+34 622 418 903", "email": "epena@example.com", "principal": true }],
+  "creadaEn": "…", "actualizadaEn": "…"
+}
+```
+
+- `contactos` viene con el principal primero.
+- `solicitud`: `{ id, codigo }` de la solicitud de origen, si la hay.
+- `promociona`: la renovación 1º → 2º (`null` = sin decidir).
+
+La ficha añade `historial`, del más reciente al más antiguo:
+
+```json
+{ "id": "…", "fecha": "…", "tipo": "REGISTRO | CORREO | ENTREVISTA | COBRO | NOTA", "titulo": "Reserva de plaza · 300,00 €", "descripcion": "Recibo R-2026-0003 · Transferencia · pagado el 05/11/2026", "autor": "Administración" }
+```
+
+- `REGISTRO`: alta, cambios de datos («Cambia: domicilio, contactos de la familia», nunca los valores), cambios de estado, bajas y reactivaciones, y «Solicitud recibida».
+- `CORREO`: los correos a la familia de la solicitud de origen, con el asunto y el destinatario.
+- `ENTREVISTA`: fecha, lugar, valoración de la ficha y observaciones.
+- `COBRO`: concepto, importe, recibo y forma de pago, también los anulados.
+- `NOTA`: notas internas.
+
 ## Comunicaciones: plantillas de correo
 
 Todos los correos salen de plantillas HTML editables, una **activada** por evento. El cuerpo es HTML con variables `{{alumna}}`; se envuelve automáticamente en el diseño común (logo, colores y pie del centro).
@@ -521,6 +608,7 @@ Cada listado tiene su descarga con **los mismos filtros y permisos**, sin pagina
 | `GET /entrevistas/exportar` | entrevistas.ver | los de `GET /entrevistas` (`desde` y `hasta` obligatorios); sin las fechas sin confirmar | cita, familia, boletín y la ficha completa con observaciones |
 | `GET /reservas/exportar` | cobros.ver o evaluacion.ver | los de `GET /reservas` (`porVencer`, `estado`, `q`) | alumna, familia, estado, fechas, importe, pagado y pendiente |
 | `GET /cobros/exportar` | cobros.ver | los de `GET /cobros` (`desde`, `hasta`, `metodo`, `incluirAnulados`…) | recibo, fecha, alumna, concepto, forma de pago, importe (los anulados en su propia columna), anulación y quién lo registró |
+| `GET /alumnado/exportar` | alumnado.ver | los de `GET /alumnado` (`q`, `familia`, `curso`, `cursoEscolar`, `estado`, `promociona`) | expediente, alumna, DNI/NIE, nacimiento, etapa, curso, estudios, estado, promoción, contacto principal, datos de la alumna, origen, solicitud, alta y baja |
 
 Formato pensado para abrir con doble clic en Excel en español: separador `;`, coma decimal, BOM UTF-8, CRLF, fechas `dd/mm/aaaa` (y hora de Madrid), importes en euros sin símbolo y Sí/No. Una celda que empieza por `= + - @` lleva un apóstrofo delante (inyección de fórmulas); los teléfonos `+34 …`, un espacio. Cada exportación queda en el log (usuario, tipo, filas y nombres de los filtros, sin sus valores).
 

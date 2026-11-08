@@ -90,3 +90,14 @@
 26. **Volver a firmar si cambian los datos.** Un documento firmado no puede decir otra cosa que lo que se firmó. Si secretaría corrige un dato que sale en un documento ya firmado (por ejemplo, el teléfono en el impreso o la cuenta en la orden SEPA), la firma se anula y la familia tiene que volver a firmar ese documento. ¿Lo veis bien?
 27. **Alumnas que hoy están en 1º.** Para abrir su matrícula de 2º desde la plataforma necesitamos cargarlas una vez. Pedimos un listado sacado de Séneca, en CSV o Excel, que indique también si promocionan. El mismo importador servirá para el alumnado que asigna la Junta.
 28. **Fichero de Séneca.** Formato oficial con el que secretaría carga hoy la matrícula en Séneca, o un fichero de ejemplo. Mientras tanto, la exportación es un CSV provisional.
+
+**Alumnado** (propuesto el 08/11/2026)
+
+29. **Número de expediente.** Cada alumna recibe un número de expediente `EXP-2026-0001`, como en el mockup, correlativo por año de alta. ¿El centro ya numera los expedientes de otra forma (por ejemplo, con el número de Séneca)? Si es así, usamos el suyo.
+30. **Estados del alumnado.** Usamos los del mockup:
+    - «Reserva confirmada»: plaza pagada;
+    - «En proceso»: matrícula en curso;
+    - «Matriculada»;
+    - «Baja», con motivo.
+
+    El expediente se abre solo al pagar la reserva, con los datos de la solicitud. El DNI, la fecha de nacimiento y el domicilio los completa secretaría o la matrícula, porque la solicitud no los pide. Si se anula el pago de la reserva, el expediente se retira. ¿Os parece bien?
