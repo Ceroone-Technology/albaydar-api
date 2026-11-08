@@ -556,7 +556,12 @@ La ficha añade también `matriculas`: `[{ id, codigo, cursoEscolar, curso, esta
 
 ## Matrícula digital
 
-Fase 04, primera entrega (08/11/2026): apertura, renovación 1º → 2º, borrador con versión, páginas leídas y enlaces de la familia. Lo que falta (archivos, documentos con huella, firmas, mandatos SEPA, envío, PDF y Séneca) llega en las siguientes. Diseño completo en `docs/matricula.md`.
+Fase 04, entregas 1 y 2 (08/11/2026):
+- apertura y renovación 1º → 2º;
+- borrador con versión, páginas leídas y enlaces de la familia;
+- documentos rellenados con huella, firmas y mandatos SEPA.
+
+Lo que falta (archivos, envío, PDF y Séneca) llega en la entrega 3. Diseño completo en `docs/matricula.md`.
 
 ### Secretaría
 
@@ -568,6 +573,11 @@ Fase 04, primera entrega (08/11/2026): apertura, renovación 1º → 2º, borrad
 | GET | `/matriculas/:id` | matricula.ver | Ficha con `enlaces` e `historial` |
 | PUT | `/matriculas/:id` | matricula.editar | `{ borrador, version }`: guarda el borrador |
 | POST | `/matriculas/:id/paginas-leidas` | matricula.editar | `{ paginas: ["lopd-1", …] }` (Modo firma con la familia delante) |
+| GET | `/matriculas/:id/documentos/:doc` | matricula.ver | Documento rellenado con su huella (ver «Documentos y firmas») |
+| POST | `/matriculas/:id/firmas/:hueco` | matricula.editar | `{ imagen, huella }`: firma en secretaría con la familia delante (201, devuelve la ficha) |
+| DELETE | `/matriculas/:id/firmas/:hueco` | matricula.editar | «Borrar» la firma (se anula con motivo). Devuelve la ficha |
+| GET | `/matriculas/configuracion` | matricula.ver o configuracion.ver | Acreedores SEPA |
+| PUT | `/matriculas/configuracion` | configuracion.editar | Guarda los acreedores SEPA |
 | POST | `/matriculas/:id/enlaces` | matricula.editar | `{ alcance, progenitor?, enviar?, email? }`: enlace nuevo (201) |
 | DELETE | `/matriculas/:id/enlaces/:enlaceId` | matricula.editar | Anula un enlace. Devuelve la ficha |
 
@@ -606,6 +616,8 @@ Fase 04, primera entrega (08/11/2026): apertura, renovación 1º → 2º, borrad
   "pendientes": { "student": ["student.birthDate"], "ideario": ["signature.ideario", "lopd.dop", "signature.lopd"] },
   "puedeEnviar": false,
   "documentos": { "done": 1, "total": 6 },
+  "firmas": [{ "hueco": "sepa-titular", "documento": "sepa", "estado": "VALIDA | DESACTUALIZADA | ANULADA", "firmadaEn": "…", "motivo": "Cambió: Número de cuenta · IBAN", "enlace": { "alcance": "FAMILIA", "progenitor": null }, "enSecretaria": false }],
+  "mandatos": [{ "referencia": "M-2027-0001-SEPA1", "tipo": "SEPA", "secuencia": "RCUR", "esquema": "CORE", "acreedor": { "identificador": "ES09000G41829037", "nombre": "Albaydar" }, "iban": "ES9121000418450200051332", "bic": null, "titular": "Elena Peña Ríos", "titularDocumento": "12345678Z", "fechaFirma": "2027-06-12", "estado": "VIGENTE", "anulado": null }],
   "guardado": { "en": "…", "por": "familia | secretaria", "nombre": "María Reyes" },
   "enviadaEn": null, "exportadaEn": null, "devuelta": null,
   "creadaEn": "…", "actualizadaEn": "…",
@@ -615,7 +627,7 @@ Fase 04, primera entrega (08/11/2026): apertura, renovación 1º → 2º, borrad
 ```
 
 - **`borrador`:** tiene **la forma exacta de `EnrollmentDraft` del front**, con sus nombres en inglés. Las reglas de la API son una copia de `enrollment.rules.ts` (`src/modules/matricula/reglas.ts`).
-  - `photo`, `documents` y `signatures` los pone el servidor: hoy siempre vacíos; se llenan con la entrega de archivos y firmas.
+  - `photo`, `documents` y `signatures` los pone el servidor. `signatures` trae solo las firmas que **valen**, como `{ "sepa-titular": { "signedAt": "…" } }`, sin la imagen (va con el documento). `photo` y `documents` siguen vacíos hasta la entrega 3.
   - `readPages` sale de las páginas leídas guardadas.
 - **`pendientes`:** lo que falta en cada paso del flujo, con la vía como primer paso (`stepMissing`). Solo trae los pasos incompletos, y vacío significa que se puede enviar (`puedeEnviar`).
 - **`documentos`:** el progreso del checklist (`checklistProgress`).
@@ -662,10 +674,117 @@ Fase 04, primera entrega (08/11/2026): apertura, renovación 1º → 2º, borrad
 | GET | `/public/matricula/:token` | 600 cada 15 min | La matrícula |
 | PUT | `/public/matricula/:token` | 900 cada 15 min | `{ borrador, version }` |
 | POST | `/public/matricula/:token/paginas-leidas` | 900 cada 15 min | `{ paginas }` |
+| GET | `/public/matricula/:token/documentos/:doc` | 600 cada 15 min | Documento rellenado con su huella |
+| POST | `/public/matricula/:token/firmas/:hueco` | 60 por hora | `{ imagen, huella }` (201) |
+| DELETE | `/public/matricula/:token/firmas/:hueco` | 60 por hora | «Borrar» la firma |
 
 - **Límites:** cuentan por enlace (el hash del token), no por IP, porque una red de colegio o de casa comparte IP. Los tokens inexistentes o caducados (404/410) cuentan aparte, por IP: 120 cada 15 min. Pasado el límite: 429 `DEMASIADAS_PETICIONES`.
 - **Cabeceras:** `Cache-Control: no-store` y `Referrer-Policy: no-referrer`, como el resto de enlaces.
-- **Respuesta:** la misma ficha sin `enlaces` ni `historial`, con `alumna: { nombreCompleto }`, `solicitud: { codigo }`, `enlace: { alcance, progenitor, expiraEn }` y `soloLectura` (enviada, exportada o enlace de progenitor).
+- **Respuesta:** la misma ficha sin `enlaces` ni `historial`, con `alumna: { nombreCompleto }`, `solicitud: { codigo }`, `enlace: { alcance, progenitor, expiraEn }` y `soloLectura` (enviada, exportada o enlace de progenitor). En `mandatos`, el IBAN va enmascarado (`ES91 **** **** **** **** 1332`) y sin el DNI del titular.
+
+### Documentos y firmas
+
+Los cinco documentos (`impreso`, `ideario`, `lopd`, `sepa`, `plus`) los da la API, rellenados con los datos de la matrícula: el lector del front pinta lo que recibe y deja de usar sus propios textos. Los textos legales están en `src/modules/matricula/documentos/textos.ts`, versionados (`lopd@2026-1`); no se editan desde Comunicaciones.
+
+**`GET …/documentos/:doc`:**
+
+```json
+{
+  "id": "lopd", "version": "lopd@2026-1", "nombre": "Autorización LOPD, cesión de datos y otros", "nota": "Seis firmas · páginas 4, 5 y 6",
+  "membrete": { "nombre": "CENTRO EDUCATIVO ALBAYDAR", "direccion": "Avda. de la Palmera, 36 · 41012 Sevilla · T 954 61 02 54" },
+  "huella": "64 caracteres hexadecimales (SHA-256)",
+  "paginas": [
+    {
+      "numero": 4,
+      "bloques": [
+        { "tipo": "titulo", "texto": "AUTORIZACIONES · continuación" },
+        { "tipo": "casillas", "opciones": [{ "etiqueta": "Atención médica · datos de salud", "texto": "…", "marcada": true, "estado": "Autoriza", "campo": "lopd.authorizations.a9" }] }
+      ],
+      "firma": {
+        "titulo": "Firma de las autorizaciones", "aviso": "Ambas firmas son obligatorias", "declaracion": "He leído el documento completo y lo firmo.",
+        "huecos": [{ "id": "lopd-padre", "etiqueta": "FIRMA DEL PADRE / TUTOR", "subtitulo": null }, { "id": "lopd-madre", "etiqueta": "FIRMA DE LA MADRE / TUTORA", "subtitulo": null }]
+      }
+    }
+  ],
+  "paginasLeidas": ["lopd-1", "lopd-2"],
+  "puedeFirmar": false,
+  "firmas": { "lopd-madre": { "firmadaEn": "…", "imagen": "data:image/png;base64,…" } }
+}
+```
+
+- **Bloques:**
+  - `titulo`, `subtitulo`, `parrafo` y `nota`, con `texto`;
+  - `campos` (`titulo`, y cada campo con `etiqueta`, `valor`, `campo?` y `ancho?`);
+  - `casillas` (opciones múltiples);
+  - `opcion` (una sola: la DOP o la modalidad de pago, con `campo`, `aviso` y opciones con `valor`);
+  - `tabla` (`filas: [{ clave, valor }]`);
+  - `fecha`, con su `plantilla` y su `texto`.
+- **Lo que se corrige desde el documento:** un campo o una casilla con `campo` se puede corregir desde el propio documento. `campo` es la ruta del borrador (`economic.sepa.iban`, `lopd.authorizations.a12`, `lopd.dop`…). El front cambia el borrador, lo guarda (`PUT`) y vuelve a pedir el documento, porque su huella cambia.
+- **Fecha:** es la de la primera firma válida del documento o, sin firmar, la de hoy (en hora de Madrid). **No entra en la huella:** la prueba de cuándo se firmó es la hora de la firma.
+- **Firmas:** `firmas` trae solo las que valen de ese documento, con la imagen.
+- **Disponibilidad:** un documento que no forma parte de la matrícula responde 404 `DOCUMENTO_NO_APLICA` (p. ej. AlbaydarPLUS en Bachillerato). Un enlace de progenitor solo puede ver la LOPD (403 `ENLACE_SIN_PERMISO`).
+
+**Huella:** SHA-256 del documento en JSON canónico (claves ordenadas): el id, la versión del texto y todo lo que se ve, salvo el texto de la fecha. Cualquier dato que salga en el documento la cambia; un dato que no sale, no.
+
+**Firmar** (`POST …/firmas/:hueco`, `{ imagen, huella }`):
+- **`imagen`:** PNG en data URL (se comprueba la firma de bytes), de 200 KB como máximo. La ruta tiene su propio límite de cuerpo (300 KB), no el general de 200 KB.
+- **`huella`:** la del documento que se está viendo.
+- **Comprobaciones, en orden:**
+  1. la matrícula está en `BORRADOR` (409 `MATRICULA_ENVIADA`);
+  2. con un enlace de progenitor, el hueco es suyo (403 `ENLACE_SIN_PERMISO`): el padre firma `lopd-padre`, `lopd-img-padre` y `lopd-pd-padre`;
+  3. la imagen es válida (400 `FIRMA_NO_VALIDA`);
+  4. el documento forma parte de la matrícula (409 `DOCUMENTO_NO_APLICA`);
+  5. está leído entero (409 `DOCUMENTO_SIN_LEER`, con `details.faltan: ["lopd-3", …]`);
+  6. la LOPD tiene la DOP elegida y la orden SEPA, la modalidad de pago (409 `FALTAN_DATOS`);
+  7. en la orden SEPA y la de AlbaydarPLUS, la cuenta se puede domiciliar (400 `DATOS_CUENTA_NO_VALIDOS`, con `details.errores`): titular escrito, DNI/NIE del titular con su letra, IBAN de un país SEPA con sus dígitos de control y BIC con formato válido si se escribe;
+  8. la huella coincide con la del documento actual (409 `DOCUMENTO_CAMBIADO`, con `details.huella`): el front vuelve a cargar el documento.
+- **Qué guarda:**
+  - el hueco, el documento y su versión, y la huella;
+  - el documento tal como se firmó (uno por huella);
+  - la fecha y hora del servidor, la IP y el navegador;
+  - el enlace con el que firmó (nunca el token) o el usuario de secretaría;
+  - la imagen y su SHA-256.
+- **Volver a firmar un hueco:** la firma anterior se anula con el motivo «Firmada de nuevo».
+- **Respuesta:** la ficha (secretaría) o la vista pública (familia).
+
+**Una firma vale mientras su huella coincida** con la del documento actual.
+- **En borrador**, se comprueba en cada lectura:
+  - una firma cuyo documento cambió sale como `DESACTUALIZADA`, con el motivo en palabras del documento («Cambió: Número de cuenta · IBAN»). También pasa si cambian los acreedores de la configuración;
+  - al guardar el borrador, esas firmas se **anulan** (`ANULADA`; nunca se borran), con su mandato si lo tenían, y queda en el historial «Hay que volver a firmar «Orden de domiciliación…». Cambió: …»;
+  - si un documento deja de hacer falta (p. ej. la matrícula pasa a «alumna que continúa»), sus firmas se anulan con el motivo «El documento ya no hace falta en esta matrícula».
+- **Ya enviada**, valen las firmas vigentes. Si secretaría cambia un dato que sale en un documento firmado, al guardar también se anulan.
+- **Lo que ven las reglas:** solo las firmas que valen cuentan para `pendientes`, `puedeEnviar` y `documentos`.
+- **`firmas`** (en la ficha) trae la última firma de cada hueco con su estado y su motivo, para mostrar «Hay que volver a firmar: cambió …».
+
+**Borrar** (`DELETE …/firmas/:hueco`): anula la firma vigente con el motivo «Borrada» (404 `FIRMA_NO_ENCONTRADA` si no hay).
+
+**Historial:** `FIRMADA` («Orden de domiciliación de adeudo directo SEPA · firma del titular · mandato M-2027-0001-SEPA1»), `FIRMA_ANULADA` y `FIRMA_BORRADA`.
+
+### Mandatos SEPA
+
+Al firmar la orden SEPA (`sepa-titular`) o la de AlbaydarPLUS (`plus-titular`) nace su mandato:
+- **Referencia:** `{código de la matrícula}-{SEPA|PLUS}{n}`. Es única y nunca se reutiliza: si se vuelve a firmar porque cambió la cuenta, la modalidad o el titular, el mandato anterior queda `ANULADO` y nace `…SEPA2`.
+- **Secuencia:** `RCUR` para mensualidades y para AlbaydarPLUS (el primer cargo de la remesa irá como `FRST`); `OOFF` para el pago único, como la cuota reglada de GS concertado. Esquema `CORE`.
+- **Datos que guarda:** el acreedor del momento (identificador y nombre), IBAN y BIC normalizados, titular, su DNI/NIE y el día de la firma.
+- **Dónde se ve completo:** el IBAN y el DNI del titular, solo en la ficha de secretaría. En la vista de la familia, el IBAN va enmascarado.
+
+### Configuración: acreedores SEPA
+
+`GET/PUT /matriculas/configuracion` (guarda en `ajustes.matricula`):
+
+```json
+{
+  "acreedores": [
+    { "id": "general", "nombre": "Albaydar", "direccion": "Avd. La Palmera 36 · 41012 Sevilla · España", "identificador": "ES09000G41829037" },
+    { "id": "gs-concertado", "nombre": "Albaydar", "direccion": "Avd. La Palmera 36 · 41012 Sevilla · España", "identificador": "ES09605G41829037" }
+  ],
+  "acreedorPorFamilia": { "BACHILLERATO": "general", "CICLOS_CONCERTADOS_GM": "general", "CICLOS_CONCERTADOS_GS": "gs-concertado", "CICLOS_PRIVADOS_GS": "general" },
+  "acreedorPlus": "general"
+}
+```
+
+- **Validación:** el identificador cumple la norma AT-02 (país, dígitos de control calculados sobre el NIF, sufijo de 3 caracteres y NIF). Los `id` referenciados tienen que existir.
+- **Valores provisionales:** el de GS concertado es una suposición pendiente del centro (pregunta 24).
 
 ## Comunicaciones: plantillas de correo
 

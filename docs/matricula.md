@@ -189,12 +189,32 @@ Decidido el 08/11/2026, al empezar la primera entrega.
 - **Historial sin ruido.** El autoguardado manda un guardado por segundo. El historial deja un evento por sesión de trabajo (15 min) de cada actor, con las partes tocadas y sin los valores.
 - **Cobro anulado con la matrícula abierta.** Si se anula el pago de la reserva después de abrir la matrícula, el expediente ya está «En proceso» y no se retira solo: secretaría decide si da de baja el expediente. Caso raro; se revisa si el centro lo pide.
 
+## 11. Documentos y firmas: decisiones de la entrega 2
+
+Decidido el 08/11/2026, al construir las firmas.
+
+- **La fecha del documento es la de la firma.** Los documentos muestran «En Sevilla, a …» con el día de su primera firma válida (o hoy, si no está firmado), y esa línea **no entra en la huella**.
+  - **Por qué:** con la fecha de la declaración, rellenar la declaración al final del asistente anulaba la LOPD y el ideario firmados antes; con la de hoy, la huella cambiaba cada día.
+  - La prueba de cuándo se firmó es la hora del servidor guardada en la firma.
+- **Se guarda el documento tal como se firmó** (`documentos_matricula`, uno por huella). Así se puede explicar qué cambió («Cambió: Número de cuenta · IBAN») y el PDF de la entrega 3 se genera con lo firmado, no con lo de ahora.
+- **Validez:**
+  - en borrador, la validez se calcula al leer: una firma cuyo documento cambió sale `DESACTUALIZADA`, también si cambian los acreedores o el texto pasa a otra versión;
+  - al guardar el borrador se anula de verdad (`ANULADA`), con su mandato;
+  - una vez enviada, valen las firmas vigentes.
+- **La imagen del trazo va en la BD** (`bytea`, 200 KB como máximo), en la misma transacción que la firma. Una firma no puede quedar sin su imagen ni una imagen huérfana. Las copias de DNI y demás archivos sí irán al almacén (entrega 3, punto 7).
+- **Añadidos a los documentos respecto al lector del front** (pregunta 32 al centro):
+  - **LOPD, página 6:** nombre de la alumna, curso y nombre de la madre y del padre o tutores, para que la ficha firmada diga a quién se refiere;
+  - **AlbaydarPLUS:** el bloque del acreedor, porque es una orden de domiciliación;
+  - **Impreso:** el texto de la declaración («La persona abajo firmante declara…»);
+  - **Encima de cada hueco de firma:** «He leído el documento completo y lo firmo» (punto 2).
+- **El progenitor con su propio enlace** solo ve la LOPD y firma sus tres huecos. Las páginas leídas son de la matrícula, no de cada enlace: la hoja de evidencias de la entrega 3 lo dirá así.
+
 ## Entregas
 
 | Entrega | Contenido | Estado |
 |---|---|---|
 | 1 | Modelo, apertura (admisión y renovación, también en bloque), borrador con versión, páginas leídas, enlaces y límites del portal | ✅ API 08/11/2026 (`feat/matricula-borrador`) |
-| 2 | Textos legales versionados, documento rellenado con su huella, firmas (409 `DOCUMENTO_CAMBIADO`, anulación al cambiar datos) y mandatos SEPA | Pendiente |
+| 2 | Textos legales versionados, documento rellenado con su huella, firmas (409 `DOCUMENTO_CAMBIADO`, anulación al cambiar datos), mandatos SEPA y acreedores en la configuración | ✅ API 08/11/2026 (`feat/matricula-firmas`) |
 | 3 | Archivos (foto y checklist), envío con `canSubmit`, devolución a borrador, PDF con hoja de evidencias y exportación a Séneca (`EXPORTADA` → alumna matriculada) | Pendiente |
 | 4 | Front: secretaría (`/enrollments/:id`) y familia (`/matricula/:token`) contra la API; se retira el mock | Pendiente |
 
