@@ -55,7 +55,7 @@
 **Técnicas, para más adelante**
 
 11. **Correo en producción:** un remitente del propio centro (p. ej. `admisiones@albaydar.org`) con su servidor de correo, para que no acabe en spam. Gmail sirve solo para la demo.
-12. **Nube para los ficheros:** qué proveedor (S3, Azure, Google Cloud) y en qué región (los datos de menores deberían quedarse en la UE).
+12. **Nube para los ficheros:** qué proveedor (S3, Azure, Google Cloud) y en qué región (los datos de menores deberían quedarse en la UE). **Propuesta (08/11/2026):** Google Cloud Storage en Madrid (`europe-southwest1`), privado y cifrado; encaja con Google Workspace. Ver `docs/matricula.md`, punto 7.
 
 **Kanban**
 
@@ -75,3 +75,18 @@
 18. **IBAN real del centro** para sustituir al provisional.
 19. **Datos fiscales del centro para el recibo:** razón social y NIF. Hoy el recibo lleva el nombre, la dirección y el teléfono del centro, y la mención de exención de IVA.
 22. **Plazo de la reserva por solicitud** (propuesto el 04/11/2026). Al admitir se puede acortar (de mañana al plazo general de 15 días) si quedan pocas plazas, como pedía el informe funcional; después, Dirección o Administración pueden acortarlo o ampliarlo (fuerza mayor) hasta 90 días, con motivo y aviso a la familia. ¿Os vale? ¿Quién debe poder ampliarlo?
+
+**Matrícula digital** (propuesto el 08/11/2026; diseño en `docs/matricula.md`)
+
+23. **Firmas de padre y madre.** La LOPD lleva seis firmas: tres del padre y tres de la madre. Con un único enlace a la familia no se sabe quién firma cada una; solo queda registrado que salieron del mismo enlace. Proponemos un enlace por defecto, y que secretaría pueda enviar un segundo enlace al otro progenitor cuando haga falta (familias separadas, o que no firmen juntos). ¿Os vale, o queréis enviar siempre un enlace a cada progenitor?
+24. **Identificador de acreedor SEPA de GS concertado.** El mockup usa `ES09000G41829037` para todas las vías salvo GS concertado. Lo hemos comprobado y es correcto. Para GS concertado pone `G-41829037/605`, que no tiene el formato SEPA. Suponemos que es `ES09605G41829037` (mismo NIF, sufijo 605). ¿Nos lo confirma el banco o administración?
+25. **Conservación de los documentos de la matrícula.** Proponemos estos plazos:
+    - copias de DNI, Libro de Familia, tarjeta sanitaria y foto: hasta el 31 de agosto del curso en que la alumna cause baja;
+    - documentos firmados (impreso, ideario, LOPD, órdenes SEPA): hasta 3 años después de la baja;
+    - borradores de matrícula nunca enviados: hasta el 30 de septiembre del curso de la matrícula;
+    - cobros: 6 años.
+
+    Lo debe validar el centro o su delegado de protección de datos. Hasta entonces no se borra nada automáticamente.
+26. **Volver a firmar si cambian los datos.** Un documento firmado no puede decir otra cosa que lo que se firmó. Si secretaría corrige un dato que sale en un documento ya firmado (por ejemplo, el teléfono en el impreso o la cuenta en la orden SEPA), la firma se anula y la familia tiene que volver a firmar ese documento. ¿Lo veis bien?
+27. **Alumnas que hoy están en 1º.** Para abrir su matrícula de 2º desde la plataforma necesitamos cargarlas una vez. Pedimos un listado sacado de Séneca, en CSV o Excel, que indique también si promocionan. El mismo importador servirá para el alumnado que asigna la Junta.
+28. **Fichero de Séneca.** Formato oficial con el que secretaría carga hoy la matrícula en Séneca, o un fichero de ejemplo. Mientras tanto, la exportación es un CSV provisional.

@@ -11,7 +11,7 @@ Este archivo es el punto de partida para cualquier sesión: qué hay, cómo se t
 | 01 · Captación (formulario web, alta interna) | ✅ Hecha |
 | 02 · Revisión y entrevista (bandeja, kanban, citación, agenda, entrevistas) | ✅ Hecha |
 | 03 · Evaluación y reserva de plaza (decisión, reserva, cobros manuales) | ✅ Hecha |
-| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | ⏸️ **En pausa** por decisión del equipo. No empezar sin cerrar sus bloqueos (ver «Lo que falta») |
+| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | ⏸️ **En pausa.** Bloqueos técnicos decididos el 08/11/2026 (`docs/matricula.md`); empieza después de Alumnado |
 | Cobros completos (remesas SEPA, conciliación, facturación), Alumnado | ❌ Sin empezar |
 
 En el front, a 24/10/2026 (`develop` = `main`, PR #12): conectados la sesión, los permisos, el formulario público, la bandeja, la citación, la página `/cita/:token` y el kanban. Evaluación y reserva, conectada (PR #13: decisión con vista previa, control de reservas y «Recordar»); el kanban ya no decide sin notificar, abre esa pantalla. Cobros, conectada (PR #14: KPI, reservas por vencer, registro manual, recibo y anulación); el kanban abre Cobros para «Plaza reservada». Entrevistas, conectada en la rama `feature/entrevistas-api` (calendario, resultado, no presentada, cancelación y nota; sin «Confirmar cita», que es de la familia). Configuración y Comunicaciones son placeholders por construir contra esta API. Matrícula y Alumnado siguen con su API simulada.
@@ -78,7 +78,7 @@ src/
     comunicaciones/      plantillas (CRUD, vista previa, prueba), histórico de envíos, estado SMTP
     documentos/ publico/ catalogo/
 drizzle/                 migraciones SQL (0000–0004) y meta/ (journal + snapshots: no se editan a mano)
-docs/                    api.md · flujo-y-datos.md · preguntas-abiertas.md · gmail.md
+docs/                    api.md · flujo-y-datos.md · preguntas-abiertas.md · gmail.md · matricula.md (diseño de la fase 04)
 tests/                   reglas.test.ts (funciones puras) · flujo-admision.test.ts (HTTP contra PostgreSQL real, SMTP falso)
 ```
 
@@ -224,6 +224,7 @@ Detalle, flujo de referencia paso a paso y prioridad en `../RESUMEN-PROYECTO-ALB
 - **Captación / CRM:** primer contacto con nombre, correo, teléfono y área de interés, y correo automático de información en menos de 5 min. El flujo completo y el perfil Comercial los define el cliente (Luis Fdo.).
 - **Matrícula (sigue en pausa), dos bloqueos nuevos:** alumnado de la Junta de Andalucía directo a matrícula con **importación desde Séneca** (API o fichero), y renovación 1º→2º filtrando a quien promociona según calificaciones (requiere Alumnado y notas).
 - **Untis:** sesión aparte para decidir si se integra o se sustituye.
+- Los dos bloqueos de matrícula de esta reunión (alumnado de la Junta y renovación según promoción) quedan recogidos en el punto 8 de `docs/matricula.md`.
 
 ### Fase 04 · Matrícula digital (en pausa)
 
@@ -240,16 +241,28 @@ Lo que propuso el front:
 - **Portal de la familia:** `/matricula/:token`, con secretaría como respaldo.
 - **Estados:** `BORRADOR` → `ENVIADA` → `EXPORTADA` (la solicitud pasa a `MATRICULADA` y se envía `MATRICULA_CONFIRMADA`), con vuelta a borrador si secretaría la devuelve.
 
-**Bloqueos que hay que resolver antes de empezar** (si se hacen después, obligan a rehacer el modelo):
-1. **Documentos que se firman generados en el servidor** (impreso, ideario, LOPD, SEPA, AlbaydarPLUS) en PDF. Con cada firma se guarda la huella (hash) del documento exacto, la fecha y hora del servidor, la IP y el token. Sin esto, la firma es un PNG suelto.
-2. **"Páginas leídas":** el servidor no puede comprobarlo, solo registrar lo que dice el front (firma electrónica simple).
-3. **Firmas de padre y madre por un único enlace:** no se sabe quién firma cada una. Hay que decidir si basta o si se da un enlace a cada progenitor.
-4. **SEPA:** identificador de acreedor del centro (en ajustes), referencia única de mandato, fecha de firma, tipo de mandato (recurrente o único) y validación del IBAN.
-5. **Edición simultánea** de familia y secretaría: número de versión con 409 si se guarda sobre una versión antigua (no "la última escritura gana").
-6. **Límite de peticiones propio** para el autoguardado del portal de la familia: el actual de las rutas públicas (10 por hora) lo bloquearía.
-7. **Documentos sensibles** de menores (DNI, Libro de Familia, tarjeta sanitaria): almacenamiento en la nube en la UE y plazo de conservación (RGPD).
-8. **Alumnado de 2º que continúa:** necesita el módulo de Alumnado. La matrícula debe poder existir sin solicitud.
-9. **Formato oficial del fichero de Séneca.**
+**Bloqueos decididos el 08/11/2026.** El diseño completo, con el porqué de cada punto, está en `docs/matricula.md`: léelo antes de tocar Matrícula o Alumnado. Las respuestas del centro van a las preguntas 23–28 de `preguntas-abiertas.md`, y el diseño ya admite cualquiera de ellas.
+
+1. **Documentos firmados**
+   - El texto de los documentos lo da la API: textos legales versionados en código, no plantillas editables. El lector del front pinta lo que recibe.
+   - Cada firma guarda la huella SHA-256 del contenido canónico (versión del texto + datos), la hora del servidor, la IP, el navegador y el enlace. Si la huella ya no coincide, 409 `DOCUMENTO_CAMBIADO`.
+   - Una firma vale mientras su huella coincida: si cambian los datos, se anula y hay que volver a firmar.
+   - Al enviar, se genera el PDF final con `pdfkit`, con los trazos y una hoja de evidencias.
+2. **«Páginas leídas»:** firma electrónica simple. Se registra con la hora del servidor y se declara, nunca se afirma que se haya leído. Firmar exige `canSignDoc`.
+3. **Padre y madre:** varios enlaces por matrícula, cada uno con su alcance (`FAMILIA` o `PROGENITOR`). Por defecto, uno solo; cada firma registra su enlace. Lo decide el centro (pregunta 23).
+4. **SEPA**
+   - Tabla `mandatos_sepa`; referencia `M-2027-0001-SEPA1`, que nunca se reutiliza; `RCUR` / `OOFF`, esquema `CORE`.
+   - IBAN validado con módulo 97 y enmascarado fuera de la ficha.
+   - Acreedores por vía en `ajustes.matricula`. `ES09000G41829037` es correcto; el de GS concertado está por confirmar (pregunta 24).
+5. **Edición simultánea:** `matriculas.version`, y 409 `VERSION_ANTIGUA` si se guarda sobre una versión antigua. Firmas y archivos no suben la versión.
+6. **Límites del portal**, por enlace (no por IP): autoguardado 900 cada 15 min, firmas 60/h, archivos 30/h. En el front, autoguardado a 1 s.
+7. **Ficheros de menores**
+   - Google Cloud Storage en `europe-southwest1`, detrás de `Almacen`.
+   - `conservarHasta` por tipo de fichero y tarea diaria de borrado. Plazos propuestos en la pregunta 25; no se borra nada hasta que se confirmen.
+8. **Alumnado primero**
+   - La matrícula lleva `alumnaId` obligatorio y `solicitudId` opcional, una por alumna y curso escolar.
+   - Orígenes: reserva pagada, renovación 1º → 2º (solo quien `promociona`), alumnado de la Junta importado de Séneca y alta manual.
+9. **Séneca:** adaptador `exportarSeneca` con CSV provisional hasta que llegue el formato oficial (pregunta 28).
 
 ### Otros módulos sin empezar
 
@@ -285,6 +298,14 @@ Lo que propuso el front:
 - texto de la casilla de privacidad.
 
 **Kanban:** título de la primera columna (el mockup dice "Solicitud revisada"; el front propone "Nuevas y en revisión").
+
+**Matrícula**
+- uno o dos enlaces para las firmas de padre y madre;
+- identificador de acreedor SEPA de GS concertado;
+- plazos de conservación de los documentos;
+- volver a firmar si cambian los datos de un documento firmado;
+- listado de alumnas de 1º desde Séneca;
+- formato del fichero de Séneca.
 
 **Reserva y cobros**
 - qué hacer con una reserva vencida;
