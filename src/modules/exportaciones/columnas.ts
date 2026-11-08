@@ -1,5 +1,6 @@
 import { eurosCsv, fechaCsv, fechaHoraCsv, type Columna } from '../../lib/csv';
 import { hora } from '../../lib/fechas';
+import type * as alumnado from '../alumnado/alumnado.service';
 import type * as cobros from '../cobros/cobros.service';
 import type * as entrevistas from '../entrevistas/entrevistas.service';
 import { ETIQUETA_ENTREVISTADO, ETIQUETA_MODALIDAD, ETIQUETA_VALORACION, etiquetaOptativa, type Ficha } from '../entrevistas/ficha';
@@ -15,6 +16,7 @@ type ItemSolicitud = Awaited<ReturnType<typeof solicitudes.listar>>['items'][num
 type ItemReserva = Awaited<ReturnType<typeof reservas.listar>>['items'][number];
 type ItemCobro = Awaited<ReturnType<typeof cobros.listar>>['items'][number];
 type ItemEntrevista = Awaited<ReturnType<typeof entrevistas.listar>>['items'][number];
+type ItemAlumna = Awaited<ReturnType<typeof alumnado.listar>>['items'][number];
 
 /** Columnas de la ficha de la entrevista, compartidas por solicitudes y entrevistas. */
 function columnasFicha<T>(ficha: (f: T) => Ficha | null | undefined, curso: (f: T) => number): Columna<T>[] {
@@ -112,4 +114,32 @@ export const COLUMNAS_ENTREVISTAS: Columna<ItemEntrevista>[] = [
   { titulo: 'Boletín subido', valor: (e) => e.notasRecibidas },
   ...columnasFicha<ItemEntrevista>((e) => e.ficha, (e) => e.cursoNumero),
   { titulo: 'Observaciones', valor: (e) => e.notas },
+];
+
+const principal = (a: ItemAlumna) => a.contactos.find((c) => c.principal) ?? a.contactos[0];
+
+export const COLUMNAS_ALUMNADO: Columna<ItemAlumna>[] = [
+  { titulo: 'Expediente', valor: (a) => a.expediente },
+  { titulo: 'Apellidos', valor: (a) => a.apellidos },
+  { titulo: 'Nombre', valor: (a) => a.nombre },
+  { titulo: 'DNI/NIE', valor: (a) => a.documento },
+  { titulo: 'Fecha de nacimiento', valor: (a) => fechaCsv(a.fechaNacimiento) },
+  { titulo: 'Etapa', valor: (a) => a.familiaEtiqueta },
+  { titulo: 'Curso', valor: (a) => `${a.curso}º` },
+  { titulo: 'Curso escolar', valor: (a) => a.cursoEscolar },
+  { titulo: 'Estudios', valor: (a) => a.estudios },
+  { titulo: 'Estado', valor: (a) => a.estadoEtiqueta },
+  { titulo: 'Promociona', valor: (a) => a.promociona },
+  { titulo: 'Contacto principal', valor: (a) => principal(a)?.nombre },
+  { titulo: 'Parentesco', valor: (a) => principal(a)?.parentesco },
+  { titulo: 'Teléfono de contacto', valor: (a) => principal(a)?.telefono },
+  { titulo: 'Correo de contacto', valor: (a) => principal(a)?.email },
+  { titulo: 'Teléfono de la alumna', valor: (a) => a.telefono },
+  { titulo: 'Correo de la alumna', valor: (a) => a.email },
+  { titulo: 'Domicilio', valor: (a) => a.domicilio },
+  { titulo: 'Origen', valor: (a) => a.origenEtiqueta },
+  { titulo: 'Solicitud', valor: (a) => a.solicitud?.codigo },
+  { titulo: 'Fecha de alta', valor: (a) => fechaCsv(a.fechaAlta) },
+  { titulo: 'Fecha de baja', valor: (a) => fechaCsv(a.baja?.fecha) },
+  { titulo: 'Motivo de la baja', valor: (a) => a.baja?.motivo },
 ];
