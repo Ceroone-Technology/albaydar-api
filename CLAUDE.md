@@ -12,7 +12,7 @@ Este archivo es el punto de partida para cualquier sesión: qué hay, cómo se t
 | 02 · Revisión y entrevista (bandeja, kanban, citación, agenda, entrevistas) | ✅ Hecha |
 | 03 · Evaluación y reserva de plaza (decisión, reserva, cobros manuales) | ✅ Hecha |
 | 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | ⏸️ **En pausa.** Bloqueos técnicos decididos el 08/11/2026 (`docs/matricula.md`); empieza después de Alumnado |
-| Alumnado (expedientes, familias, historial) | ✅ API hecha el 08/11/2026 (`feat/alumnado`); front pendiente de conectar |
+| Alumnado (expedientes, familias, historial) | ✅ Hecho el 08/11/2026 (API `feat/alumnado`, front `feature/alumnado-api`) |
 | Cobros completos (remesas SEPA, conciliación, facturación) | ❌ Sin empezar |
 
 En el front, a 24/10/2026 (`develop` = `main`, PR #12): conectados la sesión, los permisos, el formulario público, la bandeja, la citación, la página `/cita/:token` y el kanban. Evaluación y reserva, conectada (PR #13: decisión con vista previa, control de reservas y «Recordar»); el kanban ya no decide sin notificar, abre esa pantalla. Cobros, conectada (PR #14: KPI, reservas por vencer, registro manual, recibo y anulación); el kanban abre Cobros para «Plaza reservada». Entrevistas, conectada en la rama `feature/entrevistas-api` (calendario, resultado, no presentada, cancelación y nota; sin «Confirmar cita», que es de la familia). Configuración y Comunicaciones son placeholders por construir contra esta API. Matrícula y Alumnado siguen con su API simulada.
@@ -279,7 +279,7 @@ Lo que propuso el front:
 
 ### Otros módulos sin empezar
 
-- **Alumnado:** falta la importación de Séneca (alumnado de la Junta y carga inicial de 1º, pregunta 27) y conectar el front.
+- **Alumnado:** falta la importación de Séneca (alumnado de la Junta y carga inicial de 1º, pregunta 27).
 - **Cobros completos:**
   - conceptos más allá de la reserva (matrícula, mensualidad, AMPA, uniforme, cuota reglada, AlbaydarPLUS) — cada uno con su tratamiento de IVA;
   - remesas SEPA;
