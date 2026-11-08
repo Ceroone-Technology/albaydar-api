@@ -11,7 +11,7 @@ Este archivo es el punto de partida para cualquier sesión: qué hay, cómo se t
 | 01 · Captación (formulario web, alta interna) | ✅ Hecha |
 | 02 · Revisión y entrevista (bandeja, kanban, citación, agenda, entrevistas) | ✅ Hecha |
 | 03 · Evaluación y reserva de plaza (decisión, reserva, cobros manuales) | ✅ Hecha |
-| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | ⏸️ **En pausa.** Bloqueos técnicos decididos el 08/11/2026 (`docs/matricula.md`); empieza después de Alumnado |
+| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | 🟡 **En curso.** Entrega 1 de 4 hecha el 08/11/2026 (API `feat/matricula-borrador`): apertura, renovación, borrador con versión, páginas leídas y enlaces. Plan en `docs/matricula.md` → «Entregas» |
 | Alumnado (expedientes, familias, historial) | ✅ Hecho el 08/11/2026 (API `feat/alumnado`, front `feature/alumnado-api`) |
 | Cobros completos (remesas SEPA, conciliación, facturación) | ❌ Sin empezar |
 
@@ -77,11 +77,12 @@ src/
     reservas/            reserva de plaza, control de reservas, recordar, recordatorio y vencimiento
     cobros/              cobros manuales, anulación, resumen (KPIs) y recibo imprimible
     alumnado/            expedientes (alta desde la reserva pagada, manual), contactos, historial, baja, notas
+    matricula/           borrador.ts (Zod del EnrollmentDraft del front), reglas.ts (copia de enrollment.rules.ts), dominio.ts, service (apertura, renovación, borrador con versión, páginas, enlaces), routes (privadas y /public/matricula)
     comunicaciones/      plantillas (CRUD, vista previa, prueba), histórico de envíos, estado SMTP
     documentos/ publico/ catalogo/
-drizzle/                 migraciones SQL (0000–0008) y meta/ (journal + snapshots: no se editan a mano)
+drizzle/                 migraciones SQL (0000–0009) y meta/ (journal + snapshots: no se editan a mano)
 docs/                    api.md · flujo-y-datos.md · preguntas-abiertas.md · gmail.md · matricula.md (diseño de la fase 04)
-tests/                   reglas.test.ts (funciones puras) · flujo-admision.test.ts (HTTP contra PostgreSQL real, SMTP falso)
+tests/                   reglas.test.ts (funciones puras) · flujo-admision.test.ts y matricula.test.ts (HTTP contra PostgreSQL real, SMTP falso)
 ```
 
 ## Qué está implementado
@@ -142,11 +143,20 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 - «Familia ya vinculada» (revisión y filtro del kanban) mira también los contactos de las alumnas que no están de baja.
 - Mientras no exista la matrícula digital, secretaría mueve los estados a mano.
 
+**Matrícula digital, entrega 1** (08/11/2026, detalle en `docs/api.md` y `docs/matricula.md`)
+- `POST /matriculas { alumnaId }`: alumnado nuevo (expediente en reserva o en proceso → «En proceso») o renovación 1º → 2º (expediente matriculado en 1º, a partir de su matrícula de 1º). `POST /matriculas/renovacion` la abre en bloque para quien promociona. Código `M-AAAA-NNNN`, una por alumna y curso escolar.
+- El borrador es el `EnrollmentDraft` del front tal cual (nombres en inglés) y las reglas son una copia de `enrollment.rules.ts`: la ficha trae `pendientes` por paso y `puedeEnviar`.
+- `PUT { borrador, version }` desde secretaría o desde el enlace: 409 `VERSION_ANTIGUA` con quién guardó; sin cambios no sube la versión. La familia no cambia la vía, el curso, «alumna nueva» ni `manualChecks`.
+- Páginas leídas con hora del servidor, que nunca se quitan; `POST …/paginas-leidas` no sube la versión.
+- Enlaces `FAMILIA` y `PROGENITOR` (solo lectura y, más adelante, sus firmas), caducan el 30/09 del curso; límites por enlace en `/public/matricula/:token`.
+- Falta: firmas con huella, mandatos SEPA, archivos, envío, PDF y Séneca (entregas 2 y 3), y el front (entrega 4).
+
 **Comunicaciones**
 - Todos los correos salen de plantillas HTML editables, una activada por evento. Saneado al guardar y variables validadas. Vista previa, prueba e histórico.
 - Eventos:
   - `SOLICITUD_RECIBIDA`, `COMPLETAR_SOLICITUD`*, `CITACION_PROPUESTA`*, `CITACION_RECORDATORIO`, `CITA_CONFIRMADA`*, `CITA_CAMBIADA`*, `ENTREVISTA_RECORDATORIO`, `CITA_CANCELADA`, `AVISO_OTRA_FRANJA`;
   - de la fase 03: `ADMITIDA`, `EN_ESPERA`, `NO_ADMITIDA`, `RECORDATORIO_PAGO`, `RESERVA_VENCIDA`;
+  - de la fase 04: `MATRICULA_ENLACE`* y `MATRICULA_ENLACE_PROGENITOR`*;
   - en borrador: `MATRICULA_CONFIRMADA`.
 
   (*) Obligatorios: llevan el enlace de la familia y se envían aunque la plantilla esté en borrador.
@@ -159,7 +169,8 @@ Tablas:
 - `solicitudes`, `solicitud_eventos` (historial auditable), `eventos_vistos`;
 - `propuestas_cita`, `franjas_agenda`, `entrevistas`, `tokens_publicos`, `documentos`;
 - `plantillas_correo`, `correos_salientes`, `reservas`, `cobros`, `secuencias`;
-- `alumnas`, `alumna_contactos`, `alumna_eventos`.
+- `alumnas`, `alumna_contactos`, `alumna_eventos`;
+- `matriculas`, `enlaces_matricula`, `matricula_eventos`.
 
 | Migración | Contenido |
 |---|---|
@@ -172,6 +183,7 @@ Tablas:
 | `0006_ficha_entrevista` | `entrevistas.ficha` (jsonb): ficha de la entrevista de la solicitud en papel |
 | `0007_alumnado` | `alumnas`, `alumna_contactos`, `alumna_eventos` y sus enumerados |
 | `0008_alumnas_reservas_antiguas` | A mano, solo datos: expediente para las solicitudes con la plaza ya reservada o matriculadas |
+| `0009_matricula` | `matriculas`, `enlaces_matricula`, `matricula_eventos` y los enumerados `estado_matricula` y `alcance_enlace` |
 
 ## Convenciones
 
@@ -202,6 +214,7 @@ Tablas:
 12. **Contenedor:** la API arranca como root solo para ajustar los permisos de `storage/uploads` y luego pasa a `node`.
 13. **Una entrevista futura no se puede marcar como realizada** (409 `ENTREVISTA_FUTURA`). En pruebas manuales, la solicitud se pasa a `ENTREVISTA_REALIZADA` con `PATCH /estado` (transición manual permitida).
 14. **`UPDATE … RETURNING` no devuelve las filas en ningún orden.** Si importa el orden (la cola de correos), se recorre el de la `SELECT … ORDER BY`. Y `now()` es el mismo durante toda la transacción: para desempatar filas creadas en la misma, `clock_timestamp()` (ver `encolarCorreo`). Sin esto, dos correos a la misma familia podían salir al revés y 6 tests fallaban de vez en cuando.
+15. **`jsonb` no conserva el orden de las claves.** Comparar un JSON leído de la BD con el que llega en la petición usando `JSON.stringify` da «distintos» aunque sean iguales. Usa `jsonCanonico` (`matricula.service.ts`), que ordena las claves. Sin esto, el autoguardado de la matrícula subía la versión en cada guardado sin cambios.
 
 ## Reglas de negocio validadas con el cliente
 
@@ -239,7 +252,9 @@ Detalle, flujo de referencia paso a paso y prioridad en `../RESUMEN-PROYECTO-ALB
 - **Untis:** sesión aparte para decidir si se integra o se sustituye.
 - Los dos bloqueos de matrícula de esta reunión (alumnado de la Junta y renovación según promoción) quedan recogidos en el punto 8 de `docs/matricula.md`.
 
-### Fase 04 · Matrícula digital (en pausa)
+### Fase 04 · Matrícula digital (en curso)
+
+**Entrega 1 hecha el 08/11/2026** (ver «Qué está implementado»). Quedan las entregas 2 (documentos con huella, firmas y mandatos SEPA), 3 (archivos, envío, PDF y Séneca) y 4 (front), en `docs/matricula.md` → «Entregas».
 
 El front ya tiene el asistente completo contra una API simulada (`mock-enrollments.interceptor.ts`). Las reglas están en `src/app/domain/rules/enrollment.rules.ts` del front (unas 770 líneas: `stepMissing`, `canSignDoc`, `voidedMandateSignatures`, `economicLines`, `checklist`, `canSubmit`) y son la especificación que la API tendrá que validar.
 
