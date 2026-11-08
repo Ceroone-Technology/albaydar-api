@@ -11,7 +11,7 @@ Este archivo es el punto de partida para cualquier sesión: qué hay, cómo se t
 | 01 · Captación (formulario web, alta interna) | ✅ Hecha |
 | 02 · Revisión y entrevista (bandeja, kanban, citación, agenda, entrevistas) | ✅ Hecha |
 | 03 · Evaluación y reserva de plaza (decisión, reserva, cobros manuales) | ✅ Hecha |
-| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | 🟡 **En curso.** Entrega 1 de 4 hecha el 08/11/2026 (API `feat/matricula-borrador`): apertura, renovación, borrador con versión, páginas leídas y enlaces. Plan en `docs/matricula.md` → «Entregas» |
+| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | 🟡 **En curso.** Entregas 1 y 2 de 4 hechas el 08/11/2026 en la API: apertura, renovación, borrador con versión, páginas leídas y enlaces (`feat/matricula-borrador`); documentos con huella, firmas y mandatos SEPA (`feat/matricula-firmas`). Plan en `docs/matricula.md` → «Entregas» |
 | Alumnado (expedientes, familias, historial) | ✅ Hecho el 08/11/2026 (API `feat/alumnado`, front `feature/alumnado-api`) |
 | Cobros completos (remesas SEPA, conciliación, facturación) | ❌ Sin empezar |
 
@@ -77,10 +77,10 @@ src/
     reservas/            reserva de plaza, control de reservas, recordar, recordatorio y vencimiento
     cobros/              cobros manuales, anulación, resumen (KPIs) y recibo imprimible
     alumnado/            expedientes (alta desde la reserva pagada, manual), contactos, historial, baja, notas
-    matricula/           borrador.ts (Zod del EnrollmentDraft del front), reglas.ts (copia de enrollment.rules.ts), dominio.ts, service (apertura, renovación, borrador con versión, páginas, enlaces), routes (privadas y /public/matricula)
+    matricula/           borrador.ts (Zod del EnrollmentDraft del front), reglas.ts (copia de enrollment.rules.ts), dominio.ts, service (apertura, renovación, borrador con versión, páginas, enlaces), firmas.service (validez por huella, firmar, anular, mandatos), documentos/ (textos.ts legales versionados, generar.ts con la huella), routes (privadas y /public/matricula)
     comunicaciones/      plantillas (CRUD, vista previa, prueba), histórico de envíos, estado SMTP
     documentos/ publico/ catalogo/
-drizzle/                 migraciones SQL (0000–0009) y meta/ (journal + snapshots: no se editan a mano)
+drizzle/                 migraciones SQL (0000–0010) y meta/ (journal + snapshots: no se editan a mano)
 docs/                    api.md · flujo-y-datos.md · preguntas-abiertas.md · gmail.md · matricula.md (diseño de la fase 04)
 tests/                   reglas.test.ts (funciones puras) · flujo-admision.test.ts y matricula.test.ts (HTTP contra PostgreSQL real, SMTP falso)
 ```
@@ -149,7 +149,13 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 - `PUT { borrador, version }` desde secretaría o desde el enlace: 409 `VERSION_ANTIGUA` con quién guardó; sin cambios no sube la versión. La familia no cambia la vía, el curso, «alumna nueva» ni `manualChecks`.
 - Páginas leídas con hora del servidor, que nunca se quitan; `POST …/paginas-leidas` no sube la versión.
 - Enlaces `FAMILIA` y `PROGENITOR` (solo lectura y, más adelante, sus firmas), caducan el 30/09 del curso; límites por enlace en `/public/matricula/:token`.
-- Falta: firmas con huella, mandatos SEPA, archivos, envío, PDF y Séneca (entregas 2 y 3), y el front (entrega 4).
+
+**Matrícula digital, entrega 2** (08/11/2026)
+- Los cinco documentos los da la API (`GET …/documentos/:doc`), rellenados y con su huella SHA-256. Los textos legales, versionados, en `documentos/textos.ts`; cambiar uno = subir su versión.
+- Firmar (`POST …/firmas/:hueco { imagen, huella }`) comprueba documento aplicable, páginas leídas, DOP o modalidad, cuenta domiciliable (IBAN SEPA, DNI del titular, BIC) y huella actual (409 `DOCUMENTO_CAMBIADO`). Guarda hora del servidor, IP, navegador, enlace o usuario y el documento tal como se firmó.
+- Una firma vale mientras su huella coincida: en borrador se evalúa al leer (`DESACTUALIZADA`) y se anula al guardar (`ANULADA`, con motivo y su mandato). La fecha de los documentos es la de la firma y no entra en la huella.
+- Mandatos `M-2027-0001-SEPA1` / `…-PLUS1` (RCUR/OOFF, CORE), nunca reutilizados. Acreedores por vía en `ajustes.matricula` (`GET/PUT /matriculas/configuracion`), validados con la norma AT-02.
+- Falta: archivos, envío, PDF y Séneca (entrega 3), y el front (entrega 4).
 
 **Comunicaciones**
 - Todos los correos salen de plantillas HTML editables, una activada por evento. Saneado al guardar y variables validadas. Vista previa, prueba e histórico.
@@ -170,7 +176,7 @@ Tablas:
 - `propuestas_cita`, `franjas_agenda`, `entrevistas`, `tokens_publicos`, `documentos`;
 - `plantillas_correo`, `correos_salientes`, `reservas`, `cobros`, `secuencias`;
 - `alumnas`, `alumna_contactos`, `alumna_eventos`;
-- `matriculas`, `enlaces_matricula`, `matricula_eventos`.
+- `matriculas`, `enlaces_matricula`, `matricula_eventos`, `documentos_matricula`, `firmas_matricula`, `mandatos_sepa`.
 
 | Migración | Contenido |
 |---|---|
@@ -184,6 +190,7 @@ Tablas:
 | `0007_alumnado` | `alumnas`, `alumna_contactos`, `alumna_eventos` y sus enumerados |
 | `0008_alumnas_reservas_antiguas` | A mano, solo datos: expediente para las solicitudes con la plaza ya reservada o matriculadas |
 | `0009_matricula` | `matriculas`, `enlaces_matricula`, `matricula_eventos` y los enumerados `estado_matricula` y `alcance_enlace` |
+| `0010_firmas_matricula` | `documentos_matricula`, `firmas_matricula` (imagen en `bytea`), `mandatos_sepa` y sus enumerados |
 
 ## Convenciones
 
@@ -254,7 +261,7 @@ Detalle, flujo de referencia paso a paso y prioridad en `../RESUMEN-PROYECTO-ALB
 
 ### Fase 04 · Matrícula digital (en curso)
 
-**Entrega 1 hecha el 08/11/2026** (ver «Qué está implementado»). Quedan las entregas 2 (documentos con huella, firmas y mandatos SEPA), 3 (archivos, envío, PDF y Séneca) y 4 (front), en `docs/matricula.md` → «Entregas».
+**Entrega 1 hecha el 08/11/2026** (ver «Qué está implementado»). **Entrega 2 hecha el mismo día.** Quedan las entregas 3 (archivos, envío, PDF y Séneca) y 4 (front), en `docs/matricula.md` → «Entregas».
 
 El front ya tiene el asistente completo contra una API simulada (`mock-enrollments.interceptor.ts`). Las reglas están en `src/app/domain/rules/enrollment.rules.ts` del front (unas 770 líneas: `stepMissing`, `canSignDoc`, `voidedMandateSignatures`, `economicLines`, `checklist`, `canSubmit`) y son la especificación que la API tendrá que validar.
 
