@@ -12,7 +12,8 @@ Este archivo es el punto de partida para cualquier sesión: qué hay, cómo se t
 | 02 · Revisión y entrevista (bandeja, kanban, citación, agenda, entrevistas) | ✅ Hecha |
 | 03 · Evaluación y reserva de plaza (decisión, reserva, cobros manuales) | ✅ Hecha |
 | 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | ⏸️ **En pausa.** Bloqueos técnicos decididos el 08/11/2026 (`docs/matricula.md`); empieza después de Alumnado |
-| Cobros completos (remesas SEPA, conciliación, facturación), Alumnado | ❌ Sin empezar |
+| Alumnado (expedientes, familias, historial) | ✅ API hecha el 08/11/2026 (`feat/alumnado`); front pendiente de conectar |
+| Cobros completos (remesas SEPA, conciliación, facturación) | ❌ Sin empezar |
 
 En el front, a 24/10/2026 (`develop` = `main`, PR #12): conectados la sesión, los permisos, el formulario público, la bandeja, la citación, la página `/cita/:token` y el kanban. Evaluación y reserva, conectada (PR #13: decisión con vista previa, control de reservas y «Recordar»); el kanban ya no decide sin notificar, abre esa pantalla. Cobros, conectada (PR #14: KPI, reservas por vencer, registro manual, recibo y anulación); el kanban abre Cobros para «Plaza reservada». Entrevistas, conectada en la rama `feature/entrevistas-api` (calendario, resultado, no presentada, cancelación y nota; sin «Confirmar cita», que es de la familia). Configuración y Comunicaciones son placeholders por construir contra esta API. Matrícula y Alumnado siguen con su API simulada.
 
@@ -59,7 +60,7 @@ src/
   app.ts                 Express: helmet, CORS con credenciales, rutas públicas (/auth, /public) y privadas (requireAuth por prefijo → una ruta inexistente da 404, nunca 401)
   config/env.ts          variables validadas con Zod + CENTRO (nombre, dirección, teléfono, logo, datos de la entrevista)
   db/schema.ts           esquema (fuente de verdad) · migrate.ts · seed.ts (demo) · datos-base.ts (roles, plantillas, ajustes; también en producción)
-  lib/                   db, fechas (única conversión UTC ↔ Europe/Madrid), dinero (euros, IBAN), errores, crypto, storage, logger
+  lib/                   db, fechas (única conversión UTC ↔ Europe/Madrid), dinero (euros, IBAN), documento-identidad (DNI/NIE), errores, crypto, storage, logger
   middleware/            auth (requireAuth, requirePermiso), validate (Zod), error-handler
   correo/                eventos.ts (catálogo), plantillas.ts (motor), enviar.ts (prepararEvento / enviarEvento), outbox.ts (cola + SMTP), ics.ts
   jobs/                  scheduler.ts (node-cron + advisory locks) y recordatorios.ts
@@ -75,9 +76,10 @@ src/
     evaluacion/          decisión de admisión con notificación y su vista previa
     reservas/            reserva de plaza, control de reservas, recordar, recordatorio y vencimiento
     cobros/              cobros manuales, anulación, resumen (KPIs) y recibo imprimible
+    alumnado/            expedientes (alta desde la reserva pagada, manual), contactos, historial, baja, notas
     comunicaciones/      plantillas (CRUD, vista previa, prueba), histórico de envíos, estado SMTP
     documentos/ publico/ catalogo/
-drizzle/                 migraciones SQL (0000–0004) y meta/ (journal + snapshots: no se editan a mano)
+drizzle/                 migraciones SQL (0000–0008) y meta/ (journal + snapshots: no se editan a mano)
 docs/                    api.md · flujo-y-datos.md · preguntas-abiertas.md · gmail.md · matricula.md (diseño de la fase 04)
 tests/                   reglas.test.ts (funciones puras) · flujo-admision.test.ts (HTTP contra PostgreSQL real, SMTP falso)
 ```
@@ -130,7 +132,15 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 - La migración `0004` creó la reserva de las solicitudes admitidas antes de la fase 03, sin enviar correo.
 
 **Exportaciones** (05/11/2026)
-- `GET /solicitudes|entrevistas|reservas|cobros/exportar`: CSV para Excel con los mismos filtros y permisos que su listado, sin paginar (`todasLasPaginas` en `lib/csv.ts`; columnas en `modules/exportaciones/columnas.ts`). Separador `;`, BOM, coma decimal, protección contra inyección de fórmulas y registro en el log de cada exportación.
+- `GET /solicitudes|entrevistas|reservas|cobros|alumnado/exportar`: CSV para Excel con los mismos filtros y permisos que su listado, sin paginar (`todasLasPaginas` en `lib/csv.ts`; columnas en `modules/exportaciones/columnas.ts`). Separador `;`, BOM, coma decimal, protección contra inyección de fórmulas y registro en el log de cada exportación.
+
+**Alumnado** (08/11/2026, detalle en `docs/api.md`)
+- Expediente `EXP-AAAA-NNNN` (formato del mockup) con estados del mockup: «Reserva confirmada» (`RESERVA`), «En proceso» (`EN_PROCESO`), «Matriculada» (`MATRICULADA`) y «Baja».
+- Nace solo cuando el cobro completa la reserva (`altaDesdeReserva`, en su transacción), con el tutor como contacto principal. Si se anula ese cobro, `retirarAltaDeReserva` lo borra (sin cambios) o lo da de baja (con notas o cambios); al volver a pagar, se reactiva el mismo.
+- Alta manual con DNI/NIE validado y único, edición (los contactos se sustituyen enteros), baja con motivo y reactivación por `PATCH { estado }`, notas internas y CSV.
+- Historial: eventos propios (`alumna_eventos`, solo qué campos cambian, nunca los valores) más la solicitud, sus correos, entrevistas y cobros.
+- «Familia ya vinculada» (revisión y filtro del kanban) mira también los contactos de las alumnas que no están de baja.
+- Mientras no exista la matrícula digital, secretaría mueve los estados a mano.
 
 **Comunicaciones**
 - Todos los correos salen de plantillas HTML editables, una activada por evento. Saneado al guardar y variables validadas. Vista previa, prueba e histórico.
@@ -148,7 +158,8 @@ Tablas:
 - `usuarios`, `refresh_tokens`, `roles`, `ajustes`, `vias`, `familias`;
 - `solicitudes`, `solicitud_eventos` (historial auditable), `eventos_vistos`;
 - `propuestas_cita`, `franjas_agenda`, `entrevistas`, `tokens_publicos`, `documentos`;
-- `plantillas_correo`, `correos_salientes`, `reservas`, `cobros`, `secuencias`.
+- `plantillas_correo`, `correos_salientes`, `reservas`, `cobros`, `secuencias`;
+- `alumnas`, `alumna_contactos`, `alumna_eventos`.
 
 | Migración | Contenido |
 |---|---|
@@ -159,6 +170,8 @@ Tablas:
 | `0004_reservas_admitidas_antiguas` | A mano, solo datos |
 | `0005_propuesta_cancelada_familia` | Valor `CANCELADA` en `estado_propuesta` (la familia cancela su cita) |
 | `0006_ficha_entrevista` | `entrevistas.ficha` (jsonb): ficha de la entrevista de la solicitud en papel |
+| `0007_alumnado` | `alumnas`, `alumna_contactos`, `alumna_eventos` y sus enumerados |
+| `0008_alumnas_reservas_antiguas` | A mano, solo datos: expediente para las solicitudes con la plaza ya reservada o matriculadas |
 
 ## Convenciones
 
@@ -266,7 +279,7 @@ Lo que propuso el front:
 
 ### Otros módulos sin empezar
 
-- **Alumnado:** alumnas matriculadas. La comprobación "familia ya vinculada" también tendrá que mirar contra ellas, y es la base del alumnado que continúa.
+- **Alumnado:** falta la importación de Séneca (alumnado de la Junta y carga inicial de 1º, pregunta 27) y conectar el front.
 - **Cobros completos:**
   - conceptos más allá de la reserva (matrícula, mensualidad, AMPA, uniforme, cuota reglada, AlbaydarPLUS) — cada uno con su tratamiento de IVA;
   - remesas SEPA;
