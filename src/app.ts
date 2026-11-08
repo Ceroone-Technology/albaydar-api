@@ -14,6 +14,7 @@ import { alumnadoRouter } from './modules/alumnado/alumnado.routes';
 import { authRouter } from './modules/auth/auth.routes';
 import { catalogoRouter } from './modules/catalogo/catalogo.routes';
 import { cobrosRouter } from './modules/cobros/cobros.routes';
+import { matriculasRouter } from './modules/matricula/matricula.routes';
 import { reservasRouter } from './modules/reservas/reservas.routes';
 import { comunicacionesRouter } from './modules/comunicaciones/comunicaciones.routes';
 import { rolesRouter } from './modules/permisos/permisos.routes';
@@ -65,6 +66,7 @@ export function crearApp() {
     ['/reservas', reservasRouter],
     ['/cobros', cobrosRouter],
     ['/alumnado', alumnadoRouter],
+    ['/matriculas', matriculasRouter],
   ];
   for (const [ruta, router] of privados) api.use(ruta, requireAuth, router);
 
