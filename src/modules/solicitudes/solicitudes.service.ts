@@ -3,6 +3,8 @@ import { alias } from 'drizzle-orm/pg-core';
 import type { z } from 'zod';
 import { env } from '../../config/env';
 import {
+  alumnaContactos,
+  alumnas,
   correosSalientes,
   documentos,
   entrevistas,
@@ -195,6 +197,12 @@ function condiciones(f: Partial<Filtros>): SQL[] {
     // La misma regla que la comprobación "Familia ya vinculada" (calcularRevisiones).
     c.push(sql`(
       (${solicitudes.email} <> '' and exists (select 1 from ${familias} where ${familias.email} = ${solicitudes.email}))
+      or exists (
+        select 1 from ${alumnaContactos} join ${alumnas} on ${alumnas.id} = ${alumnaContactos.alumnaId}
+        where ${alumnas.estado} in ('RESERVA', 'EN_PROCESO', 'MATRICULADA')
+        and ${alumnas.solicitudId} is distinct from ${solicitudes.id}
+        and ((${solicitudes.email} <> '' and ${alumnaContactos.email} = lower(trim(${solicitudes.email}))) or ${alumnaContactos.telefono} = trim(${solicitudes.telefono}))
+      )
       or exists (
         select 1 from ${solicitudes} ${otra} where ${otra.id} <> ${solicitudes.id}
         and ((${solicitudes.email} <> '' and ${otra.email} = ${solicitudes.email}) or ${otra.telefono} = ${solicitudes.telefono})
