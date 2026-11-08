@@ -175,6 +175,29 @@ Orden de trabajo: primero **Alumnado** (la matrícula cuelga de una alumna, punt
 - el CSV provisional del front sirve para la demo;
 - cuando llegue el formato oficial o un fichero de ejemplo, solo cambia el adaptador.
 
+## 10. Formato del borrador y qué decide cada uno
+
+Decidido el 08/11/2026, al empezar la primera entrega.
+
+- **El borrador tiene la forma del front.** `matriculas.datos` guarda el `EnrollmentDraft` del asistente con sus nombres en inglés (`student.firstName`…), validado con Zod (`src/modules/matricula/borrador.ts`). Lo que lo rodea va en español, como el resto de la API: la matrícula, su estado, sus enlaces y su historial.
+  - **Por qué:**
+    - las reglas de la API (`reglas.ts`) son una **copia** de `enrollment.rules.ts` y se comparan línea a línea;
+    - traducir unos 120 campos en los dos sentidos solo añadiría errores;
+    - si una regla cambia en un lado, cambia en el otro en el mismo PR.
+  - **Objetos estrictos:** un campo que el front añada sin que llegue a la API es un 400 con su ruta, nunca un dato perdido en silencio.
+- **Lo que no cambia la familia.** Desde su enlace no cambia la vía, el curso, «¿alumna nueva?» (que decide si hay ideario y LOPD) ni los documentos marcados como entregados en papel (`manualChecks`). Si llegan cambiados, la API conserva los suyos. Lo decide secretaría. Pregunta 31 al centro, por si quieren que la familia marque «lo entrego en papel».
+- **Historial sin ruido.** El autoguardado manda un guardado por segundo. El historial deja un evento por sesión de trabajo (15 min) de cada actor, con las partes tocadas y sin los valores.
+- **Cobro anulado con la matrícula abierta.** Si se anula el pago de la reserva después de abrir la matrícula, el expediente ya está «En proceso» y no se retira solo: secretaría decide si da de baja el expediente. Caso raro; se revisa si el centro lo pide.
+
+## Entregas
+
+| Entrega | Contenido | Estado |
+|---|---|---|
+| 1 | Modelo, apertura (admisión y renovación, también en bloque), borrador con versión, páginas leídas, enlaces y límites del portal | ✅ API 08/11/2026 (`feat/matricula-borrador`) |
+| 2 | Textos legales versionados, documento rellenado con su huella, firmas (409 `DOCUMENTO_CAMBIADO`, anulación al cambiar datos) y mandatos SEPA | Pendiente |
+| 3 | Archivos (foto y checklist), envío con `canSubmit`, devolución a borrador, PDF con hoja de evidencias y exportación a Séneca (`EXPORTADA` → alumna matriculada) | Pendiente |
+| 4 | Front: secretaría (`/enrollments/:id`) y familia (`/matricula/:token`) contra la API; se retira el mock | Pendiente |
+
 ---
 
 ## Lo que cambia en el front cuando se conecte

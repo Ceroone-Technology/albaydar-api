@@ -90,6 +90,12 @@
 26. **Volver a firmar si cambian los datos.** Un documento firmado no puede decir otra cosa que lo que se firmó. Si secretaría corrige un dato que sale en un documento ya firmado (por ejemplo, el teléfono en el impreso o la cuenta en la orden SEPA), la firma se anula y la familia tiene que volver a firmar ese documento. ¿Lo veis bien?
 27. **Alumnas que hoy están en 1º.** Para abrir su matrícula de 2º desde la plataforma necesitamos cargarlas una vez. Pedimos un listado sacado de Séneca, en CSV o Excel, que indique también si promocionan. El mismo importador servirá para el alumnado que asigna la Junta.
 28. **Fichero de Séneca.** Formato oficial con el que secretaría carga hoy la matrícula en Séneca, o un fichero de ejemplo. Mientras tanto, la exportación es un CSV provisional.
+31. **Lo que la familia no cambia desde su enlace** (propuesto el 08/11/2026). Desde su enlace, la familia no puede cambiar:
+    - la vía ni el curso: los fija la plaza reservada;
+    - «¿Alumna nueva?»: decide si firma el ideario y la protección de datos;
+    - los documentos marcados como «entregado en papel» (fotos, AlbaydarPLUS).
+
+    Eso lo cambia secretaría. ¿Queréis que la familia pueda marcar ella misma «lo entrego en papel», o lo confirma siempre secretaría al recibirlo?
 
 **Alumnado** (propuesto el 08/11/2026)
 
