@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { generarIcs } from '../src/correo/ics';
 import { diaLargo, fechaLocal, franja, horaLocalAUtc } from '../src/lib/fechas';
 import { tipoReal } from '../src/lib/storage';
-import { euros, formatearIban, ibanValido } from '../src/lib/dinero';
+import { bicValido, enmascararIban, euros, formatearIban, ibanSepaValido, ibanValido, identificadorAcreedorValido } from '../src/lib/dinero';
 import { diasRestantes, fechaTexto } from '../src/modules/reservas/reservas.service';
 import { columnaDe, cursoEscolarCorto, puedeTransicionar, siguientesEstados } from '../src/modules/solicitudes/dominio';
 import { revisar, type EntradaRevision } from '../src/modules/solicitudes/revision';
@@ -12,6 +12,8 @@ import { documentoValido, normalizarDocumento } from '../src/lib/documento-ident
 import { borradorSchema, borradorVacio } from '../src/modules/matricula/borrador';
 import { caducidadEnlace, cursoEscolarSiguiente, formatoCodigoMatricula } from '../src/modules/matricula/dominio';
 import { jsonCanonico } from '../src/modules/matricula/matricula.service';
+import { MATRICULA_POR_DEFECTO } from '../src/modules/ajustes/ajustes.service';
+import { cambiosEntre, contenidoFirmado, generarDocumento } from '../src/modules/matricula/documentos/generar';
 import { canSubmit, enrollmentFlow, stepMissing } from '../src/modules/matricula/reglas';
 
 const base: EntradaRevision = {
@@ -357,5 +359,44 @@ describe('Matrícula: borrador y reglas', () => {
   it('jsonCanonico no depende del orden de las claves (jsonb las reordena)', () => {
     expect(jsonCanonico({ b: 1, a: { d: [1, { y: 2, x: 1 }], c: null } })).toBe(jsonCanonico({ a: { c: null, d: [1, { x: 1, y: 2 }] }, b: 1 }));
     expect(jsonCanonico({ a: 1 })).not.toBe(jsonCanonico({ a: 2 }));
+  });
+});
+
+describe('Matrícula: documentos con huella y datos bancarios', () => {
+  const exp = () => ({ ...borradorVacio(), via: 'bach' as const, course: '1' as const, photo: null, documents: {}, signatures: {} });
+  const ctx = { familia: 'BACHILLERATO' as const, cursoEscolar: '2027-2028', config: MATRICULA_POR_DEFECTO };
+
+  it('la huella no depende de la fecha (es la de la firma) pero sí de cualquier dato que se ve', () => {
+    const e = exp();
+    const a = generarDocumento('sepa', e, { ...ctx, fecha: new Date('2027-06-10T10:00:00Z') });
+    const b = generarDocumento('sepa', e, { ...ctx, fecha: new Date('2027-07-01T10:00:00Z') });
+    expect(a.huella).toBe(b.huella);
+    expect(JSON.stringify(a)).toContain('10 de junio de 2027');
+    const c = generarDocumento('sepa', { ...e, economic: { ...e.economic, sepa: { ...e.economic.sepa, iban: 'ES9121000418450200051332' } } }, ctx);
+    expect(c.huella).not.toBe(a.huella);
+    expect(cambiosEntre(contenidoFirmado(a), c)).toEqual(['Número de cuenta · IBAN']);
+    // Un dato que no sale en el documento no cambia la huella.
+    expect(generarDocumento('sepa', { ...e, pasen: { enabled: true, holder: 'X', phone: '1' } }, ctx).huella).toBe(a.huella);
+  });
+
+  it('GS concertado: acreedor propio y cargo único sin elección', () => {
+    const e = { ...exp(), via: 'gs' as const };
+    const d = generarDocumento('sepa', e, { ...ctx, familia: 'CICLOS_CONCERTADOS_GS' });
+    expect(JSON.stringify(d)).toContain('ES09605G41829037');
+    const opcion = d.paginas[0]!.bloques.find((b) => b.tipo === 'opcion');
+    expect(opcion).toMatchObject({ aviso: null, opciones: [{ etiqueta: 'Pago único', marcada: true }] });
+    expect(d.nota).toBe('Cargo único anual de 180,30 € en septiembre');
+  });
+
+  it('IBAN de la zona SEPA, BIC, identificador de acreedor (AT-02) y enmascarado', () => {
+    expect(ibanSepaValido('es91 2100 0418 4502 0005 1332')).toBe(true);
+    expect(ibanSepaValido('ES9121000418450200051333')).toBe(false); // control
+    expect(ibanSepaValido('BR1800360305000010009795493C1')).toBe(false); // fuera de SEPA
+    expect(bicValido('CAIXESBBXXX')).toBe(true);
+    expect(bicValido('CAIXESB')).toBe(false);
+    expect(identificadorAcreedorValido('ES09000G41829037')).toBe(true);
+    expect(identificadorAcreedorValido('ES09605G41829037')).toBe(true); // el sufijo no cuenta en el control
+    expect(identificadorAcreedorValido('G-41829037/605')).toBe(false);
+    expect(enmascararIban('ES9121000418450200051332')).toBe('ES91 **** **** **** **** 1332');
   });
 });

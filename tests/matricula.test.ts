@@ -327,3 +327,203 @@ describe('Matrícula digital: apertura, borrador, enlaces y renovación', () => 
     expect((await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: id })).body.error.code).toBe('ALUMNA_DE_BAJA');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Matrícula digital: documentos con huella, firmas y mandatos SEPA', () => {
+  /** Lo que comprueba la API es la firma de bytes del PNG; el contenido da igual para los tests. */
+  const png = (bytes = 300, relleno = 7) =>
+    `data:image/png;base64,${Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(bytes, relleno)]).toString('base64')}`;
+
+  let id = '';
+  let token = '';
+  const pub = (ruta = '') => request(app).get(`/api/public/matricula/${token}${ruta}`);
+  const doc = async (d: string, t = token) => (await request(app).get(`/api/public/matricula/${t}/documentos/${d}`)).body;
+  const firmar = (hueco: string, huella: string, imagen = png(), t = token) => request(app).post(`/api/public/matricula/${t}/firmas/${hueco}`).send({ imagen, huella });
+  const leer = (...paginas: string[]) => request(app).post(`/api/public/matricula/${token}/paginas-leidas`).send({ paginas });
+  /** Cambia el borrador desde el enlace de la familia, con la versión actual. */
+  const cambiar = async (f: (b: any) => void) => {
+    const actual = (await pub()).body;
+    const b = structuredClone(actual.borrador);
+    f(b);
+    const r = await guardarFamilia(token, b, actual.version);
+    expect(r.status).toBe(200);
+    return r.body;
+  };
+  const firmaDe = (vista: { firmas: { hueco: string }[] }, hueco: string) => vista.firmas.find((f) => f.hueco === hueco) as any;
+
+  it('el documento lo da la API, rellenado con los datos y con su huella', async () => {
+    const s = await reservaPagada('Sara');
+    const r = await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: s.alumnaId, enviarEnlace: false });
+    id = r.body.matricula.id;
+    token = r.body.enlace.url.split('/').at(-1);
+
+    const d = await doc('impreso');
+    expect(d).toMatchObject({ id: 'impreso', version: 'impreso@2026-1', nombre: 'Impreso de matriculación', puedeFirmar: false, paginasLeidas: [], firmas: {} });
+    expect(d.huella).toMatch(/^[0-9a-f]{64}$/);
+    expect(d.paginas).toHaveLength(1);
+    expect(d.paginas[0].bloques[0]).toEqual({ tipo: 'titulo', texto: 'IMPRESO DE MATRICULACIÓN · CURSO 2027/28' });
+    const campos = d.paginas[0].bloques.filter((b: { tipo: string }) => b.tipo === 'campos').flatMap((b: { campos: unknown[] }) => b.campos);
+    expect(campos).toContainEqual({ etiqueta: 'Nombre', valor: 'Sara' });
+    expect(campos).toContainEqual({ etiqueta: 'Curso y grupo', valor: '1º Bachillerato' });
+    expect(d.paginas[0].firma).toMatchObject({ declaracion: 'He leído el documento completo y lo firmo.', huecos: [{ id: 'impreso-titular', etiqueta: 'Firma' }] });
+    // La misma matrícula da siempre la misma huella; la fecha (la de la firma) no entra en ella.
+    expect((await doc('impreso')).huella).toBe(d.huella);
+    expect((await doc('lopd')).paginas).toHaveLength(7);
+    expect((await pub('/documentos/plus')).status).toBe(404); // AlbaydarPLUS no es de Bachillerato
+  });
+
+  it('firmar exige leer el documento entero, la huella que se ve y un PNG de verdad', async () => {
+    const d = await doc('impreso');
+    const sinLeer = await firmar('impreso-titular', d.huella);
+    expect(sinLeer.status).toBe(409);
+    expect(sinLeer.body.error).toMatchObject({ code: 'DOCUMENTO_SIN_LEER', details: { faltan: ['impreso-1'] } });
+
+    await leer('impreso-1');
+    const otra = await firmar('impreso-titular', 'a'.repeat(64));
+    expect(otra.body.error).toMatchObject({ code: 'DOCUMENTO_CAMBIADO', details: { huella: d.huella } });
+    expect((await firmar('impreso-titular', d.huella, 'data:image/jpeg;base64,AAAA')).body.error.code).toBe('FIRMA_NO_VALIDA');
+    expect((await firmar('impreso-titular', d.huella, `data:image/png;base64,${Buffer.from('no es un png, solo texto plano'.repeat(10)).toString('base64')}`)).body.error.code).toBe('FIRMA_NO_VALIDA');
+    // Más de 200 KB: su ruta tiene su propio límite de cuerpo, así que responde la API, no un 413.
+    const grande = await firmar('impreso-titular', d.huella, png(210 * 1024));
+    expect(grande.status).toBe(400);
+    expect(grande.body.error.message).toBe('La imagen de la firma supera 200 KB.');
+    expect((await firmar('plus-titular', d.huella)).body.error.code).toBe('DOCUMENTO_NO_APLICA');
+
+    const ok = await firmar('impreso-titular', d.huella);
+    expect(ok.status).toBe(201);
+    expect(ok.body.borrador.signatures['impreso-titular'].signedAt).toBeTruthy();
+    expect(ok.body.borrador.signatures['impreso-titular']).not.toHaveProperty('image');
+    expect(firmaDe(ok.body, 'impreso-titular')).toMatchObject({ documento: 'impreso', estado: 'VALIDA', motivo: null, enlace: { alcance: 'FAMILIA' }, enSecretaria: false });
+
+    const conFirma = await doc('impreso');
+    expect(conFirma.huella).toBe(d.huella);
+    expect(conFirma.firmas['impreso-titular'].imagen).toBe(png());
+    const fecha = conFirma.paginas[0].bloques.find((b: { tipo: string }) => b.tipo === 'fecha');
+    expect(fecha.texto).toMatch(new RegExp(`^En Sevilla, a \\d{1,2} de [a-z]+ de ${new Date().getFullYear()}\\.$`));
+
+    const h = (await ficha(id)).historial;
+    expect(h[0]).toMatchObject({ tipo: 'FIRMADA', texto: 'Impreso de matriculación · firma', autor: 'Familia' });
+  });
+
+  it('una firma vale mientras su documento no cambie: si cambia un dato que sale en él, se anula', async () => {
+    // PASEN no sale en el impreso: la firma sigue.
+    let v = await cambiar((b) => (b.pasen.enabled = false));
+    expect(firmaDe(v, 'impreso-titular').estado).toBe('VALIDA');
+
+    v = await cambiar((b) => (b.student.firstName = 'Sarah'));
+    expect(v.borrador.signatures).toEqual({});
+    expect(firmaDe(v, 'impreso-titular')).toMatchObject({ estado: 'ANULADA', motivo: 'Cambió: Nombre' });
+    const h = (await ficha(id)).historial;
+    expect(h.find((e: { tipo: string }) => e.tipo === 'FIRMA_ANULADA').texto).toBe('Hay que volver a firmar «Impreso de matriculación». Cambió: Nombre');
+
+    // Se vuelve a firmar con el documento nuevo.
+    const d = await doc('impreso');
+    expect((await firmar('impreso-titular', d.huella)).status).toBe(201);
+  });
+
+  it('LOPD: la DOP es obligatoria; cada progenitor, con su enlace, solo firma sus huecos y solo ve la LOPD', async () => {
+    await leer('lopd-1', 'lopd-2', 'lopd-3', 'lopd-4', 'lopd-5', 'lopd-6', 'lopd-7');
+    let d = await doc('lopd');
+    expect(d.puedeFirmar).toBe(false);
+    expect((await firmar('lopd-madre', d.huella)).body.error.code).toBe('FALTAN_DATOS');
+    const dop = d.paginas[2].bloques.find((b: { tipo: string }) => b.tipo === 'opcion');
+    expect(dop).toMatchObject({ campo: 'lopd.dop', aviso: 'Elija una de las dos opciones · obligatorio' });
+
+    await cambiar((b) => (b.lopd.dop = true));
+    d = await doc('lopd');
+    expect(d.puedeFirmar).toBe(true);
+    expect((await firmar('lopd-madre', d.huella)).status).toBe(201);
+
+    const padre = await request(app).post(`/api/matriculas/${id}/enlaces`).set(auth()).send({ alcance: 'PROGENITOR', progenitor: 'padre', enviar: false });
+    const tPadre = padre.body.enlace.url.split('/').at(-1);
+    const prohibido = await firmar('lopd-madre', d.huella, png(), tPadre);
+    expect(prohibido.status).toBe(403);
+    expect(prohibido.body.error.code).toBe('ENLACE_SIN_PERMISO');
+    expect((await request(app).get(`/api/public/matricula/${tPadre}/documentos/impreso`)).status).toBe(403);
+    const vPadre = await firmar('lopd-padre', (await doc('lopd', tPadre)).huella, png(400, 9), tPadre);
+    expect(vPadre.status).toBe(201);
+    expect(firmaDe(vPadre.body, 'lopd-padre')).toMatchObject({ estado: 'VALIDA', enlace: { alcance: 'PROGENITOR', progenitor: 'padre' } });
+
+    // Una autorización desmarcada cambia la LOPD: caen todas sus firmas, también la del padre.
+    const v = await cambiar((b) => (b.lopd.authorizations.a12 = false));
+    expect(firmaDe(v, 'lopd-padre')).toMatchObject({ estado: 'ANULADA', motivo: 'Cambió: Publicación de imágenes por el centro' });
+    expect(firmaDe(v, 'lopd-madre').estado).toBe('ANULADA');
+  });
+
+  it('orden SEPA: la cuenta se valida al firmar y la firma crea el mandato; cambiar la cuenta lo anula', async () => {
+    await leer('sepa-1');
+    await cambiar((b) => {
+      b.economic.sepa = { iban: 'ES91 2100 0418 4502 0005 1333', holder: 'Elena Tutora de Sara', holderDocument: '12345678A', bic: 'XX', paymentType: 'monthly' };
+    });
+    let d = await doc('sepa');
+    const acreedor = d.paginas[0].bloques.find((b: { tipo: string; titulo?: string }) => b.tipo === 'campos' && b.titulo === 'Datos del acreedor');
+    expect(acreedor.campos[0]).toEqual({ etiqueta: 'Identificador del acreedor', valor: 'ES09000G41829037' });
+    const mal = await firmar('sepa-titular', d.huella);
+    expect(mal.status).toBe(400);
+    expect(mal.body.error.code).toBe('DATOS_CUENTA_NO_VALIDOS');
+    expect(mal.body.error.details.errores).toHaveLength(3); // IBAN, DNI del titular y BIC
+
+    await cambiar((b) => {
+      b.economic.sepa = { ...b.economic.sepa, iban: 'ES9121000418450200051332', holderDocument: '12345678Z', bic: '' };
+    });
+    d = await doc('sepa');
+    const ok = await firmar('sepa-titular', d.huella);
+    expect(ok.status).toBe(201);
+    expect(ok.body.mandatos).toEqual([
+      expect.objectContaining({
+        referencia: expect.stringMatching(/^M-2027-\d{4}-SEPA1$/), tipo: 'SEPA', secuencia: 'RCUR', esquema: 'CORE', estado: 'VIGENTE',
+        acreedor: { identificador: 'ES09000G41829037', nombre: 'Albaydar' }, iban: 'ES91 **** **** **** **** 1332', titularDocumento: null, bic: null,
+      }),
+    ]);
+    // Secretaría ve la cuenta entera en la ficha.
+    expect((await ficha(id)).mandatos[0]).toMatchObject({ iban: 'ES9121000418450200051332', titularDocumento: '12345678Z' });
+
+    // Otra modalidad de pago cambia la orden: mandato anulado; al volver a firmar, SEPA2 de cargo único.
+    let v = await cambiar((b) => (b.economic.sepa.paymentType = 'single'));
+    expect(firmaDe(v, 'sepa-titular')).toMatchObject({ estado: 'ANULADA', motivo: 'Cambió: Pago por mensualidades, Pago único' });
+    expect(v.mandatos[0]).toMatchObject({ estado: 'ANULADO', anulado: { motivo: 'Cambió: Pago por mensualidades, Pago único' } });
+    v = (await firmar('sepa-titular', (await doc('sepa')).huella)).body;
+    expect(v.mandatos.map((x: { referencia: string; secuencia: string; estado: string }) => [x.referencia.slice(-5), x.secuencia, x.estado])).toEqual([
+      ['SEPA1', 'RCUR', 'ANULADO'],
+      ['SEPA2', 'OOFF', 'VIGENTE'],
+    ]);
+  });
+
+  it('acreedores en la configuración: cambiar el de la vía deja la orden firmada pendiente de volver a firmar', async () => {
+    const cfg = await request(app).get('/api/matriculas/configuracion').set(auth());
+    expect(cfg.body.acreedorPorFamilia.CICLOS_CONCERTADOS_GS).toBe('gs-concertado');
+    const nueva = structuredClone(cfg.body);
+    expect((await request(app).put('/api/matriculas/configuracion').set(auth()).send(nueva)).status).toBe(403);
+    nueva.acreedores[0].identificador = 'ES10000G41829037';
+    const mal = await request(app).put('/api/matriculas/configuracion').set(auth('direccion')).send(nueva);
+    expect(mal.status).toBe(400);
+    nueva.acreedores.push({ id: 'nuevo', nombre: 'Albaydar', direccion: 'Avd. La Palmera 36 · 41012 Sevilla · España', identificador: 'ES09001G41829037' });
+    nueva.acreedores[0].identificador = 'ES09000G41829037';
+    nueva.acreedorPorFamilia.BACHILLERATO = 'nuevo';
+    expect((await request(app).put('/api/matriculas/configuracion').set(auth('direccion')).send(nueva)).status).toBe(200);
+
+    const f = await ficha(id);
+    expect(firmaDe(f, 'sepa-titular')).toMatchObject({ estado: 'DESACTUALIZADA', motivo: 'Cambió: Identificador del acreedor' });
+    expect(f.borrador.signatures['sepa-titular']).toBeUndefined();
+    // Se deja como estaba para el resto.
+    nueva.acreedorPorFamilia.BACHILLERATO = 'general';
+    await request(app).put('/api/matriculas/configuracion').set(auth('direccion')).send(nueva);
+    expect(firmaDe(await ficha(id), 'sepa-titular').estado).toBe('VALIDA');
+  });
+
+  it('secretaría firma con la familia delante; borrar una firma la anula, no la borra', async () => {
+    await leer('ideario-1');
+    const d = (await request(app).get(`/api/matriculas/${id}/documentos/ideario`).set(auth())).body;
+    expect(d.paginas[0].firma.huecos[0]).toMatchObject({ id: 'ideario-titular', subtitulo: 'Si es mayor de edad, por la interesada' });
+    const r = await request(app).post(`/api/matriculas/${id}/firmas/ideario-titular`).set(auth()).send({ imagen: png(), huella: d.huella });
+    expect(r.status).toBe(201);
+    expect(firmaDe(r.body, 'ideario-titular')).toMatchObject({ estado: 'VALIDA', enlace: null, enSecretaria: true });
+    expect(r.body.historial[0]).toMatchObject({ tipo: 'FIRMADA', autor: 'María Reyes' });
+    expect((await request(app).post(`/api/matriculas/${id}/firmas/ideario-titular`).set(auth('administracion')).send({ imagen: png(), huella: d.huella })).status).toBe(403);
+
+    const b = await request(app).delete(`/api/public/matricula/${token}/firmas/ideario-titular`);
+    expect(firmaDe(b.body, 'ideario-titular')).toMatchObject({ estado: 'ANULADA', motivo: 'Borrada' });
+    expect((await request(app).delete(`/api/public/matricula/${token}/firmas/ideario-titular`)).status).toBe(404);
+    expect((await ficha(id)).historial[0]).toMatchObject({ tipo: 'FIRMA_BORRADA', autor: 'Familia' });
+  });
+});
