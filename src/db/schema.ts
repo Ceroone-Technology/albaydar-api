@@ -116,6 +116,19 @@ export const estadoReservaEnum = pgEnum('estado_reserva', [
 export const conceptoCobroEnum = pgEnum('concepto_cobro', ['RESERVA_PLAZA']);
 export const metodoPagoEnum = pgEnum('metodo_pago', ['TRANSFERENCIA', 'EFECTIVO']);
 
+/** Expediente del alumnado. Etiquetas del mockup: ver modules/alumnado/dominio.ts. */
+export const estadoAlumnaEnum = pgEnum('estado_alumna', [
+  'RESERVA', //     plaza reservada y pagada; la matrícula aún no ha empezado
+  'EN_PROCESO', //  matrícula en curso (también el alumnado que asigna la Junta)
+  'MATRICULADA', // alumna del centro
+  'BAJA',
+]);
+
+/** De dónde sale el expediente. */
+export const origenAlumnaEnum = pgEnum('origen_alumna', ['ADMISION', 'MANUAL', 'SENECA']);
+
+export const tipoEventoAlumnaEnum = pgEnum('tipo_evento_alumna', ['ALTA', 'EDICION', 'ESTADO', 'BAJA', 'REACTIVADA', 'NOTA']);
+
 // ── Usuarios internos y sesiones ────────────────────────────────────────────
 
 export const usuarios = pgTable('usuarios', {
@@ -593,6 +606,100 @@ export const secuencias = pgTable('secuencias', {
   valor: integer('valor').notNull().default(0),
 });
 
+// ── Alumnado ────────────────────────────────────────────────────────────────
+
+/**
+ * Expediente de cada alumna. Nace al pagar la reserva (desde la solicitud), por alta manual
+ * o importado de Séneca. Los datos que la solicitud no recoge (documento, nacimiento,
+ * domicilio) quedan vacíos hasta que secretaría o la matrícula los completen.
+ */
+export const alumnas = pgTable(
+  'alumnas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** EXP-2026-0001, correlativo por año de alta (formato del mockup). */
+    expediente: text('expediente').notNull().unique(),
+    nombre: text('nombre').notNull(),
+    apellidos: text('apellidos').notNull(),
+    /** DNI o NIE normalizado (lib/documento-identidad.ts). Único si lo hay. */
+    documento: text('documento'),
+    email: text('email'),
+    telefono: text('telefono'),
+    fechaNacimiento: date('fecha_nacimiento', { mode: 'string' }),
+    domicilio: text('domicilio'),
+    familia: familiaViaEnum('familia').notNull(),
+    curso: integer('curso').notNull(),
+    /** "2027-2028". */
+    cursoEscolar: text('curso_escolar').notNull(),
+    /** Modalidad de Bachillerato o ciclo (texto mientras el centro no dé su catálogo). */
+    estudios: text('estudios'),
+    estado: estadoAlumnaEnum('estado').notNull(),
+    origen: origenAlumnaEnum('origen').notNull(),
+    /** Solicitud de admisión de la que viene, si la hay. */
+    solicitudId: uuid('solicitud_id')
+      .unique()
+      .references(() => solicitudes.id, { onDelete: 'set null' }),
+    /** Para la renovación 1º → 2º: null = sin decidir. */
+    promociona: boolean('promociona'),
+    fechaAlta: date('fecha_alta', { mode: 'string' }).notNull(),
+    fechaBaja: date('fecha_baja', { mode: 'string' }),
+    motivoBaja: text('motivo_baja'),
+    creadaPorId: uuid('creada_por_id').references(() => usuarios.id),
+    createdAt: creado(),
+    updatedAt: actualizado(),
+  },
+  (t) => [
+    uniqueIndex('alumnas_documento_uq').on(t.documento).where(sql`${t.documento} is not null`),
+    index('alumnas_estado_idx').on(t.estado),
+    index('alumnas_apellidos_idx').on(t.apellidos, t.nombre),
+    check('alumnas_curso_chk', sql`${t.curso} in (1, 2)`),
+    check('alumnas_baja_chk', sql`(${t.estado} = 'BAJA') = (${t.fechaBaja} is not null)`),
+  ],
+);
+
+/** Madre, padre, tutor u otro contacto. Como mucho uno principal por alumna. */
+export const alumnaContactos = pgTable(
+  'alumna_contactos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    alumnaId: uuid('alumna_id')
+      .notNull()
+      .references(() => alumnas.id, { onDelete: 'cascade' }),
+    parentesco: text('parentesco').notNull(),
+    nombre: text('nombre').notNull(),
+    telefono: text('telefono').notNull(),
+    /** En minúsculas. */
+    email: text('email'),
+    principal: boolean('principal').notNull().default(false),
+    orden: integer('orden').notNull().default(0),
+  },
+  (t) => [
+    index('alumna_contactos_alumna_idx').on(t.alumnaId),
+    index('alumna_contactos_email_idx').on(t.email),
+    index('alumna_contactos_telefono_idx').on(t.telefono),
+    uniqueIndex('alumna_contactos_principal_uq').on(t.alumnaId).where(sql`${t.principal}`),
+  ],
+);
+
+/** Historial propio del expediente: altas, cambios, bajas y notas internas. */
+export const alumnaEventos = pgTable(
+  'alumna_eventos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    alumnaId: uuid('alumna_id')
+      .notNull()
+      .references(() => alumnas.id, { onDelete: 'cascade' }),
+    tipo: tipoEventoAlumnaEnum('tipo').notNull(),
+    /** La nota, el motivo o un resumen legible del cambio. */
+    texto: text('texto'),
+    detalle: jsonb('detalle').$type<Record<string, unknown>>(),
+    usuarioId: uuid('usuario_id').references(() => usuarios.id),
+    /** clock_timestamp(): varios eventos de una misma transacción quedan en orden (trampa 14). */
+    createdAt: ts('created_at').notNull().default(sql`clock_timestamp()`),
+  },
+  (t) => [index('alumna_eventos_alumna_idx').on(t.alumnaId, t.createdAt)],
+);
+
 // ── Tipos inferidos ─────────────────────────────────────────────────────────
 export type Usuario = typeof usuarios.$inferSelect;
 export type Via = typeof vias.$inferSelect;
@@ -611,3 +718,7 @@ export type Documento = typeof documentos.$inferSelect;
 export type Reserva = typeof reservas.$inferSelect;
 export type Cobro = typeof cobros.$inferSelect;
 export type MetodoPago = (typeof metodoPagoEnum.enumValues)[number];
+export type Alumna = typeof alumnas.$inferSelect;
+export type AlumnaContacto = typeof alumnaContactos.$inferSelect;
+export type EstadoAlumna = (typeof estadoAlumnaEnum.enumValues)[number];
+export type OrigenAlumna = (typeof origenAlumnaEnum.enumValues)[number];
