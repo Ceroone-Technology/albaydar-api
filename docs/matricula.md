@@ -149,23 +149,23 @@ Orden de trabajo: primero **Alumnado** (la matrícula cuelga de una alumna, punt
 - **Alumnado primero.** El módulo crea la tabla `alumnas`, con:
   - datos personales;
   - vía y curso actuales;
-  - estado: `EN_MATRICULA` → `ACTIVA` → `BAJA`;
+  - estado, con los textos del mockup: `RESERVA` («Reserva confirmada») → `EN_PROCESO` («En proceso») → `MATRICULADA` → `BAJA` (hecho el 08/11/2026: `src/modules/alumnado`);
   - tutores y contacto;
   - `solicitudId` opcional: la de origen, si la hubo.
 - **Matrícula.** `matriculas` lleva `alumnaId` obligatorio, `solicitudId` **opcional**, `cursoEscolar` y `nuevaAlumna`. Hay una sola matrícula por alumna y curso escolar (único en BD).
 - **De dónde sale una matrícula:**
-  - **Admisión.** Al pagar la reserva, se crea la alumna (`EN_MATRICULA`) y su matrícula precargada con los datos de la solicitud (`nuevaAlumna = true`).
-  - **Continuación (renovación 1º → 2º).** Secretaría abre la matrícula del curso siguiente para una alumna `ACTIVA`, o para todas las de 1º de una vía a la vez. Se precarga con la matrícula anterior y `nuevaAlumna = false`. Por eso no hay ideario ni LOPD: es la regla `isNewStudent` del front.
+  - **Admisión.** Al pagar la reserva, se crea la alumna (`RESERVA`; ya lo hace el cobro desde el 08/11/2026) y, al abrir el enlace de matrícula, su matrícula precargada (la alumna pasa a `EN_PROCESO`) con los datos de la solicitud (`nuevaAlumna = true`).
+  - **Continuación (renovación 1º → 2º).** Secretaría abre la matrícula del curso siguiente para una alumna `MATRICULADA`, o para todas las de 1º de una vía a la vez. Se precarga con la matrícula anterior y `nuevaAlumna = false`. Por eso no hay ideario ni LOPD: es la regla `isNewStudent` del front.
     - **Quién promociona** (reunión del 21/10). La apertura en bloque solo incluye a las alumnas marcadas con `promociona`. Esa marca la pone secretaría a mano, una a una o en bloque, o llega en la importación de Séneca.
     - Las calificaciones no se gestionan en la plataforma: están en Séneca, y lo que se decida sobre Untis no cambia esto.
   - **Alumnado asignado por la Junta de Andalucía** (reunión del 21/10). Entra directo a matrícula, sin solicitud ni entrevista:
     - se importa desde Séneca (fichero ahora; API si la Junta la ofrece), o se da de alta a mano;
-    - crea la alumna y su matrícula precargada con `nuevaAlumna = true`;
+    - crea la alumna en `EN_PROCESO` (origen `SENECA`) y su matrícula precargada con `nuevaAlumna = true`;
     - no ocupa plaza de admisión: no pasa por el embudo.
   - **Alta manual.** Una alumna sin solicitud ni matrícula previa, para casos excepcionales.
-- **Al pasar a `EXPORTADA`,** la alumna queda `ACTIVA` y la solicitud, si la hay, `MATRICULADA`.
+- **Al pasar a `EXPORTADA`,** la alumna queda `MATRICULADA` y la solicitud, si la hay, `MATRICULADA`.
 - **Carga inicial:** las alumnas que hoy están en 1º se importan una vez desde un CSV o Excel sacado de Séneca. **Hace falta ese listado del centro (27).** La misma importación sirve para el alumnado de la Junta: un único importador de Séneca con vista previa y errores por fila, que no escribe nada hasta confirmar.
-- **«Familia ya vinculada»** pasa a comprobar también contra las alumnas activas y sus tutores (pregunta 6).
+- **«Familia ya vinculada»** ya comprueba también los contactos de las alumnas que no están de baja (hecho el 08/11/2026; pregunta 6).
 
 ## 9. Fichero de Séneca
 

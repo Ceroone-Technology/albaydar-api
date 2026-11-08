@@ -1238,3 +1238,209 @@ describe('Exportaciones CSV', () => {
   });
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Alumnado: expedientes, familias e historial', () => {
+  let tel = 0;
+  const telefono = () => `+34 611 700 ${String(++tel).padStart(3, '0')}`;
+  const alumnado = (query = '', quien = 'secretaria') => request(app).get(`/api/alumnado${query}`).set(auth(quien));
+  const fichaAlumna = async (id: string) => (await request(app).get(`/api/alumnado/${id}`).set(auth())).body;
+
+  /** Solicitud admitida con su reserva pendiente. */
+  async function admitida(nombre: string, tutorTelefono = telefono()) {
+    const email = `${nombre.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')}.alumnado@example.com`;
+    const r = await request(app).post('/api/solicitudes').set(auth()).send({
+      viaId: viaBach, alumnaNombre: nombre, alumnaApellidos: 'Expediente Prueba', tutorNombre: `Tutora de ${nombre}`, email: email.toUpperCase(),
+      telefono: tutorTelefono, centroProcedencia: 'IES Bécquer', modalidadInteres: 'Ciencias', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
+    });
+    await db.update(solicitudes).set({ estado: 'ENTREVISTA_REALIZADA' }).where(eq(solicitudes.id, r.body.id));
+    expect((await request(app).post(`/api/solicitudes/${r.body.id}/decision`).set(auth('direccion')).send({ decision: 'ADMITIDA' })).status).toBe(200);
+    return { id: r.body.id as string, codigo: r.body.codigo as string, email };
+  }
+  /** Paga lo que falte (otro bloque cambió el importe de la reserva de esta vía). */
+  const pagar = async (solicitudId: string) => {
+    const { pendiente } = (await request(app).get(`/api/solicitudes/${solicitudId}`).set(auth('direccion'))).body.reserva;
+    return request(app).post('/api/cobros').set(auth('administracion')).send({ solicitudId, importe: pendiente, metodo: 'TRANSFERENCIA', notificar: false });
+  };
+
+  const valida = {
+    nombre: 'Julia', apellidos: 'Herrera Cifuentes', documento: '49.218.735-t', fechaNacimiento: '2010-06-02',
+    familia: 'BACHILLERATO', curso: 1, cursoEscolar: '2026-2027', estado: 'MATRICULADA',
+    contactos: [
+      { parentesco: 'Madre', nombre: 'Lucía Cifuentes Mora', telefono: '+34 699 100 200', email: ' LCifuentes@Example.com ' },
+      { parentesco: 'Padre', nombre: 'Andrés Herrera Gil', telefono: '+34 699 100 201', email: '' },
+    ],
+  };
+  let julia = '';
+
+  it('pagar la reserva crea el expediente en «Reserva confirmada», con la tutora como contacto principal', async () => {
+    const s = await admitida('Carmen');
+    expect((await alumnado('?q=carmen expediente')).body.total).toBe(0); // admitida, aún sin pagar
+    expect((await pagar(s.id)).body.reserva.estado).toBe('PAGADA');
+
+    const l = await alumnado('?q=Carmen Expediente');
+    expect(l.body.total).toBe(1);
+    const a = l.body.items[0];
+    expect(a.expediente).toMatch(/^EXP-\d{4}-\d{4}$/);
+    expect(a).toMatchObject({
+      nombreCompleto: 'Carmen Expediente Prueba', estado: 'RESERVA', estadoEtiqueta: 'Reserva confirmada', estadoTono: 'blue',
+      origen: 'ADMISION', familia: 'BACHILLERATO', curso: 1, cursoEtiqueta: 'Bachillerato 1º', cursoEscolar: '2027-2028',
+      estudios: 'Ciencias', documento: null, baja: null, solicitud: { id: s.id, codigo: s.codigo },
+    });
+    expect(a.contactos).toEqual([expect.objectContaining({ parentesco: 'Madre, padre o tutor', nombre: 'Tutora de Carmen', email: s.email, principal: true })]);
+
+    // El historial junta la solicitud, los correos a la familia, el cobro y el alta.
+    const f = await fichaAlumna(a.id);
+    const tipos = f.historial.map((h: { tipo: string }) => h.tipo);
+    expect(tipos).toEqual(expect.arrayContaining(['REGISTRO', 'CORREO', 'COBRO']));
+    expect(f.historial.find((h: { tipo: string }) => h.tipo === 'COBRO').titulo).toMatch(/^Reserva de plaza · \d+,00.€$/);
+    expect(f.historial.at(-1).titulo).toBe('Solicitud recibida');
+    expect(f.historial.find((h: { titulo: string }) => h.titulo === 'Alta del expediente').descripcion).toBe(`Plaza reservada · solicitud ${s.codigo}`);
+  });
+
+  it('anular el cobro retira el expediente: se borra si nadie lo tocó; con una nota, pasa a baja y vuelve al pagar', async () => {
+    const anularUltimo = async (solicitudId: string) => {
+      const c = (await request(app).get(`/api/cobros?solicitudId=${solicitudId}&incluirAnulados=false`).set(auth('administracion'))).body.items[0];
+      return request(app).post(`/api/cobros/${c.id}/anular`).set(auth('administracion')).send({ motivo: 'Transferencia devuelta' });
+    };
+
+    const sin = await admitida('Rocío');
+    await pagar(sin.id);
+    expect((await alumnado('?q=rocio expediente')).body.total).toBe(1); // sin tilde también la encuentra
+    await anularUltimo(sin.id);
+    expect((await alumnado('?q=rocio expediente')).body.total).toBe(0);
+
+    const con = await admitida('Inés');
+    await pagar(con.id);
+    const id = (await alumnado('?q=Inés Expediente')).body.items[0].id;
+    expect((await request(app).post(`/api/alumnado/${id}/notas`).set(auth()).send({ texto: 'La familia llamó para preguntar por el uniforme.' })).status).toBe(201);
+    await anularUltimo(con.id);
+    let f = await fichaAlumna(id);
+    expect(f).toMatchObject({ estado: 'BAJA', baja: { motivo: 'Reserva anulada: se anuló el cobro que la confirmaba' } });
+
+    await pagar(con.id);
+    f = await fichaAlumna(id);
+    expect(f).toMatchObject({ estado: 'RESERVA', baja: null });
+    expect(f.historial[0].titulo).toBe('Expediente reactivado');
+    expect((await alumnado('?q=Inés Expediente')).body.total).toBe(1); // el mismo expediente, no otro
+  });
+
+  it('alta manual: valida DNI/NIE, fecha y contactos; normaliza el documento y los correos', async () => {
+    const alta = (body: Record<string, unknown>, quien = 'secretaria') => request(app).post('/api/alumnado').set(auth(quien)).send(body);
+    const mal = await alta({ ...valida, documento: '49218735A' });
+    expect(mal.status).toBe(400);
+    expect(mal.body.error.code).toBe('DATOS_INVALIDOS');
+    expect((await alta({ ...valida, fechaNacimiento: '2099-01-01' })).status).toBe(400);
+    expect((await alta({ ...valida, cursoEscolar: '2026-2028' })).status).toBe(400);
+    expect((await alta({ ...valida, contactos: valida.contactos.map((c) => ({ ...c, principal: true })) })).body.error.code).toBe('VARIOS_CONTACTOS_PRINCIPALES');
+    expect((await alta(valida, 'administracion')).status).toBe(403); // Administración solo ve
+
+    const r = await alta(valida);
+    expect(r.status).toBe(201);
+    julia = r.body.id;
+    expect(r.body).toMatchObject({ documento: '49218735T', origen: 'MANUAL', estadoEtiqueta: 'Matriculada', fechaAlta: fechaLocal(new Date()) });
+    expect(r.body.contactos.map((c: { email: string | null; principal: boolean }) => [c.email, c.principal])).toEqual([
+      ['lcifuentes@example.com', true],
+      [null, false],
+    ]);
+    expect(r.body.historial[0]).toMatchObject({ tipo: 'REGISTRO', titulo: 'Alta del expediente', descripcion: 'Alta manual · Matriculada', autor: 'María Reyes' });
+
+    const dup = await alta({ ...valida, nombre: 'Otra', documento: '49218735T' });
+    expect(dup.status).toBe(409);
+    expect(dup.body.error).toMatchObject({ code: 'DOCUMENTO_DUPLICADO', details: { expediente: r.body.expediente } });
+  });
+
+  it('editar: datos, contactos y estado quedan en el historial sin copiar los datos personales', async () => {
+    const editar = (body: Record<string, unknown>) => request(app).patch(`/api/alumnado/${julia}`).set(auth()).send(body);
+    expect((await editar({ expediente: 'EXP-9999-0001' })).status).toBe(400); // el expediente no se edita
+    const r = await editar({
+      domicilio: 'C/ Feria 12, 41003 Sevilla', estado: 'EN_PROCESO', promociona: true,
+      contactos: [{ parentesco: 'Padre', nombre: 'Andrés Herrera Gil', telefono: '+34 699 100 201' }],
+    });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ domicilio: 'C/ Feria 12, 41003 Sevilla', estado: 'EN_PROCESO', promociona: true });
+    expect(r.body.contactos).toEqual([expect.objectContaining({ nombre: 'Andrés Herrera Gil', principal: true })]);
+    const titulos = r.body.historial.slice(0, 2).map((h: { descripcion: string }) => h.descripcion);
+    expect(titulos).toEqual(expect.arrayContaining(['De «Matriculada» a «En proceso»', 'Cambia: domicilio, promoción, contactos de la familia']));
+    expect(JSON.stringify(r.body.historial)).not.toContain('Feria');
+    // Sin cambios reales, no se apunta nada.
+    const n = r.body.historial.length;
+    expect((await editar({ domicilio: 'C/ Feria 12, 41003 Sevilla' })).body.historial).toHaveLength(n);
+  });
+
+  it('baja con motivo y reactivación', async () => {
+    const baja = (body: Record<string, unknown>) => request(app).post(`/api/alumnado/${julia}/baja`).set(auth()).send(body);
+    expect((await baja({})).status).toBe(400);
+    expect((await baja({ motivo: 'Traslado', fecha: fechaLocal(sumarDias(new Date(), 2)) })).body.error.code).toBe('FECHA_FUTURA');
+    const r = await baja({ motivo: 'Traslado a otro centro' });
+    expect(r.body).toMatchObject({ estado: 'BAJA', estadoEtiqueta: 'Baja', baja: { fecha: fechaLocal(new Date()), motivo: 'Traslado a otro centro' } });
+    expect((await baja({ motivo: 'Otra vez' })).body.error.code).toBe('YA_DE_BAJA');
+    const vuelta = await request(app).patch(`/api/alumnado/${julia}`).set(auth()).send({ estado: 'MATRICULADA' });
+    expect(vuelta.body).toMatchObject({ estado: 'MATRICULADA', baja: null });
+    expect(vuelta.body.historial[0]).toMatchObject({ titulo: 'Expediente reactivado', descripcion: 'Vuelve a «Matriculada»' });
+  });
+
+  it('listado: búsqueda sin tildes por nombre, DNI o expediente, filtros y permisos', async () => {
+    const porDni = await alumnado('?q=49218735t');
+    expect(porDni.body.items.map((a: { id: string }) => a.id)).toEqual([julia]);
+    const exp = porDni.body.items[0].expediente as string;
+    expect((await alumnado(`?q=${exp.toLowerCase()}`)).body.total).toBe(1);
+    expect((await alumnado('?q=herrera cifuentes')).body.total).toBe(1);
+    expect((await alumnado('?q=Julia, Herrera')).body.total).toBe(0);
+    expect((await alumnado('?q=Herrera Cifuentes, Julia')).body.total).toBe(1);
+
+    const filtrado = await alumnado('?cursoEscolar=2026-2027&familia=BACHILLERATO&curso=1&promociona=true&estado=MATRICULADA');
+    expect(filtrado.body.items.map((a: { id: string }) => a.id)).toEqual([julia]);
+    const reservas = await alumnado('?estado=RESERVA&pageSize=200');
+    expect(reservas.body.items.every((a: { estado: string }) => a.estado === 'RESERVA')).toBe(true);
+
+    expect((await alumnado('', 'comercial')).status).toBe(200); // Comercial ve el alumnado…
+    expect((await request(app).post(`/api/alumnado/${julia}/notas`).set(auth('comercial')).send({ texto: 'x' })).status).toBe(403); // …pero no lo edita
+    expect((await request(app).get('/api/alumnado/00000000-0000-0000-0000-000000000000').set(auth())).body.error.code).toBe('ALUMNA_NO_ENCONTRADA');
+  });
+
+  it('exportación CSV con los mismos filtros', async () => {
+    const r = await request(app).get('/api/alumnado/exportar?q=Herrera Cifuentes').set(auth());
+    expect(r.headers['content-disposition']).toMatch(/^attachment; filename="alumnado-\d{4}-\d{2}-\d{2}\.csv"$/);
+    const lineas = r.text.replace(/^﻿/, '').trim().split('\r\n');
+    expect(lineas[0]).toMatch(/^Expediente;Apellidos;Nombre;DNI\/NIE;Fecha de nacimiento;Etapa;Curso;Curso escolar;/);
+    expect(lineas).toHaveLength(2);
+    expect(lineas[1]).toMatch(/^EXP-\d{4}-\d{4};Herrera Cifuentes;Julia;49218735T;02\/06\/2010;Bachillerato;1º;2026-2027;/);
+  });
+
+  it('migración 0008: las plazas reservadas antes del módulo reciben su expediente, numerado tras los existentes', async () => {
+    const s = await admitida('Olvido');
+    // Como antes del módulo: plaza reservada sin expediente.
+    await db.update(solicitudes).set({ estado: 'PLAZA_RESERVADA' }).where(eq(solicitudes.id, s.id));
+    const ultimo = (await alumnado('?pageSize=200')).body.items.map((a: { expediente: string }) => a.expediente).sort().at(-1) as string;
+    await db.execute(sql.raw(await readFile('./drizzle/0008_alumnas_reservas_antiguas.sql', 'utf8')));
+    const l = await alumnado('?q=Olvido Expediente');
+    expect(l.body.total).toBe(1);
+    const a = l.body.items[0];
+    expect(a).toMatchObject({ estado: 'RESERVA', origen: 'ADMISION', solicitud: { id: s.id }, contactos: [expect.objectContaining({ email: s.email, principal: true })] });
+    expect(Number(a.expediente.slice(-4))).toBe(Number(ultimo.slice(-4)) + 1);
+    // Idempotente, y la secuencia sigue: el siguiente alta no repite número.
+    await db.execute(sql.raw(await readFile('./drizzle/0008_alumnas_reservas_antiguas.sql', 'utf8')));
+    expect((await alumnado('?q=Olvido Expediente')).body.total).toBe(1);
+    const otra = await request(app).post('/api/alumnado').set(auth()).send({ ...valida, documento: '12345678Z', nombre: 'Siguiente' });
+    expect(Number(otra.body.expediente.slice(-4))).toBe(Number(a.expediente.slice(-4)) + 1);
+  });
+
+  it('«Familia ya vinculada» avisa si un contacto de una alumna del centro presenta otra solicitud', async () => {
+    const r = await request(app).post('/api/solicitudes').set(auth()).send({
+      viaId: viaBach, alumnaNombre: 'Sofía', alumnaApellidos: 'Herrera Gil', tutorNombre: 'Andrés Herrera Gil', email: 'aherrera@example.com',
+      telefono: '+34 699 100 201', centroProcedencia: 'IES Murillo', canal: 'TELEFONO', consentimientoPrivacidad: true,
+    });
+    const f = (await request(app).get(`/api/solicitudes/${r.body.id}`).set(auth())).body;
+    const familia = f.revision.checks.find((c: { id: string }) => c.id === 'familia');
+    expect(familia.resultado).toBe('aviso');
+    expect(familia.texto).toMatch(/alumna del centro Julia Herrera Cifuentes \(EXP-\d{4}-\d{4}\)/);
+    const k = await request(app).get('/api/solicitudes/pipeline?familiaVinculada=true').set(auth());
+    expect(k.body.columnas.flatMap((c: { items: { id: string }[] }) => c.items).map((i: { id: string }) => i.id)).toContain(r.body.id);
+
+    // La alumna que nació de una solicitud no la marca a ella misma.
+    const carmen = (await alumnado('?q=Carmen Expediente')).body.items[0];
+    const fc = (await request(app).get(`/api/solicitudes/${carmen.solicitud.id}`).set(auth())).body;
+    expect(fc.revision.checks.find((c: { id: string }) => c.id === 'familia').texto).not.toContain('alumna del centro');
+  });
+});

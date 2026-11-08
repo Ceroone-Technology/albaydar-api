@@ -10,6 +10,7 @@ import { CENTRO } from '../../config/env';
 import { enviarEvento } from '../../correo/enviar';
 import { escapar } from '../../correo/plantillas';
 import { reservaConfig } from '../ajustes/ajustes.service';
+import { altaDesdeReserva, retirarAltaDeReserva } from '../alumnado/alumnado.service';
 import { fechaTexto, pagadoPorReserva, vistaReserva } from '../reservas/reservas.service';
 import { cambiarEstado, datosCorreo, obtenerSolicitud, registrarEvento, siguienteValor, type Actor } from '../solicitudes/comun';
 import { ETIQUETA_CONCEPTO_COBRO, ETIQUETA_METODO_PAGO, cursoEscolarCorto } from '../solicitudes/dominio';
@@ -123,6 +124,8 @@ export async function registrar(d: z.infer<typeof registrarCobroBody>, usuarioId
     if (pagado + d.importe >= r.importe) {
       [reserva] = (await tx.update(reservas).set({ estado: 'PAGADA', pagadaEn: new Date() }).where(eq(reservas.id, r.id)).returning()) as [typeof r];
       if (s.estado === 'ADMITIDA') await cambiarEstado(tx, s, 'PLAZA_RESERVADA', actor, 'PLAZA_RESERVADA', { reservaId: r.id, recibo });
+      // Nace su expediente en Alumnado («Reserva confirmada»).
+      await altaDesdeReserva(tx, s, via, usuarioId);
     }
     // Justificante a la familia (outbox: sale si la transacción se confirma).
     let notificado = false;
@@ -177,6 +180,7 @@ export async function anular(id: string, motivo: string, usuarioId: string) {
           .where(eq(reservas.id, r!.id))
           .returning()) as [typeof actual];
         if (s.estado === 'PLAZA_RESERVADA') await cambiarEstado(tx, s, 'ADMITIDA', actor, 'RESERVA_REABIERTA', { reservaId: r!.id, cobroId: id });
+        await retirarAltaDeReserva(tx, s.id, usuarioId);
       }
       reserva = vistaReserva(actual, pagado);
     }

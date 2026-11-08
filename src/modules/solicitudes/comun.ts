@@ -15,6 +15,7 @@ import {
 import type { Tx } from '../../lib/db';
 import { conflict, notFound } from '../../lib/errors';
 import { hashToken, nuevoToken } from '../../lib/crypto';
+import { alumnasPorContacto } from '../alumnado/alumnado.service';
 import { nombrePila, nombreVia } from './dominio';
 import { revisar, type EntradaRevision, type ResultadoRevision } from './revision';
 
@@ -197,6 +198,7 @@ export async function calcularRevisiones(tx: Tx, filas: EntradaLote[]): Promise<
           .where(or(...(emails.length ? [inArray(solicitudes.email, emails)] : []), ...(telefonos.length ? [inArray(solicitudes.telefono, telefonos)] : [])))
           .orderBy(asc(solicitudes.createdAt))
       : [];
+  const delCentro = await alumnasPorContacto(tx, emails, telefonos);
 
   const ocupadasPorVia = new Map(ocupadas.map((o) => [o.viaId, o.n]));
   const ahora = new Date();
@@ -207,12 +209,19 @@ export async function calcularRevisiones(tx: Tx, filas: EntradaLote[]): Promise<
         .filter((o) => o.id !== f.id && ((!!email && o.email === email) || o.telefono === f.telefono))
         .slice(0, 5);
       const familia = email ? conocidas.find((c) => c.email === email) : undefined;
+      // La alumna que nació de esta misma solicitud no cuenta como vínculo.
+      const alumnasVinculadas = new Map(
+        delCentro
+          .filter((a) => a.solicitudId !== f.id && ((!!email && a.email === email.toLowerCase()) || a.telefono === f.telefono?.trim()))
+          .map((a) => [a.id, { expediente: a.expediente, alumna: `${a.nombre} ${a.apellidos}`.trim() }]),
+      );
       const r = revisar(
         {
           ...f,
           via: { nombre: f.via.nombre, plazas: f.via.plazas, plazasAsignadasPorJunta: f.via.plazasAsignadasPorJunta, ocupadas: ocupadasPorVia.get(f.via.id) ?? 0 },
           familia: familia ? { vinculo: familia.vinculo } : null,
           otrasSolicitudes: otras.map((o) => ({ codigo: o.codigo, alumna: `${o.n} ${o.a}` })),
+          alumnas: [...alumnasVinculadas.values()].slice(0, 3),
         },
         ahora,
       );

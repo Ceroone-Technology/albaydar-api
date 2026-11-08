@@ -8,6 +8,7 @@ import { columnaDe, cursoEscolarCorto, puedeTransicionar, siguientesEstados } fr
 import { revisar, type EntradaRevision } from '../src/modules/solicitudes/revision';
 import { combinarFicha, erroresFicha, faltanParaRealizada } from '../src/modules/entrevistas/ficha';
 import { aCsv, eurosCsv, fechaCsv } from '../src/lib/csv';
+import { documentoValido, normalizarDocumento } from '../src/lib/documento-identidad';
 
 const base: EntradaRevision = {
   alumnaNombre: 'Lucía',
@@ -61,6 +62,29 @@ describe('revisión: cinco comprobaciones', () => {
     expect(r.checks[3]).toMatchObject({ resultado: 'aviso', texto: 'Familia ya vinculada al centro · Hermana en 2º Bachillerato · Clara Márquez Peña' });
     expect(r.checks[4]).toMatchObject({ resultado: 'aviso', texto: 'Solicitud asignada por la Junta (SNEC) · comprobar el cupo de la resolución' });
     expect(r.puedeCitar).toBe(true);
+  });
+});
+
+describe('familia ya vinculada: alumnas del centro', () => {
+  it('una alumna con el mismo contacto avisa con su nombre y expediente', () => {
+    const r = revisar({ ...base, alumnas: [{ expediente: 'EXP-2026-0001', alumna: 'Clara Márquez Peña' }] });
+    const familia = r.checks.find((c) => c.id === 'familia')!;
+    expect(familia.resultado).toBe('aviso');
+    expect(familia.texto).toBe('Familia ya vinculada al centro · alumna del centro Clara Márquez Peña (EXP-2026-0001)');
+  });
+});
+
+describe('DNI y NIE', () => {
+  it('normaliza y comprueba la letra', () => {
+    expect(normalizarDocumento(' 12.345.678-z ')).toBe('12345678Z');
+    expect(normalizarDocumento('y-4821533-b')).toBe('Y4821533B');
+    expect(documentoValido('12345678Z')).toBe(true);
+    expect(documentoValido('12345678A')).toBe(false);
+    expect(documentoValido('X1234567L')).toBe(true);
+    expect(documentoValido('Y4821533B')).toBe(true);
+    expect(documentoValido('Z1234567R')).toBe(true);
+    expect(documentoValido('1234567Z')).toBe(false);
+    expect(documentoValido('A1234567L')).toBe(false);
   });
 });
 
