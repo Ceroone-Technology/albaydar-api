@@ -12,6 +12,7 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
+  customType,
   date,
   index,
   integer,
@@ -25,6 +26,9 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+
+/** Bytes (PNG de las firmas). */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' });
 
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' });
 const creado = () => ts('created_at').notNull().defaultNow();
@@ -138,6 +142,12 @@ export const estadoMatriculaEnum = pgEnum('estado_matricula', [
 
 /** FAMILIA: todo el asistente. PROGENITOR: solo leer y firmar sus huecos (docs/matricula.md, punto 3). */
 export const alcanceEnlaceEnum = pgEnum('alcance_enlace', ['FAMILIA', 'PROGENITOR']);
+
+/** Mandatos SEPA (docs/matricula.md, punto 4): la orden de la vía y la de AlbaydarPLUS. */
+export const tipoMandatoEnum = pgEnum('tipo_mandato', ['SEPA', 'PLUS']);
+/** RCUR: recurrente (mensualidades; el primer cargo de la remesa irá como FRST). OOFF: cargo único. */
+export const secuenciaMandatoEnum = pgEnum('secuencia_mandato', ['RCUR', 'OOFF']);
+export const estadoMandatoEnum = pgEnum('estado_mandato', ['VIGENTE', 'ANULADO']);
 
 // ── Usuarios internos y sesiones ────────────────────────────────────────────
 
@@ -805,6 +815,99 @@ export const matriculaEventos = pgTable(
   (t) => [index('matricula_eventos_idx').on(t.matriculaId, t.createdAt)],
 );
 
+/**
+ * Cada documento tal como se firmó (sin la fecha, que es la de la firma). Uno por huella: las seis
+ * firmas de la LOPD comparten el mismo. Sirve de prueba y para el PDF final.
+ */
+export const documentosMatricula = pgTable(
+  'documentos_matricula',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    matriculaId: uuid('matricula_id')
+      .notNull()
+      .references(() => matriculas.id),
+    documento: text('documento').notNull(),
+    version: text('version').notNull(),
+    huella: text('huella').notNull(),
+    contenido: jsonb('contenido').$type<import('../modules/matricula/documentos/generar').ContenidoFirmado>().notNull(),
+    createdAt: creado(),
+  },
+  (t) => [unique('documentos_matricula_huella_uq').on(t.matriculaId, t.huella)],
+);
+
+/**
+ * Firma electrónica simple de un hueco (docs/matricula.md, puntos 1 y 2). No se borra nunca:
+ * se anula con motivo (cambió el documento, se volvió a firmar, se borró). Una vigente por hueco.
+ */
+export const firmasMatricula = pgTable(
+  'firmas_matricula',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    matriculaId: uuid('matricula_id')
+      .notNull()
+      .references(() => matriculas.id),
+    /** impreso-titular, lopd-madre… */
+    hueco: text('hueco').notNull(),
+    documento: text('documento').notNull(),
+    version: text('version').notNull(),
+    /** SHA-256 del documento firmado (documentos_matricula). */
+    huella: text('huella').notNull(),
+    /** El trazo: PNG validado por su firma de bytes, 200 KB como máximo. */
+    imagen: bytea('imagen').notNull(),
+    imagenSha256: text('imagen_sha256').notNull(),
+    /** Hora del servidor. */
+    firmadaEn: ts('firmada_en').notNull().defaultNow(),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    /** Enlace con el que firmó la familia (nunca el token) o usuario de secretaría si firmó en su presencia. */
+    enlaceId: uuid('enlace_id').references(() => enlacesMatricula.id),
+    usuarioId: uuid('usuario_id').references(() => usuarios.id),
+    anuladaEn: ts('anulada_en'),
+    motivoAnulacion: text('motivo_anulacion'),
+  },
+  (t) => [
+    index('firmas_matricula_idx').on(t.matriculaId),
+    uniqueIndex('firmas_matricula_vigente_uq').on(t.matriculaId, t.hueco).where(sql`${t.anuladaEn} is null`),
+  ],
+);
+
+/** Mandato SEPA que nace de la firma de la orden (sepa-titular) o de la de AlbaydarPLUS (plus-titular). */
+export const mandatosSepa = pgTable(
+  'mandatos_sepa',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    matriculaId: uuid('matricula_id')
+      .notNull()
+      .references(() => matriculas.id),
+    firmaId: uuid('firma_id')
+      .notNull()
+      .unique()
+      .references(() => firmasMatricula.id),
+    /** M-2027-0001-SEPA1: única y nunca reutilizada (máximo 35 caracteres en la norma). */
+    referencia: text('referencia').notNull().unique(),
+    tipo: tipoMandatoEnum('tipo').notNull(),
+    secuencia: secuenciaMandatoEnum('secuencia').notNull(),
+    esquema: text('esquema').notNull().default('CORE'),
+    acreedorIdentificador: text('acreedor_identificador').notNull(),
+    acreedorNombre: text('acreedor_nombre').notNull(),
+    iban: text('iban').notNull(),
+    bic: text('bic'),
+    titular: text('titular').notNull(),
+    titularDocumento: text('titular_documento').notNull(),
+    /** Día de la firma (AAAA-MM-DD, hora de Madrid). */
+    fechaFirma: date('fecha_firma', { mode: 'string' }).notNull(),
+    estado: estadoMandatoEnum('estado').notNull().default('VIGENTE'),
+    anuladoEn: ts('anulado_en'),
+    motivoAnulacion: text('motivo_anulacion'),
+    createdAt: creado(),
+  },
+  (t) => [
+    index('mandatos_sepa_matricula_idx').on(t.matriculaId),
+    uniqueIndex('mandatos_sepa_vigente_uq').on(t.matriculaId, t.tipo).where(sql`${t.estado} = 'VIGENTE'`),
+    check('mandatos_sepa_referencia_chk', sql`length(${t.referencia}) <= 35`),
+  ],
+);
+
 // ── Tipos inferidos ─────────────────────────────────────────────────────────
 export type Usuario = typeof usuarios.$inferSelect;
 export type Via = typeof vias.$inferSelect;
@@ -830,3 +933,5 @@ export type OrigenAlumna = (typeof origenAlumnaEnum.enumValues)[number];
 export type Matricula = typeof matriculas.$inferSelect;
 export type EnlaceMatricula = typeof enlacesMatricula.$inferSelect;
 export type EstadoMatricula = (typeof estadoMatriculaEnum.enumValues)[number];
+export type FirmaMatricula = typeof firmasMatricula.$inferSelect;
+export type MandatoSepa = typeof mandatosSepa.$inferSelect;

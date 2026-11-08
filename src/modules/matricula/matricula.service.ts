@@ -22,9 +22,13 @@ import { hashToken, nuevoToken } from '../../lib/crypto';
 import { db, type Tx } from '../../lib/db';
 import { badRequest, codigoPg, conflict, gone, notFound } from '../../lib/errors';
 import { diaLargo } from '../../lib/fechas';
+import { matriculaConfig } from '../ajustes/ajustes.service';
 import { estadoPorMatricula, plegar, plegarSql } from '../alumnado/alumnado.service';
 import { siguienteValor } from '../solicitudes/comun';
 import { cursoEscolarCorto, nombrePila, nombreVia } from '../solicitudes/dominio';
+import { jsonCanonico } from './json-canonico';
+import * as firmasSrv from './firmas.service';
+import { anularDesactualizadas, cargarFirmas, evaluarFirmas, firmasDe, vistaMandato, type Evidencias, type Firmante } from './firmas.service';
 import { borradorEntrada, borradorVacio, CURSOS, type Borrador, type Expediente } from './borrador';
 import {
   ETIQUETA_ESTADO_MATRICULA,
@@ -179,14 +183,17 @@ function borradorDeRenovacion(anterior: Borrador, a: Alumna): Borrador {
 
 // ── Vistas ───────────────────────────────────────────────────────────────────
 
-/** El borrador con lo que controla el servidor. Archivos y firmas llegan en la siguiente entrega. */
-function expediente(m: Matricula): Expediente {
+/**
+ * El borrador con lo que controla el servidor: las páginas leídas y las firmas que valen.
+ * Sin `signatures`, la base para generar documentos y evaluar las firmas. Archivos: entrega 3.
+ */
+function expediente(m: Matricula, signatures: Expediente['signatures'] = {}): Expediente {
   return {
     ...m.datos,
     readPages: Object.fromEntries(Object.keys(m.paginasLeidas).map((k) => [k, true])),
     photo: null,
     documents: {},
-    signatures: {},
+    signatures,
   };
 }
 
@@ -214,11 +221,13 @@ async function datosDe(tx: Tx, m: Matricula) {
     .where(eq(alumnas.id, m.alumnaId));
   const [s] = m.solicitudId ? await tx.select({ id: solicitudes.id, codigo: solicitudes.codigo }).from(solicitudes).where(eq(solicitudes.id, m.solicitudId)) : [];
   const [u] = m.guardadoPorId ? await tx.select({ nombre: usuarios.nombre }).from(usuarios).where(eq(usuarios.id, m.guardadoPorId)) : [];
-  return { alumna: fila!, solicitud: s ?? null, guardadoPorNombre: u?.nombre ?? null };
+  const { evaluacion, mandatos } = await firmasDe(tx, m, expediente(m));
+  return { alumna: fila!, solicitud: s ?? null, guardadoPorNombre: u?.nombre ?? null, evaluacion, mandatos };
 }
 
-function vistaBase(m: Matricula, extra: Awaited<ReturnType<typeof datosDe>>) {
-  const exp = expediente(m);
+/** `completo`: la ficha de secretaría ve el IBAN y el DNI del titular de los mandatos sin enmascarar. */
+function vistaBase(m: Matricula, extra: Awaited<ReturnType<typeof datosDe>>, completo = true) {
+  const exp = expediente(m, extra.evaluacion.signatures);
   return {
     id: m.id,
     codigo: m.codigo,
@@ -242,6 +251,9 @@ function vistaBase(m: Matricula, extra: Awaited<ReturnType<typeof datosDe>>) {
     pendientes: pendientes(exp),
     puedeEnviar: canSubmit(exp),
     documentos: checklistProgress(exp),
+    /** La última firma de cada hueco: válida, desactualizada (cambió su documento) o anulada, con el motivo. */
+    firmas: extra.evaluacion.vista,
+    mandatos: extra.mandatos.map((x) => vistaMandato(x, completo)),
     guardado: m.guardadoEn ? { en: m.guardadoEn, por: m.guardadoPor, nombre: extra.guardadoPorNombre } : null,
     enviadaEn: m.enviadaEn,
     exportadaEn: m.exportadaEn,
@@ -286,7 +298,7 @@ export async function detalle(id: string, tx: Tx = db) {
 
 /** Lo que ve la familia desde su enlace: sin enlaces, historial ni notas internas. */
 async function vistaPublica(tx: Tx, m: Matricula, enlace: EnlaceMatricula) {
-  const base = vistaBase(m, await datosDe(tx, m));
+  const base = vistaBase(m, await datosDe(tx, m), false);
   return {
     ...base,
     alumna: { nombreCompleto: base.alumna.nombreCompleto },
@@ -331,9 +343,11 @@ export async function listar(q: z.infer<typeof listarMatriculasQuery>) {
       .offset((q.page - 1) * q.pageSize),
     db.select({ n: count() }).from(matriculas).innerJoin(alumnas, eq(alumnas.id, matriculas.alumnaId)).where(where),
   ]);
+  const [firmas, config] = await Promise.all([cargarFirmas(db, filas.map((f) => f.m.id)), matriculaConfig()]);
   return {
     items: filas.map(({ m, a }) => {
-      const exp = expediente(m);
+      const ev = evaluarFirmas(m, expediente(m), firmas.filter((f) => f.matriculaId === m.id), { config });
+      const exp = expediente(m, ev.signatures);
       return {
         id: m.id,
         codigo: m.codigo,
@@ -696,19 +710,7 @@ async function versionAntigua(tx: Tx, m: Matricula) {
   });
 }
 
-/** JSON con las claves ordenadas: `jsonb` no conserva el orden de las claves. */
-export function jsonCanonico(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(jsonCanonico).join(',')}]`;
-  if (v && typeof v === 'object') {
-    const o = v as Record<string, unknown>;
-    return `{${Object.keys(o)
-      .filter((k) => o[k] !== undefined)
-      .sort()
-      .map((k) => `${JSON.stringify(k)}:${jsonCanonico(o[k])}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(v);
-}
+export { jsonCanonico };
 
 const iguales = (a: unknown, b: unknown) => jsonCanonico(a) === jsonCanonico(b);
 
@@ -749,6 +751,8 @@ async function guardar(tx: Tx, m: Matricula, d: z.infer<typeof guardarBody>, act
     .returning();
   if (!nueva) throw await versionAntigua(tx, await cargar(tx, m.id));
   await registrarEdicion(tx, m, actor, secciones);
+  // Un documento firmado que cambia deja de valer: se anula su firma (docs/matricula.md, punto 1).
+  if (secciones.length) await anularDesactualizadas(tx, nueva, expediente(nueva), firmanteDe(actor));
   return nueva;
 }
 
@@ -791,6 +795,60 @@ export async function paginasPublica(token: string, paginas: string[]) {
   return db.transaction(async (tx) => {
     const { e } = await deToken(token, tx);
     const m = await marcarPaginas(tx, await cargar(tx, e.matriculaId, true), paginas);
+    return vistaPublica(tx, m, e);
+  });
+}
+
+// ── Documentos y firmas ──────────────────────────────────────────────────────
+
+const firmanteDe = (a: ActorMatricula): Firmante => (a.tipo === 'familia' ? { enlace: a.enlace } : { usuarioId: a.usuarioId });
+
+export async function documentoInterno(id: string, doc: ReaderDocId) {
+  return db.transaction(async (tx) => {
+    const m = await cargar(tx, id);
+    return firmasSrv.documento(tx, m, expediente(m), doc, null);
+  });
+}
+
+export async function documentoPublico(token: string, doc: ReaderDocId) {
+  return db.transaction(async (tx) => {
+    const { e, m } = await deToken(token, tx);
+    return firmasSrv.documento(tx, m, expediente(m), doc, e);
+  });
+}
+
+type Hueco = z.infer<typeof firmasSrv.huecoParam>;
+
+export async function firmarInterno(id: string, hueco: Hueco, d: z.infer<typeof firmasSrv.firmaBody>, usuarioId: string, ev: Evidencias) {
+  return db.transaction(async (tx) => {
+    const m = await cargar(tx, id, true);
+    await firmasSrv.firmar(tx, m, expediente(m), hueco, d, { usuarioId }, ev);
+    return detalle(id, tx);
+  });
+}
+
+export async function firmarPublica(token: string, hueco: Hueco, d: z.infer<typeof firmasSrv.firmaBody>, ev: Evidencias) {
+  return db.transaction(async (tx) => {
+    const { e } = await deToken(token, tx);
+    const m = await cargar(tx, e.matriculaId, true);
+    await firmasSrv.firmar(tx, m, expediente(m), hueco, d, { enlace: e }, ev);
+    return vistaPublica(tx, m, e);
+  });
+}
+
+export async function borrarFirmaInterno(id: string, hueco: Hueco, usuarioId: string) {
+  return db.transaction(async (tx) => {
+    const m = await cargar(tx, id, true);
+    await firmasSrv.borrar(tx, m, hueco, { usuarioId });
+    return detalle(id, tx);
+  });
+}
+
+export async function borrarFirmaPublica(token: string, hueco: Hueco) {
+  return db.transaction(async (tx) => {
+    const { e } = await deToken(token, tx);
+    const m = await cargar(tx, e.matriculaId, true);
+    await firmasSrv.borrar(tx, m, hueco, { enlace: e });
     return vistaPublica(tx, m, e);
   });
 }

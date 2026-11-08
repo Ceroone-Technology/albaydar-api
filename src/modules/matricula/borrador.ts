@@ -180,8 +180,8 @@ export interface ArchivoSubido {
   uploadedAt: string;
 }
 
+/** Firma que vale: la hora del servidor. La imagen solo viene con el documento (GET …/documentos/:doc). */
 export interface FirmaVista {
-  image: string;
   signedAt: string;
 }
 

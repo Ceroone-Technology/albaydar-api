@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { ajustes, familiaViaEnum, metodoPagoEnum, type FamiliaVia } from '../../db/schema';
 import { db, type Tx } from '../../lib/db';
-import { ibanValido, normalizarIban } from '../../lib/dinero';
+import { ibanValido, identificadorAcreedorValido, normalizarIban } from '../../lib/dinero';
 
 const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Hora HH:MM.');
 const aMin = (h: string) => {
@@ -110,3 +110,74 @@ export async function guardarReservaConfig(valor: ReservaConfig, usuarioId: stri
 export const importeReserva = (cfg: ReservaConfig, familia: FamiliaVia) => cfg.importesPorVia[familia] ?? cfg.importe;
 
 export { aMin };
+
+// ── Matrícula: acreedores SEPA (docs/matricula.md, punto 4) ─────────────────
+
+const acreedorSchema = z.object({
+  id: z.string().regex(/^[a-z0-9-]{1,30}$/, 'Identificador interno en minúsculas, sin espacios.'),
+  nombre: z.string().trim().min(1).max(70),
+  direccion: z.string().trim().min(1).max(140),
+  identificador: z
+    .string()
+    .transform((s) => s.replace(/\s/g, '').toUpperCase())
+    .refine(identificadorAcreedorValido, 'Identificador de acreedor SEPA no válido: revisa el formato (ES + control + sufijo + NIF) y los dígitos de control.'),
+});
+
+/** Acreedores de las órdenes SEPA y cuál usa cada vía y el programa AlbaydarPLUS. */
+export const matriculaConfigSchema = z
+  .object({
+    acreedores: z.array(acreedorSchema).min(1).max(10),
+    acreedorPorFamilia: z.record(z.enum(familiaViaEnum.enumValues), z.string()),
+    acreedorPlus: z.string(),
+  })
+  .superRefine((c, ctx) => {
+    const ids = new Set(c.acreedores.map((a) => a.id));
+    if (ids.size !== c.acreedores.length) ctx.addIssue({ code: 'custom', message: 'Hay acreedores repetidos.', path: ['acreedores'] });
+    for (const [familia, id] of Object.entries(c.acreedorPorFamilia)) {
+      if (!ids.has(id)) ctx.addIssue({ code: 'custom', message: `Acreedor desconocido: ${id}.`, path: ['acreedorPorFamilia', familia] });
+    }
+    if (!ids.has(c.acreedorPlus)) ctx.addIssue({ code: 'custom', message: `Acreedor desconocido: ${c.acreedorPlus}.`, path: ['acreedorPlus'] });
+  });
+
+export type MatriculaConfig = z.infer<typeof matriculaConfigSchema>;
+export type Acreedor = MatriculaConfig['acreedores'][number];
+
+const DIRECCION_ACREEDOR = 'Avd. La Palmera 36 · 41012 Sevilla · España';
+
+/**
+ * Valores del mockup. ES09000G41829037 está comprobado. El de GS concertado es una suposición
+ * (el mockup dice «G-41829037/605», sin formato SEPA): lo confirma el centro (pregunta 24).
+ */
+export const MATRICULA_POR_DEFECTO: MatriculaConfig = {
+  acreedores: [
+    { id: 'general', nombre: 'Albaydar', direccion: DIRECCION_ACREEDOR, identificador: 'ES09000G41829037' },
+    { id: 'gs-concertado', nombre: 'Albaydar', direccion: DIRECCION_ACREEDOR, identificador: 'ES09605G41829037' },
+  ],
+  acreedorPorFamilia: {
+    BACHILLERATO: 'general',
+    CICLOS_CONCERTADOS_GM: 'general',
+    CICLOS_CONCERTADOS_GS: 'gs-concertado',
+    CICLOS_PRIVADOS_GS: 'general',
+  },
+  acreedorPlus: 'general',
+};
+
+export async function matriculaConfig(tx: Tx = db): Promise<MatriculaConfig> {
+  const [f] = await tx.select().from(ajustes).where(eq(ajustes.clave, 'matricula'));
+  const r = matriculaConfigSchema.safeParse({ ...MATRICULA_POR_DEFECTO, ...((f?.valor as object) ?? {}) });
+  return r.success ? r.data : MATRICULA_POR_DEFECTO;
+}
+
+export async function guardarMatriculaConfig(valor: MatriculaConfig, usuarioId: string) {
+  await db
+    .insert(ajustes)
+    .values({ clave: 'matricula', valor, actualizadoPorId: usuarioId })
+    .onConflictDoUpdate({ target: ajustes.clave, set: { valor, actualizadoPorId: usuarioId } });
+  return valor;
+}
+
+/** El acreedor de la orden SEPA de una vía, o el del programa AlbaydarPLUS. */
+export function acreedorDe(cfg: MatriculaConfig, quien: FamiliaVia | 'PLUS'): Acreedor {
+  const id = quien === 'PLUS' ? cfg.acreedorPlus : (cfg.acreedorPorFamilia[quien] ?? cfg.acreedores[0]!.id);
+  return cfg.acreedores.find((a) => a.id === id) ?? cfg.acreedores[0]!;
+}

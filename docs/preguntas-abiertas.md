@@ -96,6 +96,13 @@
     - los documentos marcados como «entregado en papel» (fotos, AlbaydarPLUS).
 
     Eso lo cambia secretaría. ¿Queréis que la familia pueda marcar ella misma «lo entrego en papel», o lo confirma siempre secretaría al recibirlo?
+32. **Contenido de los documentos que se firman** (propuesto el 08/11/2026). Usamos los textos de vuestros PDF tal cual, con cuatro añadidos:
+    - en la LOPD, el nombre de la alumna, su curso y el de los padres o tutores en la página que se firma, para que quede claro a quién se refiere;
+    - en la orden de AlbaydarPLUS, los datos del acreedor (Albaydar, su identificador y dirección), porque es una domiciliación;
+    - en el impreso, la frase «La persona abajo firmante declara, bajo su expresa responsabilidad, que son ciertos los datos…»;
+    - encima de cada firma, «He leído el documento completo y lo firmo».
+
+    La fecha de cada documento es la del día en que se firma. ¿Os parece bien? Si tenéis versiones más recientes de los PDF (LOPD, SEPA, AlbaydarPLUS, ideario), pasádnoslas: cambiar un texto obliga a volver a firmarlo en las matrículas que estén en curso.
 
 **Alumnado** (propuesto el 08/11/2026)
 
