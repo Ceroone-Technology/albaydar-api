@@ -129,6 +129,16 @@ export const origenAlumnaEnum = pgEnum('origen_alumna', ['ADMISION', 'MANUAL', '
 
 export const tipoEventoAlumnaEnum = pgEnum('tipo_evento_alumna', ['ALTA', 'EDICION', 'ESTADO', 'BAJA', 'REACTIVADA', 'NOTA']);
 
+/** Matrícula digital (fase 04): ver docs/matricula.md. */
+export const estadoMatriculaEnum = pgEnum('estado_matricula', [
+  'BORRADOR', //  la familia o secretaría la rellenan
+  'ENVIADA', //   completa y enviada; la familia ya no la edita
+  'EXPORTADA', // cargada en Séneca: la alumna queda matriculada
+]);
+
+/** FAMILIA: todo el asistente. PROGENITOR: solo leer y firmar sus huecos (docs/matricula.md, punto 3). */
+export const alcanceEnlaceEnum = pgEnum('alcance_enlace', ['FAMILIA', 'PROGENITOR']);
+
 // ── Usuarios internos y sesiones ────────────────────────────────────────────
 
 export const usuarios = pgTable('usuarios', {
@@ -700,6 +710,101 @@ export const alumnaEventos = pgTable(
   (t) => [index('alumna_eventos_alumna_idx').on(t.alumnaId, t.createdAt)],
 );
 
+// ── Matrícula digital (fase 04) ─────────────────────────────────────────────
+
+/**
+ * Una matrícula por alumna y curso escolar. El borrador (`datos`) tiene la forma del asistente
+ * del front (modules/matricula/borrador.ts). `version` protege el borrador frente a dos
+ * guardados simultáneos (familia y secretaría): 409 VERSION_ANTIGUA.
+ */
+export const matriculas = pgTable(
+  'matriculas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** M-2027-0001: año de inicio del curso escolar y correlativo. */
+    codigo: text('codigo').notNull().unique(),
+    alumnaId: uuid('alumna_id')
+      .notNull()
+      .references(() => alumnas.id),
+    /** Solicitud de admisión de la que viene (alumnado nuevo por admisión). */
+    solicitudId: uuid('solicitud_id').references(() => solicitudes.id, { onDelete: 'set null' }),
+    /** "2027-2028". */
+    cursoEscolar: text('curso_escolar').notNull(),
+    /** Vía, curso y «alumna nueva» del borrador, copiados para filtrar sin leer el JSON. */
+    familia: familiaViaEnum('familia').notNull(),
+    curso: integer('curso').notNull(),
+    nuevaAlumna: boolean('nueva_alumna').notNull(),
+    estado: estadoMatriculaEnum('estado').notNull().default('BORRADOR'),
+    datos: jsonb('datos').$type<import('../modules/matricula/borrador').Borrador>().notNull(),
+    version: integer('version').notNull().default(1),
+    /** Página → primera vez que se marcó como leída, con la hora del servidor (ISO). */
+    paginasLeidas: jsonb('paginas_leidas').$type<Record<string, string>>().notNull().default({}),
+    /** Último guardado del borrador: quién (familia o secretaría) y cuándo. */
+    guardadoEn: ts('guardado_en'),
+    guardadoPor: text('guardado_por'),
+    guardadoPorId: uuid('guardado_por_id').references(() => usuarios.id),
+    enviadaEn: ts('enviada_en'),
+    exportadaEn: ts('exportada_en'),
+    devueltaEn: ts('devuelta_en'),
+    motivoDevolucion: text('motivo_devolucion'),
+    creadaPorId: uuid('creada_por_id').references(() => usuarios.id),
+    createdAt: creado(),
+    updatedAt: actualizado(),
+  },
+  (t) => [
+    unique('matriculas_alumna_curso_escolar_uq').on(t.alumnaId, t.cursoEscolar),
+    index('matriculas_estado_idx').on(t.estado, t.cursoEscolar),
+    check('matriculas_curso_chk', sql`${t.curso} in (1, 2)`),
+    check('matriculas_version_chk', sql`${t.version} >= 1`),
+  ],
+);
+
+/** Enlaces personales de la matrícula (sin login). Solo se guarda el hash del token. */
+export const enlacesMatricula = pgTable(
+  'enlaces_matricula',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    matriculaId: uuid('matricula_id')
+      .notNull()
+      .references(() => matriculas.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    alcance: alcanceEnlaceEnum('alcance').notNull(),
+    /** Solo en PROGENITOR: 'padre' o 'madre' (qué huecos de la LOPD puede firmar). */
+    progenitor: text('progenitor'),
+    /** A quién se envió (correo en minúsculas), si se envió. */
+    enviadoA: text('enviado_a'),
+    expiraEn: ts('expira_en').notNull(),
+    revocadoEn: ts('revocado_en'),
+    ultimoUsoEn: ts('ultimo_uso_en'),
+    creadoPorId: uuid('creado_por_id').references(() => usuarios.id),
+    createdAt: creado(),
+  },
+  (t) => [
+    index('enlaces_matricula_idx').on(t.matriculaId),
+    check('enlaces_matricula_progenitor_chk', sql`(${t.alcance} = 'PROGENITOR') = (${t.progenitor} in ('padre', 'madre'))`),
+  ],
+);
+
+/** Historial de la matrícula: alta, enlaces, guardados de secretaría, envío, devolución… */
+export const matriculaEventos = pgTable(
+  'matricula_eventos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    matriculaId: uuid('matricula_id')
+      .notNull()
+      .references(() => matriculas.id, { onDelete: 'cascade' }),
+    tipo: text('tipo').notNull(),
+    texto: text('texto'),
+    detalle: jsonb('detalle').$type<Record<string, unknown>>(),
+    /** usuario | familia | sistema */
+    actor: text('actor').notNull(),
+    usuarioId: uuid('usuario_id').references(() => usuarios.id),
+    enlaceId: uuid('enlace_id').references(() => enlacesMatricula.id, { onDelete: 'set null' }),
+    createdAt: ts('created_at').notNull().default(sql`clock_timestamp()`),
+  },
+  (t) => [index('matricula_eventos_idx').on(t.matriculaId, t.createdAt)],
+);
+
 // ── Tipos inferidos ─────────────────────────────────────────────────────────
 export type Usuario = typeof usuarios.$inferSelect;
 export type Via = typeof vias.$inferSelect;
@@ -722,3 +827,6 @@ export type Alumna = typeof alumnas.$inferSelect;
 export type AlumnaContacto = typeof alumnaContactos.$inferSelect;
 export type EstadoAlumna = (typeof estadoAlumnaEnum.enumValues)[number];
 export type OrigenAlumna = (typeof origenAlumnaEnum.enumValues)[number];
+export type Matricula = typeof matriculas.$inferSelect;
+export type EnlaceMatricula = typeof enlacesMatricula.$inferSelect;
+export type EstadoMatricula = (typeof estadoMatriculaEnum.enumValues)[number];
