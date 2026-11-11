@@ -10,8 +10,10 @@ const MAX_INTENTOS = 6;
 
 export interface Adjunto {
   filename: string;
-  content: string; // texto o base64
+  /** Texto (un .ics) o, con `base64: true`, binario ya codificado (un PDF). */
+  content: string;
   contentType: string;
+  base64?: boolean;
 }
 
 /**
@@ -30,7 +32,8 @@ export async function encolarCorreo(
     html: o.correo.html,
     texto: o.correo.texto,
     solicitudId: o.solicitudId,
-    adjuntos: o.adjuntos?.map((a) => ({ ...a, content: Buffer.from(a.content).toString('base64') })),
+    // En la cola siempre en base64.
+    adjuntos: o.adjuntos?.map(({ base64, ...a }) => ({ ...a, content: base64 ? a.content : Buffer.from(a.content).toString('base64') })),
     programadoPara: o.programadoPara ?? new Date(),
     // now() es el mismo durante toda la transacción: clock_timestamp() avanza y
     // desempata, en microsegundos, los correos encolados en la misma.

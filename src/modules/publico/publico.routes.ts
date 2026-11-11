@@ -1,9 +1,8 @@
-import { Router, type NextFunction, type Request, type Response } from 'express';
+import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import multer from 'multer';
 import { z } from 'zod';
-import { env } from '../../config/env';
 import { badRequest } from '../../lib/errors';
+import { unFichero } from '../../middleware/subida';
 import { v, validate } from '../../middleware/validate';
 import { viasPublicas } from '../catalogo/catalogo.routes';
 import * as citacion from '../citacion/citacion.service';
@@ -88,15 +87,6 @@ publicoRouter.get('/citas/:token/ics', limiteEnlace, validate({ params: tokenPar
   res.send(ics);
 });
 
-const subida = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: env.UPLOAD_MAX_MB * 1024 * 1024, files: 1 },
-});
-const unFichero = (req: Request, res: Response, next: NextFunction) =>
-  subida.single('archivo')(req, res, (err: unknown) => {
-    if ((err as { code?: string })?.code === 'LIMIT_FILE_SIZE') return next(badRequest('ARCHIVO_DEMASIADO_GRANDE', `El archivo supera ${env.UPLOAD_MAX_MB} MB.`));
-    next(err);
-  });
 
 /** Boletín de notas: multipart/form-data con el campo "archivo". Reemplaza el anterior. */
 publicoRouter.post('/citas/:token/notas', limiteEnvio, validate({ params: tokenParam }), unFichero, async (req, res) => {

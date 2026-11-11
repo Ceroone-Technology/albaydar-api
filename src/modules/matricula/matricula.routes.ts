@@ -7,7 +7,13 @@ import { v, validate } from '../../middleware/validate';
 import { tokenParam } from '../solicitudes/solicitudes.schemas';
 import { guardarMatriculaConfig, matriculaConfig, matriculaConfigSchema } from '../ajustes/ajustes.service';
 import { docParam, firmaBody, huecoParam } from './firmas.service';
+import { unFichero } from '../../middleware/subida';
+import { badRequest } from '../../lib/errors';
+import { responderCsv } from '../exportaciones/exportar';
+import { destinoParam } from './archivos.service';
+import * as envio from './envio.service';
 import * as srv from './matricula.service';
+import { COLUMNAS_SENECA } from './seneca';
 
 const idParam = z.object({ id: z.string().uuid() });
 const enlaceParam = z.object({ id: z.string().uuid(), enlaceId: z.string().uuid() });
@@ -22,6 +28,24 @@ const huecoTokenParam = tokenParam.extend({ hueco: huecoParam });
  */
 export const cuerpoFirma = express.json({ limit: '300kb' });
 export const esRutaDeFirma = (path: string) => /\/matriculas?\/[^/]+\/firmas\/[^/]+$/.test(path);
+
+const destinoIdParam = z.object({ id: z.string().uuid(), destino: destinoParam });
+const destinoTokenParam = tokenParam.extend({ destino: destinoParam });
+
+const conFichero = (req: Request) => {
+  if (!req.file) throw badRequest('FALTA_ARCHIVO', 'Adjunta el archivo en el campo «archivo».');
+  return req.file;
+};
+
+/** PDF o archivo para descargar: sin caché (datos personales de menores). */
+const descarga = (res: import('express').Response, d: { datos: Buffer; nombre: string; mime?: string }) =>
+  res
+    .set({
+      'Content-Type': d.mime ?? 'application/pdf',
+      'Content-Disposition': `attachment; filename="${encodeURIComponent(d.nombre)}"`,
+      'Cache-Control': 'no-store',
+    })
+    .send(d.datos);
 
 const evidencias = (req: Request) => ({ ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null });
 
@@ -51,6 +75,12 @@ matriculasRouter.get('/configuracion', requirePermiso('matricula.ver', 'configur
 
 matriculasRouter.put('/configuracion', requirePermiso('configuracion.editar'), validate({ body: matriculaConfigSchema }), async (req, res) => {
   res.json(await guardarMatriculaConfig(v<typeof matriculaConfigSchema>(req, 'body'), req.user!.id));
+});
+
+/** Fichero de Séneca de varias matrículas enviadas: las deja exportadas (antes de /:id). */
+matriculasRouter.post('/exportar-seneca', requirePermiso('matricula.editar'), validate({ body: envio.exportarBody }), async (req, res) => {
+  const filas = await envio.exportarSeneca(v<typeof envio.exportarBody>(req, 'body').matriculaIds, req.user!.id);
+  responderCsv(req, res, 'seneca-matriculas', COLUMNAS_SENECA, filas);
 });
 
 matriculasRouter.get('/:id', requirePermiso('matricula.ver'), validate({ params: idParam }), async (req, res) => {
@@ -94,6 +124,43 @@ matriculasRouter.delete('/:id/firmas/:hueco', requirePermiso('matricula.editar')
   res.json(await srv.borrarFirmaInterno(p.id, p.hueco, req.user!.id));
 });
 
+/** Foto de carné o documento del checklist: multipart con el campo «archivo». Sustituye al anterior. */
+matriculasRouter.post('/:id/archivos/:destino', requirePermiso('matricula.editar'), validate({ params: destinoIdParam }), unFichero, async (req, res) => {
+  const p = v<typeof destinoIdParam>(req, 'params');
+  res.status(201).json(await srv.subirArchivoInterno(p.id, p.destino, conFichero(req), req.user!.id));
+});
+
+matriculasRouter.delete('/:id/archivos/:destino', requirePermiso('matricula.editar'), validate({ params: destinoIdParam }), async (req, res) => {
+  const p = v<typeof destinoIdParam>(req, 'params');
+  res.json(await srv.quitarArchivoInterno(p.id, p.destino, req.user!.id));
+});
+
+matriculasRouter.get('/:id/archivos/:destino', requirePermiso('matricula.ver'), validate({ params: destinoIdParam }), async (req, res) => {
+  const p = v<typeof destinoIdParam>(req, 'params');
+  descarga(res, await srv.descargarArchivo(p.id, p.destino));
+});
+
+/** Enviar: { version }. Exige todo completo (las mismas reglas que el front) y genera los PDF. */
+matriculasRouter.post('/:id/enviar', requirePermiso('matricula.editar'), validate({ params: idParam, body: envio.enviarBody }), async (req, res) => {
+  res.json(await envio.enviarInterno(v<typeof idParam>(req, 'params').id, v<typeof envio.enviarBody>(req, 'body').version, req.user!.id));
+});
+
+/** Devolver a borrador una enviada: { motivo, avisar? }. */
+matriculasRouter.post('/:id/devolver', requirePermiso('matricula.editar'), validate({ params: idParam, body: envio.devolverBody }), async (req, res) => {
+  res.json(await envio.devolver(v<typeof idParam>(req, 'params').id, v<typeof envio.devolverBody>(req, 'body'), req.user!.id));
+});
+
+matriculasRouter.get('/:id/pdf/:doc', requirePermiso('matricula.ver'), validate({ params: docIdParam }), async (req, res) => {
+  const p = v<typeof docIdParam>(req, 'params');
+  descarga(res, await envio.pdfInterno(p.id, p.doc));
+});
+
+/** Fichero de Séneca de una matrícula enviada (la deja exportada). */
+matriculasRouter.post('/:id/exportar-seneca', requirePermiso('matricula.editar'), validate({ params: idParam }), async (req, res) => {
+  const filas = await envio.exportarSeneca([v<typeof idParam>(req, 'params').id], req.user!.id);
+  responderCsv(req, res, `seneca-${filas[0]!.m.codigo}`, COLUMNAS_SENECA, filas);
+});
+
 // ── Familia: /public/matricula/:token ───────────────────────────────────────
 
 const mensajeLimite = { error: { code: 'DEMASIADAS_PETICIONES', message: 'Demasiadas peticiones. Espera unos minutos y vuelve a intentarlo.' } };
@@ -125,6 +192,7 @@ const tokensFallidos = rateLimit({
 const limiteLectura = porEnlace(15 * 60_000, 600);
 const limiteGuardado = porEnlace(15 * 60_000, 900);
 const limiteFirmas = porEnlace(60 * 60_000, 60);
+const limiteArchivos = porEnlace(60 * 60_000, 30);
 
 export const matriculaPublicaRouter = Router();
 
@@ -153,4 +221,24 @@ matriculaPublicaRouter.post('/:token/firmas/:hueco', tokensFallidos, limiteFirma
 matriculaPublicaRouter.delete('/:token/firmas/:hueco', tokensFallidos, limiteFirmas, validate({ params: huecoTokenParam }), async (req, res) => {
   const p = v<typeof huecoTokenParam>(req, 'params');
   res.json(await srv.borrarFirmaPublica(p.token, p.hueco));
+});
+
+matriculaPublicaRouter.post('/:token/archivos/:destino', tokensFallidos, limiteArchivos, validate({ params: destinoTokenParam }), unFichero, async (req, res) => {
+  const p = v<typeof destinoTokenParam>(req, 'params');
+  res.status(201).json(await srv.subirArchivoPublica(p.token, p.destino, conFichero(req)));
+});
+
+matriculaPublicaRouter.delete('/:token/archivos/:destino', tokensFallidos, limiteArchivos, validate({ params: destinoTokenParam }), async (req, res) => {
+  const p = v<typeof destinoTokenParam>(req, 'params');
+  res.json(await srv.quitarArchivoPublica(p.token, p.destino));
+});
+
+matriculaPublicaRouter.post('/:token/enviar', tokensFallidos, limiteGuardado, validate({ params: tokenParam, body: envio.enviarBody }), async (req, res) => {
+  res.json(await envio.enviarPublica(v<typeof tokenParam>(req, 'params').token, v<typeof envio.enviarBody>(req, 'body').version));
+});
+
+/** Copia en PDF de un documento firmado, una vez enviada la matrícula. */
+matriculaPublicaRouter.get('/:token/pdf/:doc', tokensFallidos, limiteLectura, validate({ params: docTokenParam }), async (req, res) => {
+  const p = v<typeof docTokenParam>(req, 'params');
+  descarga(res, await envio.pdfPublico(p.token, p.doc));
 });
