@@ -209,13 +209,31 @@ Decidido el 08/11/2026, al construir las firmas.
   - **Encima de cada hueco de firma:** «He leído el documento completo y lo firmo» (punto 2).
 - **El progenitor con su propio enlace** solo ve la LOPD y firma sus tres huecos. Las páginas leídas son de la matrícula, no de cada enlace: la hoja de evidencias de la entrega 3 lo dirá así.
 
+## 12. Envío, PDF y Séneca: decisiones de la entrega 3
+
+Decidido el 10/11/2026.
+
+- **Enviar exige la versión que se ve** (`{ version }`). Si otro guardó entre medias, 409 `VERSION_ANTIGUA`: nunca se envía algo distinto de lo que la familia tiene delante.
+- **El PDF se genera al enviar, con lo firmado.** Parte del documento guardado al firmar (`documentos_matricula`), no del borrador de ahora. Va a la familia como adjunto del acuse (`MATRICULA_RECIBIDA`). Si secretaría devuelve la matrícula, esos PDF se anulan y al reenviarla se generan otros.
+- **La hoja de evidencias dice lo que hay**, sin afirmar que se haya leído (punto 2):
+  - las marcas de lectura del navegador, con la primera y la última hora;
+  - por cada firma, la hora del servidor, el origen (enlace o secretaría), la IP, el navegador y el SHA-256 del trazo.
+- **El trazo tiene que ser un PNG que se pueda dibujar** (firma de bytes y cabecera `IHDR`). Si el PDF no consigue dibujarlo, deja el aviso «no se ha podido dibujar el trazo» y la imagen original sigue en la BD.
+- **Exportar a Séneca es todo o nada**, en una transacción:
+  - si una matrícula del lote no está enviada o se quedó incompleta, no se exporta ninguna;
+  - la primera exportación deja la alumna «Matriculada» con el curso nuevo (en la renovación, 2º del curso siguiente) y la solicitud en `MATRICULADA`;
+  - volver a exportar solo regenera el fichero.
+- **Almacén:** los archivos y PDF van detrás de `Almacen` (`lib/storage.ts`), todavía en disco local. La implementación para Google Cloud Storage (punto 7) se hace con el despliegue, cuando haya proyecto y bucket. Los servicios no cambian.
+- **Conservación:** cada archivo guarda su categoría, pero `conservarHasta` queda vacío y no hay tarea de borrado hasta que el centro confirme los plazos (pregunta 25).
+- **`MATRICULA_CONFIRMADA`:** el texto del mockup decía «Adjuntamos el listado de libros y el calendario de acogida». No tenemos esos documentos, así que la plantilla predeterminada no lo promete (pregunta 33). Si el centro los pasa, se adjuntan o se enlazan.
+
 ## Entregas
 
 | Entrega | Contenido | Estado |
 |---|---|---|
 | 1 | Modelo, apertura (admisión y renovación, también en bloque), borrador con versión, páginas leídas, enlaces y límites del portal | ✅ API 08/11/2026 (`feat/matricula-borrador`) |
 | 2 | Textos legales versionados, documento rellenado con su huella, firmas (409 `DOCUMENTO_CAMBIADO`, anulación al cambiar datos), mandatos SEPA y acreedores en la configuración | ✅ API 08/11/2026 (`feat/matricula-firmas`) |
-| 3 | Archivos (foto y checklist), envío con `canSubmit`, devolución a borrador, PDF con hoja de evidencias y exportación a Séneca (`EXPORTADA` → alumna matriculada) | Pendiente |
+| 3 | Archivos (foto y checklist), envío con `canSubmit`, devolución a borrador, PDF con hoja de evidencias y exportación a Séneca (`EXPORTADA` → alumna matriculada) | ✅ API 10/11/2026 (`feat/matricula-envio`) |
 | 4 | Front: secretaría (`/enrollments/:id`) y familia (`/matricula/:token`) contra la API; se retira el mock | Pendiente |
 
 ---

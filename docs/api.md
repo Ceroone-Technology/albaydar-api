@@ -488,7 +488,7 @@ Expedientes, familias e histórico de interacciones (pantalla Alumnado del mocku
 | `MATRICULADA` | Matriculada | green | Alumna del centro |
 | `BAJA` | Baja | gray | Con `baja: { fecha, motivo }` |
 
-Mientras no exista la matrícula digital, secretaría cambia el estado con `PATCH { estado }` (`RESERVA`, `EN_PROCESO` o `MATRICULADA`). En una baja, ese mismo PATCH la reactiva. La baja va por su propia ruta, porque exige motivo.
+La matrícula digital mueve el estado sola: abrirla pasa el expediente a «En proceso» y exportarla a Séneca, a «Matriculada». Secretaría también puede cambiarlo con `PATCH { estado }` (`RESERVA`, `EN_PROCESO` o `MATRICULADA`). En una baja, ese mismo PATCH la reactiva. La baja va por su propia ruta, porque exige motivo.
 
 **De dónde sale un expediente** (`origen`):
 - `ADMISION`: lo crea solo el cobro que completa la reserva, en la misma operación. Lleva el nombre, la vía y la modalidad de la solicitud, y el tutor como contacto principal (parentesco «Madre, padre o tutor»). DNI, nacimiento y domicilio quedan vacíos: la solicitud no los recoge. Si se anula ese cobro, el expediente se borra si nadie lo ha tocado; si tiene notas o cambios, pasa a baja con el motivo «Reserva anulada…», y vuelve a «Reserva confirmada» si se paga otra vez.
@@ -556,12 +556,21 @@ La ficha añade también `matriculas`: `[{ id, codigo, cursoEscolar, curso, esta
 
 ## Matrícula digital
 
-Fase 04, entregas 1 y 2 (08/11/2026):
+Fase 04, entregas 1 a 3 en la API (08 y 10/11/2026):
 - apertura y renovación 1º → 2º;
 - borrador con versión, páginas leídas y enlaces de la familia;
-- documentos rellenados con huella, firmas y mandatos SEPA.
+- documentos rellenados con huella, firmas y mandatos SEPA;
+- archivos, envío con los PDF firmados, devolución a borrador y exportación a Séneca.
 
-Lo que falta (archivos, envío, PDF y Séneca) llega en la entrega 3. Diseño completo en `docs/matricula.md`.
+Falta el front (entrega 4). Diseño completo en `docs/matricula.md`.
+
+**Estados:**
+
+```
+BORRADOR ──enviar──▶ ENVIADA ──exportar a Séneca──▶ EXPORTADA
+    ▲                   │
+    └────devolver───────┘   (secretaría, con motivo)
+```
 
 ### Secretaría
 
@@ -576,6 +585,14 @@ Lo que falta (archivos, envío, PDF y Séneca) llega en la entrega 3. Diseño co
 | GET | `/matriculas/:id/documentos/:doc` | matricula.ver | Documento rellenado con su huella (ver «Documentos y firmas») |
 | POST | `/matriculas/:id/firmas/:hueco` | matricula.editar | `{ imagen, huella }`: firma en secretaría con la familia delante (201, devuelve la ficha) |
 | DELETE | `/matriculas/:id/firmas/:hueco` | matricula.editar | «Borrar» la firma (se anula con motivo). Devuelve la ficha |
+| POST | `/matriculas/:id/archivos/:destino` | matricula.editar | Sube la foto o un documento (multipart, campo `archivo`). 201, devuelve la ficha |
+| DELETE | `/matriculas/:id/archivos/:destino` | matricula.editar | Quita el archivo. Devuelve la ficha |
+| GET | `/matriculas/:id/archivos/:destino` | matricula.ver | Descarga el archivo |
+| POST | `/matriculas/:id/enviar` | matricula.editar | `{ version }`: envía la matrícula (secretaría con la familia) |
+| POST | `/matriculas/:id/devolver` | matricula.editar | `{ motivo, avisar? }`: vuelve a borrador una enviada |
+| GET | `/matriculas/:id/pdf/:doc` | matricula.ver | PDF final de un documento firmado |
+| POST | `/matriculas/:id/exportar-seneca` | matricula.editar | Fichero de Séneca de una matrícula (CSV) |
+| POST | `/matriculas/exportar-seneca` | matricula.editar | `{ matriculaIds }`: fichero de Séneca de varias (CSV) |
 | GET | `/matriculas/configuracion` | matricula.ver o configuracion.ver | Acreedores SEPA |
 | PUT | `/matriculas/configuracion` | configuracion.editar | Guarda los acreedores SEPA |
 | POST | `/matriculas/:id/enlaces` | matricula.editar | `{ alcance, progenitor?, enviar?, email? }`: enlace nuevo (201) |
@@ -627,7 +644,10 @@ Lo que falta (archivos, envío, PDF y Séneca) llega en la entrega 3. Diseño co
 ```
 
 - **`borrador`:** tiene **la forma exacta de `EnrollmentDraft` del front**, con sus nombres en inglés. Las reglas de la API son una copia de `enrollment.rules.ts` (`src/modules/matricula/reglas.ts`).
-  - `photo`, `documents` y `signatures` los pone el servidor. `signatures` trae solo las firmas que **valen**, como `{ "sepa-titular": { "signedAt": "…" } }`, sin la imagen (va con el documento). `photo` y `documents` siguen vacíos hasta la entrega 3.
+  - `photo`, `documents` y `signatures` los pone el servidor:
+    - `signatures` trae solo las firmas que **valen**, como `{ "sepa-titular": { "signedAt": "…" } }`, sin la imagen (va con el documento);
+    - `photo` y `documents` (`{ "m4": { … } }`) traen los archivos subidos, como `{ "name": "dni.pdf", "size": 48211, "uploadedAt": "…" }`.
+- **`pdfs`:** los PDF finales vigentes, `[{ documento, tamano, sha256, creadoEn }]` (vacío hasta enviar).
   - `readPages` sale de las páginas leídas guardadas.
 - **`pendientes`:** lo que falta en cada paso del flujo, con la vía como primer paso (`stepMissing`). Solo trae los pasos incompletos, y vacío significa que se puede enviar (`puedeEnviar`).
 - **`documentos`:** el progreso del checklist (`checklistProgress`).
@@ -677,6 +697,10 @@ Lo que falta (archivos, envío, PDF y Séneca) llega en la entrega 3. Diseño co
 | GET | `/public/matricula/:token/documentos/:doc` | 600 cada 15 min | Documento rellenado con su huella |
 | POST | `/public/matricula/:token/firmas/:hueco` | 60 por hora | `{ imagen, huella }` (201) |
 | DELETE | `/public/matricula/:token/firmas/:hueco` | 60 por hora | «Borrar» la firma |
+| POST | `/public/matricula/:token/archivos/:destino` | 30 por hora | Sube la foto o un documento (multipart, campo `archivo`), 201 |
+| DELETE | `/public/matricula/:token/archivos/:destino` | 30 por hora | Quita el archivo |
+| POST | `/public/matricula/:token/enviar` | 900 cada 15 min | `{ version }`: envía la matrícula |
+| GET | `/public/matricula/:token/pdf/:doc` | 600 cada 15 min | Copia en PDF de un documento firmado |
 
 - **Límites:** cuentan por enlace (el hash del token), no por IP, porque una red de colegio o de casa comparte IP. Los tokens inexistentes o caducados (404/410) cuentan aparte, por IP: 120 cada 15 min. Pasado el límite: 429 `DEMASIADAS_PETICIONES`.
 - **Cabeceras:** `Cache-Control: no-store` y `Referrer-Policy: no-referrer`, como el resto de enlaces.
@@ -786,6 +810,65 @@ Al firmar la orden SEPA (`sepa-titular`) o la de AlbaydarPLUS (`plus-titular`) n
 - **Validación:** el identificador cumple la norma AT-02 (país, dígitos de control calculados sobre el NIF, sufijo de 3 caracteres y NIF). Los `id` referenciados tienen que existir.
 - **Valores provisionales:** el de GS concertado es una suposición pendiente del centro (pregunta 24).
 
+### Archivos de la familia
+
+`destino`: `photo` (foto de carné, que cuenta para «2 fotos tamaño carné», `m5`), `m4` (fotocopia del DNI), `c2` (tarjeta de la Seguridad Social), `b1` (Libro de Familia) o `b2` (certificación académica).
+- **Solo los que pide la matrícula:** según el checklist de las reglas. Si no hace falta, 409 `DOCUMENTO_NO_APLICA`; por ejemplo, el Libro de Familia en GM.
+- **Tipo real del fichero:** PDF, JPG, PNG o HEIC; la foto, solo imagen. Si no, 400 `TIPO_NO_PERMITIDO`. Hasta `UPLOAD_MAX_MB` (10 MB).
+- **Uno por destino:** subir otro lo sustituye; el anterior se marca eliminado y sale del almacén. Quitar: 404 `ARCHIVO_NO_ENCONTRADO` si no había.
+- **Cuándo:** solo en `BORRADOR`. El enlace de un progenitor no sube archivos (403 `ENLACE_SIN_PERMISO`).
+- **Historial:** «Sube: …», «Sustituye: …» y «Quita: …».
+- **Conservación:** cada archivo guarda su categoría (`FOTO` o `COPIA_DOCUMENTO`). Los plazos están pendientes del centro (pregunta 25): nada se borra solo.
+
+### Enviar
+
+`POST …/enviar { version }`, desde el enlace de la familia o desde secretaría:
+- **Comprobaciones, en orden:**
+  1. la matrícula está en `BORRADOR` (409 `MATRICULA_ENVIADA`);
+  2. no es un enlace de progenitor (403);
+  3. `version` es la actual (409 `VERSION_ANTIGUA`): se envía exactamente lo que se ve;
+  4. está **completa**, con las mismas reglas que el front (`canSubmit`): datos, firmas que valen y archivos. Si no, 409 `MATRICULA_INCOMPLETA`, con `details.pendientes`.
+- **Qué hace, en la misma transacción:**
+  - genera el **PDF final** de cada documento firmado;
+  - pasa la matrícula a `ENVIADA`;
+  - envía `MATRICULA_RECIBIDA` a la familia, con los PDF adjuntos;
+  - si envió la familia, avisa a secretaría (`AVISO_MATRICULA_ENVIADA`, con el enlace a la matrícula).
+- **Después:** la familia ya no edita, ni firma, ni sube archivos (409 `MATRICULA_ENVIADA`). Su vista queda en `soloLectura`.
+
+**PDF final** (`GET …/pdf/:doc`; `application/pdf`, `no-store`):
+- **Contenido:** el documento **tal como se firmó** (el guardado al firmar, no el borrador de ahora), con los trazos y la fecha y hora de cada firma.
+- **Hoja de evidencias:**
+  - el documento y la versión de su texto, la matrícula, la alumna y la huella;
+  - la frase de lectura («Páginas 1 a 7 marcadas como leídas en el navegador (primera marca …; última …)»);
+  - por cada firma: hueco, fecha y hora del servidor, origen (enlace de la familia o del progenitor con su id, o secretaría con el nombre de quien estaba), IP, navegador y SHA-256 del trazo.
+- **Dónde se guarda:** en el almacén, con su SHA-256.
+- **Antes de enviar:** 404 `PDF_NO_DISPONIBLE`.
+- **Progenitor:** con su enlace, solo descarga la LOPD.
+
+### Devolver a borrador
+
+`POST /matriculas/:id/devolver { motivo, avisar }`:
+- **Desde qué estado:** solo desde `ENVIADA`. Con `EXPORTADA`, 409 `MATRICULA_EXPORTADA`; con `BORRADOR`, `MATRICULA_NO_ENVIADA`.
+- **Qué hace:**
+  - la matrícula vuelve a `BORRADOR` con `devuelta: { en, motivo }`;
+  - los PDF dejan de valer (al volver a enviarla se generan otros);
+  - con `avisar` (por defecto, `true`), la familia recibe `MATRICULA_DEVUELTA` con el motivo.
+- **Las firmas siguen valiendo** mientras sus documentos no cambien.
+
+### Exportar a Séneca
+
+`POST /matriculas/:id/exportar-seneca` o `POST /matriculas/exportar-seneca { matriculaIds }` (hasta 300). Responde con el CSV (`seneca-M-2027-0001-AAAA-MM-DD.csv` o `seneca-matriculas-…`), con el mismo formato que las demás exportaciones.
+- **Requisitos:** las matrículas tienen que estar enviadas (409 `MATRICULA_NO_ENVIADA`, con `details.codigos`) y seguir completas. Si secretaría cambió un dato firmado, 409 `MATRICULA_INCOMPLETA`: hay que devolverla.
+- **Todo o nada:** si una no se puede exportar, no se exporta ninguna.
+- **La primera vez**, cada matrícula:
+  - pasa a `EXPORTADA`;
+  - deja la **alumna «Matriculada»** con la vía, el curso y el curso escolar de la matrícula;
+  - pasa la **solicitud** de origen a `MATRICULADA`, si estaba en «Plaza reservada»;
+  - envía `MATRICULA_CONFIRMADA` a la familia.
+- **Volver a exportar** una ya exportada solo genera otra vez el fichero, y queda en el historial (`SENECA`).
+- **Una exportada** ya no se edita ni se devuelve (409 `MATRICULA_EXPORTADA`).
+- **Columnas:** provisionales hasta tener el formato oficial (pregunta 28). Están todas en `src/modules/matricula/seneca.ts`: matrícula, expediente, curso escolar, enseñanza, curso, ciclo, modalidad y materias, alumna nueva, apellidos, nombre, nacimiento, sexo, documento, NUSS, lugar y país de nacimiento, contacto y domicilio, centro anterior, los dos tutores, familia numerosa y PASEN.
+
 ## Comunicaciones: plantillas de correo
 
 Todos los correos salen de plantillas HTML editables, una **activada** por evento. El cuerpo es HTML con variables `{{alumna}}`; se envuelve automáticamente en el diseño común (logo, colores y pie del centro).
@@ -830,7 +913,10 @@ Reglas:
 | `RESERVA_VENCIDA` | Pasa el plazo sin pagar (a secretaría y administración) | Activada |
 | `MATRICULA_ENLACE` | Se abre la matrícula o se envía un enlace nuevo a la familia | Activada · imprescindible |
 | `MATRICULA_ENLACE_PROGENITOR` | Enlace al otro progenitor para que firme | Activada · imprescindible |
-| `MATRICULA_CONFIRMADA` | Fase 04 (texto del mockup) | Borrador |
+| `MATRICULA_RECIBIDA` | Se envía la matrícula: los documentos firmados en PDF, adjuntos | Activada |
+| `AVISO_MATRICULA_ENVIADA` | La familia envía la matrícula (a secretaría) | Activada |
+| `MATRICULA_DEVUELTA` | Secretaría devuelve una matrícula enviada, con el motivo | Activada |
+| `MATRICULA_CONFIRMADA` | Exportada a Séneca (texto del mockup, sin la frase de los adjuntos: pregunta 33) | Activada |
 
 Al arrancar, una plantilla de una fase que ya está construida y que sigue en borrador **sin haberse editado nunca** se sustituye por la predeterminada actual y se activa. Si el centro ya la ha tocado, no se cambia.
 
@@ -862,4 +948,5 @@ Base `PUBLIC_APP_URL`. Deben existir en Angular y ser públicas:
 - `/cita/:token` → página "Albaydar Cita"
 - `/solicitud/completar/:token` → completar solicitud
 - `/matricula/:token` → asistente de matrícula de la familia (pendiente en el front)
+- `/enrollments/:id` → matrícula en la plataforma (aviso a secretaría)
 - `/admision?ref=B-…` (o `C-…`) → solicitud en la bandeja (aviso interno a secretaría)

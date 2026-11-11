@@ -103,6 +103,10 @@
     - encima de cada firma, «He leído el documento completo y lo firmo».
 
     La fecha de cada documento es la del día en que se firma. ¿Os parece bien? Si tenéis versiones más recientes de los PDF (LOPD, SEPA, AlbaydarPLUS, ideario), pasádnoslas: cambiar un texto obliga a volver a firmarlo en las matrículas que estén en curso.
+33. **Correos de la matrícula** (propuesto el 10/11/2026).
+    - **Confirmación:** el texto del mockup dice «Adjuntamos el listado de libros y el calendario de acogida», pero no tenemos esos documentos. Hemos quitado la frase. ¿Nos los pasáis para adjuntarlos (o enlazarlos), o lo dejamos así?
+    - **Al enviar la matrícula:** la familia recibe un acuse con una copia en PDF de los documentos firmados (impreso, ideario, protección de datos, órdenes SEPA). ¿Os parece bien que la copia vaya por correo, o preferís que solo la descarguen desde su enlace?
+    - **Si secretaría devuelve la matrícula para corregir algo:** la familia recibe el motivo por correo y la corrige desde el mismo enlace.
 
 **Alumnado** (propuesto el 08/11/2026)
 
