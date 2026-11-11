@@ -234,7 +234,7 @@ Decidido el 10/11/2026.
 | 1 | Modelo, apertura (admisión y renovación, también en bloque), borrador con versión, páginas leídas, enlaces y límites del portal | ✅ API 08/11/2026 (`feat/matricula-borrador`) |
 | 2 | Textos legales versionados, documento rellenado con su huella, firmas (409 `DOCUMENTO_CAMBIADO`, anulación al cambiar datos), mandatos SEPA y acreedores en la configuración | ✅ API 08/11/2026 (`feat/matricula-firmas`) |
 | 3 | Archivos (foto y checklist), envío con `canSubmit`, devolución a borrador, PDF con hoja de evidencias y exportación a Séneca (`EXPORTADA` → alumna matriculada) | ✅ API 10/11/2026 (`feat/matricula-envio`) |
-| 4 | Front: secretaría (`/enrollments/:id`) y familia (`/matricula/:token`) contra la API; se retira el mock | Pendiente |
+| 4 | Front: secretaría (`/enrollments/:id`) y familia (`/matricula/:token`) contra la API; se retira el mock | ✅ Front 11/11/2026 (`feature/matricula-api`) |
 
 ---
 

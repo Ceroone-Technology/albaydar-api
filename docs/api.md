@@ -562,7 +562,7 @@ Fase 04, entregas 1 a 3 en la API (08 y 10/11/2026):
 - documentos rellenados con huella, firmas y mandatos SEPA;
 - archivos, envío con los PDF firmados, devolución a borrador y exportación a Séneca.
 
-Falta el front (entrega 4). Diseño completo en `docs/matricula.md`.
+El front está conectado desde el 11/11/2026 (entrega 4). Diseño completo en `docs/matricula.md`.
 
 **Estados:**
 
@@ -947,6 +947,6 @@ Base `PUBLIC_APP_URL`. Deben existir en Angular y ser públicas:
 
 - `/cita/:token` → página "Albaydar Cita"
 - `/solicitud/completar/:token` → completar solicitud
-- `/matricula/:token` → asistente de matrícula de la familia (pendiente en el front)
+- `/matricula/:token` → asistente de matrícula de la familia
 - `/enrollments/:id` → matrícula en la plataforma (aviso a secretaría)
 - `/admision?ref=B-…` (o `C-…`) → solicitud en la bandeja (aviso interno a secretaría)
