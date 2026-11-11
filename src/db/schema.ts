@@ -908,6 +908,67 @@ export const mandatosSepa = pgTable(
   ],
 );
 
+/**
+ * Archivos que aporta la familia: la foto de carné y los documentos del checklist (copia del DNI,
+ * Libro de Familia…). Uno vigente por destino; al sustituirlo o quitarlo, el anterior se marca
+ * eliminado y se borra del almacén. Los plazos de conservación (docs/matricula.md, punto 7) están
+ * pendientes del centro (pregunta 25): `conservarHasta` queda vacío y nada se borra solo.
+ */
+export const archivosMatricula = pgTable(
+  'archivos_matricula',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    matriculaId: uuid('matricula_id')
+      .notNull()
+      .references(() => matriculas.id),
+    /** photo, m4, c2, b1 o b2. */
+    destino: text('destino').notNull(),
+    /** Categoría de conservación: FOTO o COPIA_DOCUMENTO. */
+    tipoConservacion: text('tipo_conservacion').notNull(),
+    conservarHasta: date('conservar_hasta', { mode: 'string' }),
+    nombreOriginal: text('nombre_original').notNull(),
+    mime: text('mime').notNull(),
+    tamano: integer('tamano').notNull(),
+    /** Clave en el almacén; nunca una URL pública. */
+    clave: text('clave').notNull(),
+    sha256: text('sha256').notNull(),
+    enlaceId: uuid('enlace_id').references(() => enlacesMatricula.id),
+    usuarioId: uuid('usuario_id').references(() => usuarios.id),
+    eliminadoEn: ts('eliminado_en'),
+    createdAt: creado(),
+  },
+  (t) => [
+    index('archivos_matricula_idx').on(t.matriculaId),
+    uniqueIndex('archivos_matricula_vigente_uq').on(t.matriculaId, t.destino).where(sql`${t.eliminadoEn} is null`),
+  ],
+);
+
+/**
+ * PDF final de cada documento firmado, generado al enviar la matrícula: texto, datos, trazos y hoja
+ * de evidencias. Se guarda en el almacén con su SHA-256. Si secretaría devuelve la matrícula a
+ * borrador, se anulan y al volver a enviarla se generan otros.
+ */
+export const pdfsMatricula = pgTable(
+  'pdfs_matricula',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    matriculaId: uuid('matricula_id')
+      .notNull()
+      .references(() => matriculas.id),
+    documento: text('documento').notNull(),
+    huella: text('huella').notNull(),
+    clave: text('clave').notNull(),
+    sha256: text('sha256').notNull(),
+    tamano: integer('tamano').notNull(),
+    anuladoEn: ts('anulado_en'),
+    createdAt: creado(),
+  },
+  (t) => [
+    index('pdfs_matricula_idx').on(t.matriculaId),
+    uniqueIndex('pdfs_matricula_vigente_uq').on(t.matriculaId, t.documento).where(sql`${t.anuladoEn} is null`),
+  ],
+);
+
 // ── Tipos inferidos ─────────────────────────────────────────────────────────
 export type Usuario = typeof usuarios.$inferSelect;
 export type Via = typeof vias.$inferSelect;
@@ -935,3 +996,4 @@ export type EnlaceMatricula = typeof enlacesMatricula.$inferSelect;
 export type EstadoMatricula = (typeof estadoMatriculaEnum.enumValues)[number];
 export type FirmaMatricula = typeof firmasMatricula.$inferSelect;
 export type MandatoSepa = typeof mandatosSepa.$inferSelect;
+export type ArchivoMatricula = typeof archivosMatricula.$inferSelect;

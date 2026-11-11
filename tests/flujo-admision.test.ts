@@ -424,13 +424,13 @@ describe('Plantillas de correo (Comunicaciones)', () => {
   let idPropuesta = '';
   let idRecordatorio = '';
 
-  it('lista una plantilla por evento, con las de fases futuras en borrador', async () => {
+  it('lista una plantilla por evento: con la matrícula construida, ya no queda ninguna de una fase futura', async () => {
     const r = await request(app).get('/api/comunicaciones/plantillas').set(auth());
     const porEvento = Object.fromEntries(r.body.items.map((p: { evento: string; estado: string }) => [p.evento, p.estado]));
     expect(porEvento).toMatchObject({
       CITA_CONFIRMADA: 'ACTIVADA', CITACION_RECORDATORIO: 'ACTIVADA', ENTREVISTA_RECORDATORIO: 'ACTIVADA',
       ADMITIDA: 'ACTIVADA', EN_ESPERA: 'ACTIVADA', NO_ADMITIDA: 'ACTIVADA', RECORDATORIO_PAGO: 'ACTIVADA', RESERVA_VENCIDA: 'ACTIVADA',
-      MATRICULA_CONFIRMADA: 'BORRADOR',
+      MATRICULA_CONFIRMADA: 'ACTIVADA', MATRICULA_RECIBIDA: 'ACTIVADA', MATRICULA_DEVUELTA: 'ACTIVADA',
     });
     idPropuesta = r.body.items.find((p: { evento: string }) => p.evento === 'CITACION_PROPUESTA').id;
     idRecordatorio = r.body.items.find((p: { evento: string }) => p.evento === 'CITACION_RECORDATORIO').id;

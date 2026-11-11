@@ -3,6 +3,8 @@
  * borrador con versión, páginas leídas, enlaces de la familia y renovación 1º → 2º.
  * Por HTTP contra PostgreSQL real, con un SMTP falso.
  */
+import { readFile } from 'node:fs/promises';
+import { crc32, deflateSync } from 'node:zlib';
 import type { Transporter } from 'nodemailer';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -18,7 +20,7 @@ import { invalidarCachePermisos } from '../src/modules/permisos/permisos.service
 
 const app = crearApp();
 const PASS = 'Albaydar-2026';
-type Mail = { to: string; subject: string; html: string };
+type Mail = { to: string; subject: string; html: string; adjuntos: { filename: string; content: Buffer; contentType: string }[] };
 const buzon: Mail[] = [];
 const tokens: Record<string, string> = {};
 const auth = (quien = 'secretaria') => ({ Authorization: `Bearer ${tokens[quien]}` });
@@ -56,7 +58,12 @@ beforeAll(async () => {
   }
   setTransporter({
     sendMail: async (m: Record<string, unknown>) => {
-      buzon.push({ to: String(m.to), subject: String(m.subject), html: String(m.html) });
+      const adjuntos = ((m.attachments as { filename: string; content: Buffer | string; contentType: string; encoding?: string }[]) ?? []).map((a) => ({
+        filename: a.filename,
+        content: Buffer.isBuffer(a.content) ? a.content : Buffer.from(a.content, a.encoding === 'base64' ? 'base64' : 'utf8'),
+        contentType: a.contentType,
+      }));
+      buzon.push({ to: String(m.to), subject: String(m.subject), html: String(m.html), adjuntos });
       return { messageId: String(buzon.length) };
     },
     verify: async () => true,
@@ -69,10 +76,10 @@ afterAll(async () => {
 });
 
 /** Solicitud admitida y pagada: el expediente queda en «Reserva confirmada». */
-async function reservaPagada(nombre: string) {
+async function reservaPagada(nombre: string, viaId = viaBach) {
   const email = `${nombre.toLowerCase()}.matricula@example.com`;
   const r = await request(app).post('/api/solicitudes').set(auth()).send({
-    viaId: viaBach, alumnaNombre: nombre, alumnaApellidos: 'Matrícula Prueba', tutorNombre: `Elena Tutora de ${nombre}`, email,
+    viaId, alumnaNombre: nombre, alumnaApellidos: 'Matrícula Prueba', tutorNombre: `Elena Tutora de ${nombre}`, email,
     telefono: `+34 622 100 ${String(buzon.length).padStart(3, '0')}`, centroProcedencia: 'IES Bécquer', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
   });
   await db.update(solicitudes).set({ estado: 'ENTREVISTA_REALIZADA' }).where(eq(solicitudes.id, r.body.id));
@@ -82,6 +89,34 @@ async function reservaPagada(nombre: string) {
   expect(c.body.reserva.estado).toBe('PAGADA');
   const a = (await request(app).get(`/api/alumnado?q=${nombre}`).set(auth())).body.items[0];
   return { solicitudId: r.body.id as string, codigo: r.body.codigo as string, email, alumnaId: a.id as string };
+}
+
+/**
+ * PNG de verdad (escala de grises, una fila de `bytes` píxeles sin comprimir): el PDF final dibuja
+ * los trazos, así que la API exige una imagen que se pueda abrir. `relleno` cambia los píxeles.
+ */
+function png(bytes = 300, relleno = 7): string {
+  const trozo = (tipo: string, datos: Buffer) => {
+    const td = Buffer.concat([Buffer.from(tipo, 'latin1'), datos]);
+    const n = Buffer.alloc(4);
+    n.writeUInt32BE(datos.length);
+    const c = Buffer.alloc(4);
+    c.writeUInt32BE(crc32(td));
+    return Buffer.concat([n, td, c]);
+  };
+  const ancho = Math.max(8, bytes);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(ancho, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8; // 8 bits, escala de grises
+  const fila = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: ancho }, (_, i) => (i * relleno) % 256))]);
+  const bytesPng = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    trozo('IHDR', ihdr),
+    trozo('IDAT', deflateSync(fila, { level: 0 })),
+    trozo('IEND', Buffer.alloc(0)),
+  ]);
+  return `data:image/png;base64,${bytesPng.toString('base64')}`;
 }
 
 let dni = 30_000_000;
@@ -330,9 +365,6 @@ describe('Matrícula digital: apertura, borrador, enlaces y renovación', () => 
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('Matrícula digital: documentos con huella, firmas y mandatos SEPA', () => {
-  /** Lo que comprueba la API es la firma de bytes del PNG; el contenido da igual para los tests. */
-  const png = (bytes = 300, relleno = 7) =>
-    `data:image/png;base64,${Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(bytes, relleno)]).toString('base64')}`;
 
   let id = '';
   let token = '';
@@ -525,5 +557,184 @@ describe('Matrícula digital: documentos con huella, firmas y mandatos SEPA', ()
     expect(firmaDe(b.body, 'ideario-titular')).toMatchObject({ estado: 'ANULADA', motivo: 'Borrada' });
     expect((await request(app).delete(`/api/public/matricula/${token}/firmas/ideario-titular`)).status).toBe(404);
     expect((await ficha(id)).historial[0]).toMatchObject({ tipo: 'FIRMA_BORRADA', autor: 'Familia' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Matrícula digital: archivos, envío, PDF, devolución y Séneca', () => {
+  let s: Awaited<ReturnType<typeof reservaPagada>>;
+  let id = '';
+  let token = '';
+  let tPadre = '';
+  const PDF = Buffer.from('%PDF-1.4\n% copia del DNI de prueba\n'.repeat(20));
+  const pngBuf = () => Buffer.from(png(500, 3).split(',')[1]!, 'base64');
+  const pub = () => request(app).get(`/api/public/matricula/${token}`);
+  const subir = (destino: string, datos: Buffer, nombre: string, t = token) =>
+    request(app).post(`/api/public/matricula/${t}/archivos/${destino}`).attach('archivo', datos, nombre);
+  const leer = (...paginas: string[]) => request(app).post(`/api/public/matricula/${token}/paginas-leidas`).send({ paginas });
+  const firmarDoc = async (doc: string, huecos: string[], t = token) => {
+    const d = (await request(app).get(`/api/public/matricula/${t}/documentos/${doc}`)).body;
+    for (const h of huecos) {
+      const r = await request(app).post(`/api/public/matricula/${t}/firmas/${h}`).send({ imagen: png(300, h.length), huella: d.huella });
+      expect(r.status, `${h}: ${JSON.stringify(r.body.error)}`).toBe(201);
+    }
+  };
+  const ultimoA = (para: string, asunto: RegExp) => [...buzon].reverse().find((m) => m.to === para && asunto.test(m.subject))!;
+
+  it('archivos: tipo real, solo los que pide la matrícula, uno por destino y el progenitor no sube', async () => {
+    const [gm] = await db.insert(vias).values({ familia: 'CICLOS_CONCERTADOS_GM', curso: 1, nombre: '1º GM Gestión Administrativa', cursoEscolar: '2027-2028', plazas: 20 }).returning();
+    s = await reservaPagada('Gema', gm!.id);
+    const r = await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: s.alumnaId, enviarEnlace: false });
+    id = r.body.matricula.id;
+    token = r.body.enlace.url.split('/').at(-1);
+    expect(r.body.matricula.borrador).toMatchObject({ via: 'gm', course: '1', photo: null, documents: {} });
+
+    expect((await subir('photo', PDF, 'foto.pdf')).body.error.code).toBe('TIPO_NO_PERMITIDO');
+    expect((await subir('m4', Buffer.from('hola, no soy un pdf'), 'dni.pdf')).body.error.code).toBe('TIPO_NO_PERMITIDO');
+    expect((await subir('b1', PDF, 'libro.pdf')).body.error.code).toBe('DOCUMENTO_NO_APLICA'); // el Libro de Familia es de Bachillerato y GS privado
+
+    const primero = await subir('m4', PDF, 'dni-viejo.pdf');
+    expect(primero.status).toBe(201);
+    expect(primero.body.borrador.documents.m4).toMatchObject({ name: 'dni-viejo.pdf', size: PDF.length });
+    const viejo = (await db.execute(sql`select clave from archivos_matricula where matricula_id = ${id} and destino = 'm4'`)).rows[0]!.clave as string;
+    const nuevo = await subir('m4', PDF, 'dni.pdf');
+    expect(nuevo.body.borrador.documents.m4.name).toBe('dni.pdf');
+    // El sustituido sale del almacén.
+    await expect(readFile(`./storage/test-uploads/${viejo}`)).rejects.toThrow();
+    const descarga = await request(app).get(`/api/matriculas/${id}/archivos/m4`).set(auth()).buffer(true).parse((res, cb) => {
+      const trozos: Buffer[] = [];
+      res.on('data', (c: Buffer) => trozos.push(c));
+      res.on('end', () => cb(null, Buffer.concat(trozos)));
+    });
+    expect(descarga.headers['content-type']).toBe('application/pdf');
+    expect(Buffer.compare(descarga.body as Buffer, PDF)).toBe(0);
+
+    expect((await subir('photo', pngBuf(), 'foto.png')).body.borrador.photo).toMatchObject({ name: 'foto.png' });
+    const quitar = await request(app).delete(`/api/public/matricula/${token}/archivos/photo`);
+    expect(quitar.body.borrador.photo).toBeNull();
+    expect((await request(app).delete(`/api/public/matricula/${token}/archivos/photo`)).status).toBe(404);
+    await subir('photo', pngBuf(), 'foto.png');
+
+    const padre = await request(app).post(`/api/matriculas/${id}/enlaces`).set(auth()).send({ alcance: 'PROGENITOR', progenitor: 'padre', enviar: false });
+    tPadre = padre.body.enlace.url.split('/').at(-1);
+    expect((await subir('m4', PDF, 'dni.pdf', tPadre)).status).toBe(403);
+
+    const h = (await ficha(id)).historial.map((e: { texto: string }) => e.texto);
+    expect(h).toEqual(expect.arrayContaining(['Sube: Fotocopia del DNI de la alumna', 'Sustituye: Fotocopia del DNI de la alumna', 'Quita: Foto de carné']));
+  });
+
+  it('enviar exige la matrícula completa y la versión que se ve; genera los PDF y avisa', async () => {
+    const incompleta = await request(app).post(`/api/public/matricula/${token}/enviar`).send({ version: (await pub()).body.version });
+    expect(incompleta.status).toBe(409);
+    expect(incompleta.body.error.code).toBe('MATRICULA_INCOMPLETA');
+    // GM sin AlbaydarPLUS no tiene orden de pago: el paso económico ya está completo.
+    expect(Object.keys(incompleta.body.error.details.pendientes)).toEqual(['student', 'family', 'annex', 'ideario', 'documents', 'review']);
+
+    const actual = (await pub()).body;
+    const b = structuredClone(actual.borrador);
+    b.student = { ...b.student, secondSurname: 'Envío', birthDate: '01/02/2011', document: '49218735T', email: 'gema@example.com', phone: '+34 600 000 001', address: 'C/ Feria 1', municipality: 'Sevilla', province: 'Sevilla', postalCode: '41003', nuss: '281234567890' };
+    b.family.guardians[0] = { ...b.family.guardians[0], document: '12345678Z', email: s.email, phone: '+34 600 000 002' };
+    b.family = { ...b.family, familySize: 'no', siblings: 0, contactPreference: 'mother' };
+    b.annex = { ...b.annex, sex: 'M', cycleType: 'intermediate', regime: 'ordinary', enrollmentCourse: '1', imageConsent: true, minor: true, custodians: [{ fullName: 'Elena Tutora de Gema', document: '12345678Z', phone: '', email: '', relationship: 'mother' }] };
+    b.lopd.dop = true;
+    b.declaration = { day: '12', month: 'junio', signer: 'guardian' };
+    const g = await guardarFamilia(token, b, actual.version);
+    expect(g.status).toBe(200);
+
+    await leer('impreso-1', 'ideario-1', ...[1, 2, 3, 4, 5, 6, 7].map((n) => `lopd-${n}`));
+    await firmarDoc('impreso', ['impreso-titular']);
+    await firmarDoc('ideario', ['ideario-titular']);
+    await firmarDoc('lopd', ['lopd-madre', 'lopd-img-madre', 'lopd-pd-madre']);
+    await firmarDoc('lopd', ['lopd-padre', 'lopd-img-padre', 'lopd-pd-padre'], tPadre);
+    const lista = (await pub()).body;
+    expect(lista.pendientes).toEqual({});
+    expect(lista.puedeEnviar).toBe(true);
+
+    expect((await request(app).post(`/api/public/matricula/${tPadre}/enviar`).send({ version: lista.version })).status).toBe(403);
+    expect((await request(app).post(`/api/public/matricula/${token}/enviar`).send({ version: lista.version - 1 })).body.error.code).toBe('VERSION_ANTIGUA');
+    const env = await request(app).post(`/api/public/matricula/${token}/enviar`).send({ version: lista.version });
+    expect(env.status).toBe(200);
+    expect(env.body).toMatchObject({ estado: 'ENVIADA', soloLectura: true });
+    expect(env.body.pdfs.map((p: { documento: string }) => p.documento).sort()).toEqual(['ideario', 'impreso', 'lopd']);
+
+    // Ya no se edita ni se firma desde el enlace.
+    expect((await guardarFamilia(token, env.body.borrador, env.body.version)).body.error.code).toBe('MATRICULA_ENVIADA');
+    expect((await subir('m4', PDF, 'dni.pdf')).body.error.code).toBe('MATRICULA_ENVIADA');
+
+    await enviarCorreos();
+    const acuse = ultimoA(s.email, /^Hemos recibido la matrícula de Gema/);
+    expect(acuse.adjuntos.map((a) => a.filename).sort()).toEqual([`${env.body.codigo}-ideario.pdf`, `${env.body.codigo}-impreso.pdf`, `${env.body.codigo}-lopd.pdf`]);
+    expect(acuse.adjuntos.every((a) => a.contentType === 'application/pdf' && a.content.subarray(0, 5).toString() === '%PDF-')).toBe(true);
+    expect(ultimoA('secretaria@albaydar.org', /^Matrícula enviada · Gema/).html).toContain(`/enrollments/${id}`);
+  });
+
+  it('el PDF lleva el documento firmado y la hoja de evidencias; la familia descarga su copia', async () => {
+    const r = await request(app).get(`/api/public/matricula/${token}/pdf/lopd`).buffer(true).parse((res, cb) => {
+      const trozos: Buffer[] = [];
+      res.on('data', (c: Buffer) => trozos.push(c));
+      res.on('end', () => cb(null, Buffer.concat(trozos)));
+    });
+    expect(r.status).toBe(200);
+    expect(r.headers['content-type']).toBe('application/pdf');
+    expect(r.headers['cache-control']).toBe('no-store');
+    const pdf = r.body as Buffer;
+    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+    // 7 páginas del documento + la hoja de evidencias (con seis firmas ocupa más de una).
+    expect(pdf.toString('latin1').match(/\/Type \/Page\b/g)!.length).toBeGreaterThanOrEqual(8);
+    const [guardado] = (await db.execute(sql`select sha256 from pdfs_matricula where matricula_id = ${id} and documento = 'lopd' and anulado_en is null`)).rows;
+    expect(guardado!.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect((await request(app).get(`/api/public/matricula/${tPadre}/pdf/impreso`)).status).toBe(403);
+  });
+
+  it('devolver a borrador: con motivo, aviso a la familia, los PDF dejan de valer y las firmas siguen', async () => {
+    expect((await request(app).post(`/api/matriculas/${id}/devolver`).set(auth()).send({ motivo: '' })).status).toBe(400);
+    const r = await request(app).post(`/api/matriculas/${id}/devolver`).set(auth()).send({ motivo: 'La copia del DNI está cortada: súbanla entera.' });
+    expect(r.body).toMatchObject({ estado: 'BORRADOR', devuelta: { motivo: 'La copia del DNI está cortada: súbanla entera.' }, pdfs: [], puedeEnviar: true });
+    expect(r.body.historial[0]).toMatchObject({ tipo: 'DEVUELTA', autor: 'María Reyes' });
+    expect((await request(app).get(`/api/public/matricula/${token}/pdf/lopd`)).body.error.code).toBe('PDF_NO_DISPONIBLE');
+    await enviarCorreos();
+    expect(ultimoA(s.email, /^Hay que revisar la matrícula de Gema/).html).toContain('La copia del DNI está cortada');
+
+    // La familia corrige y vuelve a enviar.
+    expect((await subir('m4', PDF, 'dni-entero.pdf')).status).toBe(201);
+    const v = (await pub()).body;
+    const env = await request(app).post(`/api/public/matricula/${token}/enviar`).send({ version: v.version });
+    expect(env.body).toMatchObject({ estado: 'ENVIADA', devuelta: null });
+  });
+
+  it('exportar a Séneca: CSV, la alumna queda matriculada, la solicitud también y se confirma a la familia', async () => {
+    const r = await request(app).post(`/api/matriculas/${id}/exportar-seneca`).set(auth());
+    expect(r.status).toBe(200);
+    expect(r.headers['content-type']).toBe('text/csv; charset=utf-8');
+    expect(r.headers['content-disposition']).toMatch(/^attachment; filename="seneca-M-2027-\d{4}-\d{4}-\d{2}-\d{2}\.csv"$/);
+    const [cabecera, fila] = r.text.replace(/^﻿/, '').split('\r\n');
+    expect(cabecera!.split(';').slice(0, 4)).toEqual(['matricula', 'expediente', 'curso_escolar', 'ensenanza']);
+    expect(fila).toContain('Ciclos Concertados (GM)');
+    expect(fila).toContain('49218735T');
+
+    const f = await ficha(id);
+    expect(f).toMatchObject({ estado: 'EXPORTADA', estadoEtiqueta: 'Exportada a Séneca' });
+    const a = (await request(app).get(`/api/alumnado/${s.alumnaId}`).set(auth())).body;
+    expect(a).toMatchObject({ estado: 'MATRICULADA', curso: 1, cursoEscolar: '2027-2028', familia: 'CICLOS_CONCERTADOS_GM' });
+    const sol = (await request(app).get(`/api/solicitudes/${s.solicitudId}`).set(auth())).body;
+    expect(sol.estado).toBe('MATRICULADA');
+    await enviarCorreos();
+    expect(ultimoA(s.email, /^Matrícula confirmada · Gema/).html).toContain('ha quedado registrada');
+
+    // Se puede volver a generar el fichero; ni se devuelve ni se edita ya.
+    expect((await request(app).post(`/api/matriculas/${id}/exportar-seneca`).set(auth())).status).toBe(200);
+    expect((await ficha(id)).historial[0]).toMatchObject({ tipo: 'SENECA' });
+    expect((await request(app).post(`/api/matriculas/${id}/devolver`).set(auth()).send({ motivo: 'x' })).body.error.code).toBe('MATRICULA_EXPORTADA');
+    expect((await guardarInterno(id, f.borrador, f.version)).body.error.code).toBe('MATRICULA_EXPORTADA');
+  });
+
+  it('exportar varias es todo o nada: si una sigue en borrador, no se exporta ninguna', async () => {
+    const lola = await alta('Rita', { estado: 'EN_PROCESO', cursoEscolar: '2027-2028' });
+    const borrador = (await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: lola, enviarEnlace: false })).body.matricula;
+    const r = await request(app).post('/api/matriculas/exportar-seneca').set(auth()).send({ matriculaIds: [id, borrador.id] });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatchObject({ code: 'MATRICULA_NO_ENVIADA', details: { codigos: [borrador.codigo] } });
+    expect((await ficha(id)).historial[0].tipo).toBe('SENECA'); // no dejó un segundo «SENECA»: se deshizo todo
+    expect((await request(app).post('/api/matriculas/exportar-seneca').set(auth('comercial')).send({ matriculaIds: [id] })).status).toBe(403);
   });
 });

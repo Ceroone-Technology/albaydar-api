@@ -11,7 +11,7 @@ Este archivo es el punto de partida para cualquier sesión: qué hay, cómo se t
 | 01 · Captación (formulario web, alta interna) | ✅ Hecha |
 | 02 · Revisión y entrevista (bandeja, kanban, citación, agenda, entrevistas) | ✅ Hecha |
 | 03 · Evaluación y reserva de plaza (decisión, reserva, cobros manuales) | ✅ Hecha |
-| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | 🟡 **En curso.** Entregas 1 y 2 de 4 hechas el 08/11/2026 en la API: apertura, renovación, borrador con versión, páginas leídas y enlaces (`feat/matricula-borrador`); documentos con huella, firmas y mandatos SEPA (`feat/matricula-firmas`). Plan en `docs/matricula.md` → «Entregas» |
+| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | 🟡 **En curso.** Entregas 1 a 3 de 4 hechas en la API: apertura, renovación, borrador con versión, páginas leídas y enlaces (`feat/matricula-borrador`, 08/11); documentos con huella, firmas y mandatos SEPA (`feat/matricula-firmas`, 08/11); archivos, envío con PDF, devolución y Séneca (`feat/matricula-envio`, 10/11). Falta el front. Plan en `docs/matricula.md` → «Entregas» |
 | Alumnado (expedientes, familias, historial) | ✅ Hecho el 08/11/2026 (API `feat/alumnado`, front `feature/alumnado-api`) |
 | Cobros completos (remesas SEPA, conciliación, facturación) | ❌ Sin empezar |
 
@@ -77,10 +77,10 @@ src/
     reservas/            reserva de plaza, control de reservas, recordar, recordatorio y vencimiento
     cobros/              cobros manuales, anulación, resumen (KPIs) y recibo imprimible
     alumnado/            expedientes (alta desde la reserva pagada, manual), contactos, historial, baja, notas
-    matricula/           borrador.ts (Zod del EnrollmentDraft del front), reglas.ts (copia de enrollment.rules.ts), dominio.ts, service (apertura, renovación, borrador con versión, páginas, enlaces), firmas.service (validez por huella, firmar, anular, mandatos), documentos/ (textos.ts legales versionados, generar.ts con la huella), routes (privadas y /public/matricula)
+    matricula/           borrador.ts (Zod del EnrollmentDraft del front), reglas.ts (copia de enrollment.rules.ts), dominio.ts, service (apertura, renovación, borrador con versión, páginas, enlaces), firmas.service (validez por huella, firmar, anular, mandatos), archivos.service (foto y checklist), envio.service (enviar, devolver, PDF, Séneca), seneca.ts (columnas del fichero), documentos/ (textos.ts legales versionados, generar.ts con la huella, pdf.ts con pdfkit y la hoja de evidencias), routes (privadas y /public/matricula)
     comunicaciones/      plantillas (CRUD, vista previa, prueba), histórico de envíos, estado SMTP
     documentos/ publico/ catalogo/
-drizzle/                 migraciones SQL (0000–0010) y meta/ (journal + snapshots: no se editan a mano)
+drizzle/                 migraciones SQL (0000–0011) y meta/ (journal + snapshots: no se editan a mano)
 docs/                    api.md · flujo-y-datos.md · preguntas-abiertas.md · gmail.md · matricula.md (diseño de la fase 04)
 tests/                   reglas.test.ts (funciones puras) · flujo-admision.test.ts y matricula.test.ts (HTTP contra PostgreSQL real, SMTP falso)
 ```
@@ -141,7 +141,7 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 - Alta manual con DNI/NIE validado y único, edición (los contactos se sustituyen enteros), baja con motivo y reactivación por `PATCH { estado }`, notas internas y CSV.
 - Historial: eventos propios (`alumna_eventos`, solo qué campos cambian, nunca los valores) más la solicitud, sus correos, entrevistas y cobros.
 - «Familia ya vinculada» (revisión y filtro del kanban) mira también los contactos de las alumnas que no están de baja.
-- Mientras no exista la matrícula digital, secretaría mueve los estados a mano.
+- La matrícula mueve el estado: abrirla → «En proceso»; exportarla a Séneca → «Matriculada» con el curso nuevo. Secretaría también lo cambia a mano.
 
 **Matrícula digital, entrega 1** (08/11/2026, detalle en `docs/api.md` y `docs/matricula.md`)
 - `POST /matriculas { alumnaId }`: alumnado nuevo (expediente en reserva o en proceso → «En proceso») o renovación 1º → 2º (expediente matriculado en 1º, a partir de su matrícula de 1º). `POST /matriculas/renovacion` la abre en bloque para quien promociona. Código `M-AAAA-NNNN`, una por alumna y curso escolar.
@@ -155,15 +155,22 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 - Firmar (`POST …/firmas/:hueco { imagen, huella }`) comprueba documento aplicable, páginas leídas, DOP o modalidad, cuenta domiciliable (IBAN SEPA, DNI del titular, BIC) y huella actual (409 `DOCUMENTO_CAMBIADO`). Guarda hora del servidor, IP, navegador, enlace o usuario y el documento tal como se firmó.
 - Una firma vale mientras su huella coincida: en borrador se evalúa al leer (`DESACTUALIZADA`) y se anula al guardar (`ANULADA`, con motivo y su mandato). La fecha de los documentos es la de la firma y no entra en la huella.
 - Mandatos `M-2027-0001-SEPA1` / `…-PLUS1` (RCUR/OOFF, CORE), nunca reutilizados. Acreedores por vía en `ajustes.matricula` (`GET/PUT /matriculas/configuracion`), validados con la norma AT-02.
-- Falta: archivos, envío, PDF y Séneca (entrega 3), y el front (entrega 4).
+
+**Matrícula digital, entrega 3** (10/11/2026)
+- Archivos (`POST/DELETE …/archivos/:destino`, multipart `archivo`): foto (`photo`) y copias del checklist (`m4`, `c2`, `b1`, `b2`), solo los que pide la matrícula, con tipo real comprobado; uno por destino, el sustituido sale del almacén.
+- Enviar (`POST …/enviar { version }`): exige `canSubmit` con firmas y archivos; genera el PDF final de cada documento firmado (`pdfkit`, desde lo guardado al firmar, con los trazos y la hoja de evidencias) y lo manda a la familia en `MATRICULA_RECIBIDA`; aviso a secretaría.
+- Devolver (`POST /matriculas/:id/devolver { motivo }`): vuelve a borrador, anula los PDF, avisa a la familia; las firmas siguen.
+- Séneca (`POST /matriculas/:id/exportar-seneca` y en lote): CSV provisional (`seneca.ts`), todo o nada; la primera vez, `EXPORTADA`, alumna «Matriculada» con el curso nuevo, solicitud `MATRICULADA` y `MATRICULA_CONFIRMADA`.
+- Falta: el front (entrega 4) y, con el despliegue, el almacén en Google Cloud Storage.
 
 **Comunicaciones**
 - Todos los correos salen de plantillas HTML editables, una activada por evento. Saneado al guardar y variables validadas. Vista previa, prueba e histórico.
 - Eventos:
   - `SOLICITUD_RECIBIDA`, `COMPLETAR_SOLICITUD`*, `CITACION_PROPUESTA`*, `CITACION_RECORDATORIO`, `CITA_CONFIRMADA`*, `CITA_CAMBIADA`*, `ENTREVISTA_RECORDATORIO`, `CITA_CANCELADA`, `AVISO_OTRA_FRANJA`;
   - de la fase 03: `ADMITIDA`, `EN_ESPERA`, `NO_ADMITIDA`, `RECORDATORIO_PAGO`, `RESERVA_VENCIDA`;
-  - de la fase 04: `MATRICULA_ENLACE`* y `MATRICULA_ENLACE_PROGENITOR`*;
-  - en borrador: `MATRICULA_CONFIRMADA`.
+  - de la fase 04: `MATRICULA_ENLACE`*, `MATRICULA_ENLACE_PROGENITOR`*, `MATRICULA_RECIBIDA` (con los PDF), `AVISO_MATRICULA_ENVIADA` (a secretaría), `MATRICULA_DEVUELTA` y `MATRICULA_CONFIRMADA`.
+
+  Ya no queda ningún evento de una fase futura en borrador.
 
   (*) Obligatorios: llevan el enlace de la familia y se envían aunque la plantilla esté en borrador.
 - Correo con outbox: se guarda en la misma transacción y un worker lo envía cada 15 s, con reintentos.
@@ -176,7 +183,7 @@ Tablas:
 - `propuestas_cita`, `franjas_agenda`, `entrevistas`, `tokens_publicos`, `documentos`;
 - `plantillas_correo`, `correos_salientes`, `reservas`, `cobros`, `secuencias`;
 - `alumnas`, `alumna_contactos`, `alumna_eventos`;
-- `matriculas`, `enlaces_matricula`, `matricula_eventos`, `documentos_matricula`, `firmas_matricula`, `mandatos_sepa`.
+- `matriculas`, `enlaces_matricula`, `matricula_eventos`, `documentos_matricula`, `firmas_matricula`, `mandatos_sepa`, `archivos_matricula`, `pdfs_matricula`.
 
 | Migración | Contenido |
 |---|---|
@@ -191,6 +198,7 @@ Tablas:
 | `0008_alumnas_reservas_antiguas` | A mano, solo datos: expediente para las solicitudes con la plaza ya reservada o matriculadas |
 | `0009_matricula` | `matriculas`, `enlaces_matricula`, `matricula_eventos` y los enumerados `estado_matricula` y `alcance_enlace` |
 | `0010_firmas_matricula` | `documentos_matricula`, `firmas_matricula` (imagen en `bytea`), `mandatos_sepa` y sus enumerados |
+| `0011_archivos_pdfs_matricula` | `archivos_matricula` (foto y copias del checklist, con categoría de conservación) y `pdfs_matricula` (PDF finales) |
 
 ## Convenciones
 
@@ -222,6 +230,7 @@ Tablas:
 13. **Una entrevista futura no se puede marcar como realizada** (409 `ENTREVISTA_FUTURA`). En pruebas manuales, la solicitud se pasa a `ENTREVISTA_REALIZADA` con `PATCH /estado` (transición manual permitida).
 14. **`UPDATE … RETURNING` no devuelve las filas en ningún orden.** Si importa el orden (la cola de correos), se recorre el de la `SELECT … ORDER BY`. Y `now()` es el mismo durante toda la transacción: para desempatar filas creadas en la misma, `clock_timestamp()` (ver `encolarCorreo`). Sin esto, dos correos a la misma familia podían salir al revés y 6 tests fallaban de vez en cuando.
 15. **`jsonb` no conserva el orden de las claves.** Comparar un JSON leído de la BD con el que llega en la petición usando `JSON.stringify` da «distintos» aunque sean iguales. Usa `jsonCanonico` (`matricula.service.ts`), que ordena las claves. Sin esto, el autoguardado de la matrícula subía la versión en cada guardado sin cambios.
+16. **Adjuntos binarios en el outbox:** `encolarCorreo` codifica en base64 el `content` de cada adjunto como texto (un `.ics`). Un binario (un PDF) se pasa ya en base64 y con `base64: true`; si no, llega corrupto (ver `envio.service.ts`).
 
 ## Reglas de negocio validadas con el cliente
 
@@ -261,7 +270,7 @@ Detalle, flujo de referencia paso a paso y prioridad en `../RESUMEN-PROYECTO-ALB
 
 ### Fase 04 · Matrícula digital (en curso)
 
-**Entrega 1 hecha el 08/11/2026** (ver «Qué está implementado»). **Entrega 2 hecha el mismo día.** Quedan las entregas 3 (archivos, envío, PDF y Séneca) y 4 (front), en `docs/matricula.md` → «Entregas».
+**Entrega 1 hecha el 08/11/2026** (ver «Qué está implementado»). **Entrega 2 hecha el mismo día; la 3, el 10/11/2026.** Queda la entrega 4 (front), en `docs/matricula.md` → «Entregas».
 
 El front ya tiene el asistente completo contra una API simulada (`mock-enrollments.interceptor.ts`). Las reglas están en `src/app/domain/rules/enrollment.rules.ts` del front (unas 770 líneas: `stepMissing`, `canSignDoc`, `voidedMandateSignatures`, `economicLines`, `checklist`, `canSubmit`) y son la especificación que la API tendrá que validar.
 

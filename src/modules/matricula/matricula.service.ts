@@ -9,9 +9,11 @@ import {
   familiaViaEnum,
   matriculaEventos,
   matriculas,
+  pdfsMatricula,
   solicitudes,
   usuarios,
   type Alumna,
+  type ArchivoMatricula,
   type AlumnaContacto,
   type EnlaceMatricula,
   type Matricula,
@@ -27,6 +29,8 @@ import { estadoPorMatricula, plegar, plegarSql } from '../alumnado/alumnado.serv
 import { siguienteValor } from '../solicitudes/comun';
 import { cursoEscolarCorto, nombrePila, nombreVia } from '../solicitudes/dominio';
 import { jsonCanonico } from './json-canonico';
+import * as archivosSrv from './archivos.service';
+import { aBorrador, cargarArchivos, type Destino } from './archivos.service';
 import * as firmasSrv from './firmas.service';
 import { anularDesactualizadas, cargarFirmas, evaluarFirmas, firmasDe, vistaMandato, type Evidencias, type Firmante } from './firmas.service';
 import { borradorEntrada, borradorVacio, CURSOS, type Borrador, type Expediente } from './borrador';
@@ -187,12 +191,11 @@ function borradorDeRenovacion(anterior: Borrador, a: Alumna): Borrador {
  * El borrador con lo que controla el servidor: las páginas leídas y las firmas que valen.
  * Sin `signatures`, la base para generar documentos y evaluar las firmas. Archivos: entrega 3.
  */
-function expediente(m: Matricula, signatures: Expediente['signatures'] = {}): Expediente {
+export function expediente(m: Matricula, signatures: Expediente['signatures'] = {}, archivos: ArchivoMatricula[] = []): Expediente {
   return {
     ...m.datos,
     readPages: Object.fromEntries(Object.keys(m.paginasLeidas).map((k) => [k, true])),
-    photo: null,
-    documents: {},
+    ...aBorrador(archivos),
     signatures,
   };
 }
@@ -222,12 +225,17 @@ async function datosDe(tx: Tx, m: Matricula) {
   const [s] = m.solicitudId ? await tx.select({ id: solicitudes.id, codigo: solicitudes.codigo }).from(solicitudes).where(eq(solicitudes.id, m.solicitudId)) : [];
   const [u] = m.guardadoPorId ? await tx.select({ nombre: usuarios.nombre }).from(usuarios).where(eq(usuarios.id, m.guardadoPorId)) : [];
   const { evaluacion, mandatos } = await firmasDe(tx, m, expediente(m));
-  return { alumna: fila!, solicitud: s ?? null, guardadoPorNombre: u?.nombre ?? null, evaluacion, mandatos };
+  const archivos = await cargarArchivos(tx, [m.id]);
+  const pdfs = await tx
+    .select({ documento: pdfsMatricula.documento, tamano: pdfsMatricula.tamano, sha256: pdfsMatricula.sha256, creadoEn: pdfsMatricula.createdAt })
+    .from(pdfsMatricula)
+    .where(and(eq(pdfsMatricula.matriculaId, m.id), isNull(pdfsMatricula.anuladoEn)));
+  return { alumna: fila!, solicitud: s ?? null, guardadoPorNombre: u?.nombre ?? null, evaluacion, mandatos, archivos, pdfs };
 }
 
 /** `completo`: la ficha de secretaría ve el IBAN y el DNI del titular de los mandatos sin enmascarar. */
 function vistaBase(m: Matricula, extra: Awaited<ReturnType<typeof datosDe>>, completo = true) {
-  const exp = expediente(m, extra.evaluacion.signatures);
+  const exp = expediente(m, extra.evaluacion.signatures, extra.archivos);
   return {
     id: m.id,
     codigo: m.codigo,
@@ -254,6 +262,8 @@ function vistaBase(m: Matricula, extra: Awaited<ReturnType<typeof datosDe>>, com
     /** La última firma de cada hueco: válida, desactualizada (cambió su documento) o anulada, con el motivo. */
     firmas: extra.evaluacion.vista,
     mandatos: extra.mandatos.map((x) => vistaMandato(x, completo)),
+    /** PDF finales de los documentos firmados: se generan al enviar (GET …/pdf/:doc). */
+    pdfs: extra.pdfs,
     guardado: m.guardadoEn ? { en: m.guardadoEn, por: m.guardadoPor, nombre: extra.guardadoPorNombre } : null,
     enviadaEn: m.enviadaEn,
     exportadaEn: m.exportadaEn,
@@ -281,7 +291,7 @@ async function historial(tx: Tx, matriculaId: string): Promise<ItemHistorialMatr
   }));
 }
 
-async function cargar(tx: Tx, id: string, bloquear = false) {
+export async function cargar(tx: Tx, id: string, bloquear = false) {
   const q = tx.select().from(matriculas).where(eq(matriculas.id, id));
   const [m] = bloquear ? await q.for('update') : await q;
   if (!m) throw notFound('Matrícula no encontrada.', 'MATRICULA_NO_ENCONTRADA');
@@ -297,7 +307,7 @@ export async function detalle(id: string, tx: Tx = db) {
 }
 
 /** Lo que ve la familia desde su enlace: sin enlaces, historial ni notas internas. */
-async function vistaPublica(tx: Tx, m: Matricula, enlace: EnlaceMatricula) {
+export async function vistaPublica(tx: Tx, m: Matricula, enlace: EnlaceMatricula) {
   const base = vistaBase(m, await datosDe(tx, m), false);
   return {
     ...base,
@@ -343,11 +353,12 @@ export async function listar(q: z.infer<typeof listarMatriculasQuery>) {
       .offset((q.page - 1) * q.pageSize),
     db.select({ n: count() }).from(matriculas).innerJoin(alumnas, eq(alumnas.id, matriculas.alumnaId)).where(where),
   ]);
-  const [firmas, config] = await Promise.all([cargarFirmas(db, filas.map((f) => f.m.id)), matriculaConfig()]);
+  const ids = filas.map((f) => f.m.id);
+  const [firmas, config, archivos] = await Promise.all([cargarFirmas(db, ids), matriculaConfig(), cargarArchivos(db, ids)]);
   return {
     items: filas.map(({ m, a }) => {
       const ev = evaluarFirmas(m, expediente(m), firmas.filter((f) => f.matriculaId === m.id), { config });
-      const exp = expediente(m, ev.signatures);
+      const exp = expediente(m, ev.signatures, archivos.filter((a) => a.matriculaId === m.id));
       return {
         id: m.id,
         codigo: m.codigo,
@@ -445,7 +456,7 @@ async function registrarEdicion(tx: Tx, m: Matricula, actor: ActorMatricula, sec
 
 export const urlMatricula = (token: string) => `${env.PUBLIC_APP_URL}/matricula/${token}`;
 
-async function correoPrincipal(tx: Tx, alumnaId: string) {
+export async function correoPrincipal(tx: Tx, alumnaId: string) {
   const cs = await tx.select().from(alumnaContactos).where(eq(alumnaContactos.alumnaId, alumnaId));
   const ordenados = cs.sort((x, y) => Number(y.principal) - Number(x.principal) || x.orden - y.orden);
   return ordenados.find((c) => c.email)?.email ?? null;
@@ -699,7 +710,7 @@ function comprobarEditable(m: Matricula, actor: ActorMatricula) {
   }
 }
 
-async function versionAntigua(tx: Tx, m: Matricula) {
+export async function versionAntigua(tx: Tx, m: Matricula) {
   const [u] = m.guardadoPorId ? await tx.select({ nombre: usuarios.nombre }).from(usuarios).where(eq(usuarios.id, m.guardadoPorId)) : [];
   const quien = m.guardadoPor === 'familia' ? 'La familia' : (u?.nombre ?? 'Secretaría');
   return conflict('VERSION_ANTIGUA', `${quien} ha cambiado esta matrícula mientras la tenías abierta. Recarga para ver sus cambios.`, {
@@ -851,4 +862,53 @@ export async function borrarFirmaPublica(token: string, hueco: Hueco) {
     await firmasSrv.borrar(tx, m, hueco, { enlace: e });
     return vistaPublica(tx, m, e);
   });
+}
+
+// ── Archivos ─────────────────────────────────────────────────────────────────
+
+export async function subirArchivoInterno(id: string, destino: Destino, f: Express.Multer.File, usuarioId: string) {
+  const { vista, borrar } = await db.transaction(async (tx) => {
+    const m = await cargar(tx, id, true);
+    const borrar = await archivosSrv.subir(tx, m, expediente(m), destino, f, { usuarioId });
+    return { vista: await detalle(id, tx), borrar };
+  });
+  await archivosSrv.borrarDelAlmacen(borrar);
+  return vista;
+}
+
+export async function subirArchivoPublica(token: string, destino: Destino, f: Express.Multer.File) {
+  const { vista, borrar } = await db.transaction(async (tx) => {
+    const { e } = await deToken(token, tx);
+    const m = await cargar(tx, e.matriculaId, true);
+    const borrar = await archivosSrv.subir(tx, m, expediente(m), destino, f, { enlace: e });
+    return { vista: await vistaPublica(tx, m, e), borrar };
+  });
+  await archivosSrv.borrarDelAlmacen(borrar);
+  return vista;
+}
+
+export async function quitarArchivoInterno(id: string, destino: Destino, usuarioId: string) {
+  const { vista, borrar } = await db.transaction(async (tx) => {
+    const m = await cargar(tx, id, true);
+    const borrar = await archivosSrv.quitar(tx, m, destino, { usuarioId });
+    return { vista: await detalle(id, tx), borrar };
+  });
+  await archivosSrv.borrarDelAlmacen(borrar);
+  return vista;
+}
+
+export async function quitarArchivoPublica(token: string, destino: Destino) {
+  const { vista, borrar } = await db.transaction(async (tx) => {
+    const { e } = await deToken(token, tx);
+    const m = await cargar(tx, e.matriculaId, true);
+    const borrar = await archivosSrv.quitar(tx, m, destino, { enlace: e });
+    return { vista: await vistaPublica(tx, m, e), borrar };
+  });
+  await archivosSrv.borrarDelAlmacen(borrar);
+  return vista;
+}
+
+export async function descargarArchivo(id: string, destino: Destino) {
+  await cargar(db, id);
+  return archivosSrv.descargar(db, id, destino);
 }

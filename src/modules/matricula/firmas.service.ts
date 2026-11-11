@@ -274,7 +274,10 @@ function comprobarFirmante(m: Matricula, hueco: SignatureSlotId, quien: Firmante
 function imagenPng(dataUrl: string): Buffer {
   const m = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
   const buf = m ? Buffer.from(m[1]!, 'base64') : null;
-  if (!buf || tipoReal(buf)?.mime !== 'image/png') throw badRequest('FIRMA_NO_VALIDA', 'La firma no es una imagen PNG válida.');
+  // Firma de bytes y cabecera IHDR: lo mínimo para que el PDF final pueda dibujar el trazo.
+  if (!buf || tipoReal(buf)?.mime !== 'image/png' || buf.subarray(12, 16).toString('latin1') !== 'IHDR') {
+    throw badRequest('FIRMA_NO_VALIDA', 'La firma no es una imagen PNG válida.');
+  }
   if (buf.length > MAX_FIRMA) throw badRequest('FIRMA_NO_VALIDA', 'La imagen de la firma supera 200 KB.');
   if (buf.length < 100) throw badRequest('FIRMA_NO_VALIDA', 'La firma está vacía.');
   return buf;
