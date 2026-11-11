@@ -11,7 +11,7 @@ Este archivo es el punto de partida para cualquier sesión: qué hay, cómo se t
 | 01 · Captación (formulario web, alta interna) | ✅ Hecha |
 | 02 · Revisión y entrevista (bandeja, kanban, citación, agenda, entrevistas) | ✅ Hecha |
 | 03 · Evaluación y reserva de plaza (decisión, reserva, cobros manuales) | ✅ Hecha |
-| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | 🟡 **En curso.** Entregas 1 a 3 de 4 hechas en la API: apertura, renovación, borrador con versión, páginas leídas y enlaces (`feat/matricula-borrador`, 08/11); documentos con huella, firmas y mandatos SEPA (`feat/matricula-firmas`, 08/11); archivos, envío con PDF, devolución y Séneca (`feat/matricula-envio`, 10/11). Falta el front. Plan en `docs/matricula.md` → «Entregas» |
+| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | ✅ **Hecha** (pendiente de las respuestas del centro, preguntas 23–33). Entregas 1 a 3 de 4 hechas en la API: apertura, renovación, borrador con versión, páginas leídas y enlaces (`feat/matricula-borrador`, 08/11); documentos con huella, firmas y mandatos SEPA (`feat/matricula-firmas`, 08/11); archivos, envío con PDF, devolución y Séneca (`feat/matricula-envio`, 10/11). Front conectado el 11/11 (`feature/matricula-api`). Plan en `docs/matricula.md` → «Entregas» |
 | Alumnado (expedientes, familias, historial) | ✅ Hecho el 08/11/2026 (API `feat/alumnado`, front `feature/alumnado-api`) |
 | Cobros completos (remesas SEPA, conciliación, facturación) | ❌ Sin empezar |
 
@@ -161,7 +161,7 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 - Enviar (`POST …/enviar { version }`): exige `canSubmit` con firmas y archivos; genera el PDF final de cada documento firmado (`pdfkit`, desde lo guardado al firmar, con los trazos y la hoja de evidencias) y lo manda a la familia en `MATRICULA_RECIBIDA`; aviso a secretaría.
 - Devolver (`POST /matriculas/:id/devolver { motivo }`): vuelve a borrador, anula los PDF, avisa a la familia; las firmas siguen.
 - Séneca (`POST /matriculas/:id/exportar-seneca` y en lote): CSV provisional (`seneca.ts`), todo o nada; la primera vez, `EXPORTADA`, alumna «Matriculada» con el curso nuevo, solicitud `MATRICULADA` y `MATRICULA_CONFIRMADA`.
-- Falta: el front (entrega 4) y, con el despliegue, el almacén en Google Cloud Storage.
+- Front conectado el 11/11/2026 (entrega 4). Falta, con el despliegue, el almacén en Google Cloud Storage.
 
 **Comunicaciones**
 - Todos los correos salen de plantillas HTML editables, una activada por evento. Saneado al guardar y variables validadas. Vista previa, prueba e histórico.
@@ -270,7 +270,7 @@ Detalle, flujo de referencia paso a paso y prioridad en `../RESUMEN-PROYECTO-ALB
 
 ### Fase 04 · Matrícula digital (en curso)
 
-**Entrega 1 hecha el 08/11/2026** (ver «Qué está implementado»). **Entrega 2 hecha el mismo día; la 3, el 10/11/2026.** Queda la entrega 4 (front), en `docs/matricula.md` → «Entregas».
+**Entrega 1 hecha el 08/11/2026** (ver «Qué está implementado»). **Entrega 2 hecha el mismo día; la 3, el 10/11/2026; la 4 (front), el 11/11/2026.** Las cuatro entregas están hechas, en `docs/matricula.md` → «Entregas».
 
 El front ya tiene el asistente completo contra una API simulada (`mock-enrollments.interceptor.ts`). Las reglas están en `src/app/domain/rules/enrollment.rules.ts` del front (unas 770 líneas: `stepMissing`, `canSignDoc`, `voidedMandateSignatures`, `economicLines`, `checklist`, `canSubmit`) y son la especificación que la API tendrá que validar.
 
