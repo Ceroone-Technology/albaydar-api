@@ -11,11 +11,11 @@ Este archivo es el punto de partida para cualquier sesión: qué hay, cómo se t
 | 01 · Captación (formulario web, alta interna) | ✅ Hecha |
 | 02 · Revisión y entrevista (bandeja, kanban, citación, agenda, entrevistas) | ✅ Hecha |
 | 03 · Evaluación y reserva de plaza (decisión, reserva, cobros manuales) | ✅ Hecha |
-| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | ✅ **Hecha** (pendiente de las respuestas del centro, preguntas 23–33). Entregas 1 a 3 de 4 hechas en la API: apertura, renovación, borrador con versión, páginas leídas y enlaces (`feat/matricula-borrador`, 08/11); documentos con huella, firmas y mandatos SEPA (`feat/matricula-firmas`, 08/11); archivos, envío con PDF, devolución y Séneca (`feat/matricula-envio`, 10/11). Front conectado el 11/11 (`feature/matricula-api`). Plan en `docs/matricula.md` → «Entregas» |
+| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | ✅ **Hecha** (pendiente de las respuestas del centro, preguntas 23–37). Las cuatro entregas: apertura, renovación, borrador con versión, páginas leídas y enlaces (`feat/matricula-borrador`, 08/11); documentos con huella, firmas y mandatos SEPA (`feat/matricula-firmas`, 08/11); archivos, envío con PDF, devolución y Séneca (`feat/matricula-envio`, 10/11). Front conectado el 11/11 (`feature/matricula-api`). Plan en `docs/matricula.md` → «Entregas» |
 | Alumnado (expedientes, familias, historial) | ✅ Hecho el 08/11/2026 (API `feat/alumnado`, front `feature/alumnado-api`) |
 | Cobros completos (remesas SEPA, conciliación, facturación) | ❌ Sin empezar |
 
-En el front, a 24/10/2026 (`develop` = `main`, PR #12): conectados la sesión, los permisos, el formulario público, la bandeja, la citación, la página `/cita/:token` y el kanban. Evaluación y reserva, conectada (PR #13: decisión con vista previa, control de reservas y «Recordar»); el kanban ya no decide sin notificar, abre esa pantalla. Cobros, conectada (PR #14: KPI, reservas por vencer, registro manual, recibo y anulación); el kanban abre Cobros para «Plaza reservada». Entrevistas, conectada en la rama `feature/entrevistas-api` (calendario, resultado, no presentada, cancelación y nota; sin «Confirmar cita», que es de la familia). Configuración y Comunicaciones son placeholders por construir contra esta API. Matrícula y Alumnado siguen con su API simulada.
+En el front (11/11/2026), todo está conectado a esta API, sin mocks: admisión completa (bandeja, citación, kanban, `/cita/:token`, completar la solicitud), Entrevistas, Evaluación y reserva, Cobros (solo la reserva; remesas, conciliación y facturación atenuadas), Comunicaciones, Configuración, Dashboard, Alumnado y Matrícula digital (`/enrollments` y `/matricula/:token`). Todo está en `develop`; falta pasar `develop` → `main` en los dos repos.
 
 ## Stack y comandos
 
@@ -259,12 +259,12 @@ Detalle, flujo de referencia paso a paso y prioridad en `../RESUMEN-PROYECTO-ALB
 
 - ~~**Código con letra de tipo:** B Bachillerato, C Ciclos~~ ✅ hecho en `feat/codigo-solicitud-por-tipo`: `B-2026-0001` / `C-2026-0001`, contador por letra y año (`siguienteCodigo` y `LETRA_CODIGO` en `solicitudes/comun.ts`). Formato provisional hasta que el cliente dé sus series; las anteriores conservan `SOL-…`.
 - **Varios entrevistadores (~7, según el tipo de solicitud)** y calendario de todos para secretaría, con Google Calendar como opción. **Revierte la decisión D2** (agenda única del equipo directivo, `CHECK entrevistas_presencial_chk`, `EXCLUDE` global): entrevistador por entrevista y agenda por persona. Esperar la lista de entrevistadores antes de migrar.
-- ~~**Cancelar desde el recordatorio del día antes** y desde `/cita/:token`, con aviso a secretaría; respuestas por correo a secretaría~~ ✅ hecho en `feat/cancelar-cita-familia`: `POST /public/citas/:token/cancelar` (`cancelarPorFamilia`), propuesta `CANCELADA` (migración `0005`), aviso `CITA_CANCELADA_FAMILIA` en `respuestas-familia`, correo `AVISO_CANCELACION_FAMILIA` y `Reply-To` (`MAIL_REPLY_TO` o `MAIL_SECRETARIA`). Falta el front: botón en la página de la cita, estado «cancelada» y el aviso en la bandeja.
-- ~~**Entrevista previa ya realizada:** validarla sin repetirla~~ ✅ hecho en `feat/entrevista-previa`: `POST /solicitudes/:id/entrevista-previa` (`registrarEntrevistaPrevia` en `citacion.service.ts`) y acción `REGISTRAR_ENTREVISTA_PREVIA` en `siguientes`. Falta la acción en el front.
+- ~~**Cancelar desde el recordatorio del día antes** y desde `/cita/:token`, con aviso a secretaría; respuestas por correo a secretaría~~ ✅ hecho en `feat/cancelar-cita-familia`: `POST /public/citas/:token/cancelar` (`cancelarPorFamilia`), propuesta `CANCELADA` (migración `0005`), aviso `CITA_CANCELADA_FAMILIA` en `respuestas-familia`, correo `AVISO_CANCELACION_FAMILIA` y `Reply-To` (`MAIL_REPLY_TO` o `MAIL_SECRETARIA`). El front lo tiene desde el 29/10.
+- ~~**Entrevista previa ya realizada:** validarla sin repetirla~~ ✅ hecho en `feat/entrevista-previa`: `POST /solicitudes/:id/entrevista-previa` (`registrarEntrevistaPrevia` en `citacion.service.ts`) y acción `REGISTRAR_ENTREVISTA_PREVIA` en `siguientes`. El front lo tiene desde el 29/10.
 - ~~**Duración y antelación:** 45–60 min y nunca el mismo día~~ ✅ hecho en `fix/agenda-sin-mismo-dia` (`primerInicioPermitido` en `agenda.service.ts`).
 - **Reserva no reembolsable** salvo fuerza mayor caso por caso (cierra la pregunta 15); se puede pagar desde diciembre.
 - **Captación / CRM:** primer contacto con nombre, correo, teléfono y área de interés, y correo automático de información en menos de 5 min. El flujo completo y el perfil Comercial los define el cliente (Luis Fdo.).
-- **Matrícula (sigue en pausa), dos bloqueos nuevos:** alumnado de la Junta de Andalucía directo a matrícula con **importación desde Séneca** (API o fichero), y renovación 1º→2º filtrando a quien promociona según calificaciones (requiere Alumnado y notas).
+- **Matrícula, lo que queda de la reunión:** alumnado de la Junta de Andalucía directo a matrícula con **importación desde Séneca** (falta el importador, pregunta 27). La renovación 1º→2º existe (`POST /matriculas/renovacion`, por la marca `promociona`; las notas no se gestionan), pero el front aún no tiene la apertura en bloque.
 - **Untis:** sesión aparte para decidir si se integra o se sustituye.
 - Los dos bloqueos de matrícula de esta reunión (alumnado de la Junta y renovación según promoción) quedan recogidos en el punto 8 de `docs/matricula.md`.
 
@@ -319,7 +319,6 @@ Lo que propuso el front:
   - devoluciones.
 
   En el front están simulados y marcados «Propuesta a validar con el centro».
-- **Configuración y Comunicaciones en el front:** la API ya tiene usuarios, matriz de permisos, horario de agenda, configuración de la reserva y plantillas; faltan esas pantallas en el front.
 
 ### Pendiente del cliente (`docs/preguntas-abiertas.md`)
 
@@ -350,10 +349,12 @@ Lo que propuso el front:
 - volver a firmar si cambian los datos de un documento firmado;
 - listado de alumnas de 1º desde Séneca;
 - formato del fichero de Séneca.
+- lo que la familia no cambia desde su enlace, el contenido de los documentos y los correos de la matrícula (31–33).
+
+**Desvíos frente al diagrama (34–37):** cuándo queda «Matriculada» (al exportar o tras validar en Séneca), quién decide la admisión (Dirección o Secretaría), si el enlace de matrícula sale solo al pagar, y la duración de la entrevista (30–60 o 45–60).
 
 **Reserva y cobros**
 - qué hacer con una reserva vencida;
-- devolución de la reserva;
 - numeración de recibos por año o por curso escolar, y si el centro ya usa otra herramienta para emitirlos;
 - textos de los correos de lista de espera y no admitida (hoy provisionales);
 - IBAN real;
