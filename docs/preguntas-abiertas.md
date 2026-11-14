@@ -5,7 +5,7 @@
 | # | Tema | Decisión | Cómo está en la API |
 |---|---|---|---|
 | 1 | Agenda | Jornada laboral de lunes a viernes, de 8:00 a 18:00; la disponibilidad se reduce según se ocupan horas | Disponibilidad calculada; horario editable en `PUT /agenda/configuracion` |
-| 2 | Entrevista | Siempre presencial, con el equipo directivo | Fijo, con `CHECK` en BD |
+| 2 | Entrevista | Siempre presencial, con el equipo directivo. **Revisado el 21/10:** entrevistan varias personas (~7) según el tipo de solicitud; ver pregunta 4 | Hoy, una sola agenda con `CHECK` en BD; cambia cuando llegue la lista de entrevistadores |
 | 3 | Recordatorio sin respuesta | Uno solo, con plantilla HTML | A los 3 días, plantilla `CITACION_RECORDATORIO` |
 | 4 | Recordatorio del día antes | Plantilla HTML editable desde Comunicaciones | Plantilla `ENTREVISTA_RECORDATORIO`; CRUD completo de plantillas |
 | 5 | Cambiar la cita | Solo durante las 24 h siguientes a aceptarla | `cambioHasta` en la página de cita; después, 409 |
@@ -27,6 +27,7 @@
 | — | Conciliación (21 de octubre) | Registro manual, sin importar extractos | `POST /cobros` |
 | — | Agenda (21 de octubre) | Nunca el mismo día: entrevistas de 45 a 60 minutos a partir de mañana | `permitirMismoDia: false` en `ajustes.agenda`; motivo `Mismo día` y error `FECHA_MISMO_DIA` |
 | — | Plazo de pago | 15 días naturales desde la admisión (diagrama de flujo) | `ajustes.reserva.plazoDias` |
+| — | Devolución de la reserva (21 de octubre) | **No reembolsable**, salvo fuerza mayor caso por caso (cierra la antigua pregunta 15) | Un cobro se anula con motivo; la devolución del dinero, fuera de la plataforma |
 
 ## Pendiente de validar
 
@@ -35,12 +36,12 @@
 1. **Reservas sin respuesta.** Las fechas propuestas quedan bloqueadas hasta que la familia elige. Si no contesta, siguen bloqueadas hasta que pasan (con un recordatorio a los 3 días). ¿Liberamos las reservas automáticamente pasados X días sin respuesta? Por ejemplo, a los 5 días, junto con un aviso a secretaría.
 2. **Plazo de 24 h.** Hoy cuenta desde la primera vez que la familia acepta. Si cambia de fecha dentro de ese plazo, no se le da otro plazo de 24 h. ¿Es así?
 3. **Detalles del horario.** Las entrevistas pueden empezar cada 30 minutos (8:00, 8:30…) y no se ofrecen horas con menos de 2 horas de antelación. ¿Os parece bien? ¿Hay festivos o semanas sin entrevistas que debamos cargar ya? Se pueden añadir como días no lectivos.
-4. **Una o varias agendas.** Hoy hay una sola agenda: la del equipo directivo como conjunto. Si más adelante varios directivos entrevistan a la vez en salas distintas, habría que tener una agenda por persona o sala. ¿Hace falta?
-5. **Calendario.** Hoy se envía una invitación (.ics) que la familia añade a su calendario. ¿Hace falta además sincronizar con el Google Calendar o el Outlook del equipo directivo? Pendiente de decidir (punto 9).
+4. **Entrevistadores** (acordado el 21/10 que entrevistan varias personas). Necesitamos la lista: quién entrevista, qué tipo de solicitud atiende cada uno (Bachillerato, cada ciclo), su horario y su sala. Con ella, cada entrevistador tiene su agenda y secretaría ve el calendario de todos. Hasta entonces hay una única agenda del equipo directivo.
+5. **Calendario de los entrevistadores.** Hoy solo la familia recibe la invitación (.ics). ¿Usan Google Calendar? Propuesta: enviar también la invitación al entrevistador (sencillo). Ver su disponibilidad real en Google Calendar es una integración externa que la propuesta deja fuera de alcance: se valoraría aparte.
 
 **Solicitud**
 
-6. **Familia ya vinculada** (punto 13, explicado de otra forma). Es una de las cinco comprobaciones que ve secretaría al revisar una solicitud: avisa de que esa familia ya tiene relación con el centro, por ejemplo una hermana ya matriculada, para tenerlo en cuenta. Hoy salta si hay otra solicitud con el mismo correo o teléfono. Cuando exista el módulo de Alumnado también se comprobará contra las alumnas matriculadas. ¿Os vale así?
+6. **Familia ya vinculada** (punto 13, explicado de otra forma). Es una de las cinco comprobaciones que ve secretaría al revisar una solicitud: avisa de que esa familia ya tiene relación con el centro, por ejemplo una hermana ya matriculada, para tenerlo en cuenta. Salta si hay otra solicitud o una alumna del centro (no de baja) con el mismo correo o teléfono de contacto (desde el 08/11/2026). ¿Os vale así?
 7. **Curso escolar** (punto 17, explicado de otra forma). Si una familia rellena hoy el formulario (octubre de 2026), ¿la plaza es siempre para el curso siguiente (2027-2028)? ¿O también se admiten solicitudes para incorporarse al curso que ya está en marcha?
 
 **Permisos**
@@ -64,7 +65,7 @@
 **Reserva de plaza y cobros**
 
 14. **Reserva vencida sin pagar.** Hoy queda "vencida", se avisa a secretaría y administración, y la plaza sigue ocupada hasta que alguien decida (si la familia paga tarde, se registra igual). ¿Lo dejamos así o la plaza se libera sola pasados X días?
-15. **Devolución de la reserva.** Si la alumna no llega a matricularse, ¿se devuelve? Hoy se puede anular el cobro con un motivo (por ejemplo, "devuelto"), pero la devolución del dinero se hace fuera de la plataforma.
+15. ~~Devolución de la reserva~~ **Cerrada el 21/10:** no reembolsable, salvo fuerza mayor caso por caso (ver «Decidido»). Falta decir si el correo de admisión debe avisarlo; hoy no lo menciona.
 16. **Numeración de los recibos.** Hoy es correlativa por año natural: R-2026-0001, R-2026-0002… ¿Debe reiniciarse por curso escolar (2027/28)? ¿El centro emite ya recibos o facturas en otra herramienta? Si es así, conviene usar una sola numeración.
 17. **Textos de los correos de lista de espera y de no admitida.** Hoy llevan un texto provisional; el centro puede cambiarlo desde Comunicaciones.
 
@@ -118,3 +119,24 @@
     - «Baja», con motivo.
 
     El expediente se abre solo al pagar la reserva, con los datos de la solicitud. El DNI, la fecha de nacimiento y el domicilio los completa secretaría o la matrícula, porque la solicitud no los pide. Si se anula el pago de la reserva, el expediente se retira. ¿Os parece bien?
+
+**Desvíos detectados al revisar el flujo** (propuesto el 11/11/2026, al contrastar lo construido con el diagrama ajustado tras el 21/10)
+
+34. **Cuándo queda «Matriculada».** El diagrama confirma la matrícula después de que Séneca valide la carga (pasos 29–31). Como Séneca no tiene API, la plataforma no se entera: hoy la alumna pasa a «Matriculada» al exportar el fichero. Alternativa: dejarla «Exportada» y que secretaría pulse «Confirmada en Séneca». ¿Cuál preferís?
+35. **Quién decide la admisión.** En el diagrama la aprobación está en el carril de Secretaría (paso 15). Hoy solo la registra Dirección, según la matriz de permisos del mockup. Dirección puede dárselo a Secretaría desde la matriz. ¿Quién debe decidir?
+36. **Enlace de la matrícula.** El diagrama lo envía la plataforma sola al conciliar el pago (paso 22). Hoy el pago crea el expediente y secretaría abre la matrícula, que envía el enlace (un clic, desde el listado o la ficha). ¿Lo preferís automático al pagar, o que lo decida secretaría (por ejemplo, para enviarlos en bloque cuando empiece el plazo de matrícula)?
+37. **Duración de la entrevista.** El correo del 21/10 decía 30 a 60 minutos; el diagrama, 45 a 60. Hoy se ofrecen 45 y 60 (se cambia en Configuración › Agenda). ¿Cuál vale?
+
+**Datos que necesitamos del centro** (pedidos el 21/10 o necesarios para seguir)
+
+- Respuesta al correo del 21/10 y **confirmación por escrito del diagrama**.
+- **Captación / CRM** (Luis Fdo.): datos del primer contacto, correo de información del curso, estados del interesado y paso a solicitud. Y las **funciones del perfil Comercial**.
+- **Series de numeración** B y C, y si se reinician por curso escolar (hoy, por año natural).
+- **Lista de ciclos de FP** y **plazas por vía y curso**; si hay **ESO**.
+- **Ficha de solicitud de FP** (tenemos la de Bachillerato).
+- **Criterio de promoción** 1º → 2º y de dónde salen las notas (hoy, una marca manual o la que venga de Séneca).
+- **Forma de pago de la reserva**: transferencia y efectivo, o también domiciliación o pasarela (el diagrama lo deja «a validar»; una pasarela es integración aparte).
+- **IBAN real y su titular**, **razón social y NIF** del centro.
+- **Cuenta de correo del centro** para enviar (sección técnica, pregunta 11).
+- **Untis**: la sesión para decidir si se integra o se sustituye.
+- **Excel históricos** y **plantillas de comunicación actuales** (dependencias del cliente según la propuesta).
