@@ -131,7 +131,7 @@
 
 - Respuesta al correo del 21/10 y **confirmación por escrito del diagrama**.
 - **Captación / CRM** (Luis Fdo.): datos del primer contacto, correo de información del curso, estados del interesado y paso a solicitud. Y las **funciones del perfil Comercial**.
-- **Series de numeración** B y C, y si se reinician por curso escolar (hoy, por año natural).
+- ~~**Series de numeración**~~ Respondido: B, CP y CC con el año de inicio de los estudios (hecho el 15/11/2026, ajuste A1: `B2027-0001`). Por confirmar solo la lectura del año: una solicitud de octubre de 2026 para el curso 2027/28 lleva 2027.
 - **Lista de ciclos de FP** y **plazas por vía y curso**; si hay **ESO**.
 - **Ficha de solicitud de FP** (tenemos la de Bachillerato).
 - **Criterio de promoción** 1º → 2º y de dónde salen las notas (hoy, una marca manual o la que venga de Séneca).

@@ -75,24 +75,25 @@ export async function siguienteValor(tx: Tx, clave: string): Promise<number> {
 }
 
 /**
- * Letra del código según la vía (reunión del 21/10/2026): B Bachillerato, C Ciclos.
- * Las series definitivas están pendientes del cliente: el formato vive solo aquí.
+ * Serie del código según la vía (ajuste A1; respuesta del centro, 11/11/2026):
+ * B Bachillerato, CC Ciclos Concertados (GM y GS) y CP Ciclos Privados. El formato vive solo aquí.
  */
-export const LETRA_CODIGO: Record<FamiliaVia, string> = {
+export const SERIE_CODIGO: Record<FamiliaVia, string> = {
   BACHILLERATO: 'B',
-  CICLOS_CONCERTADOS_GM: 'C',
-  CICLOS_CONCERTADOS_GS: 'C',
-  CICLOS_PRIVADOS_GS: 'C',
+  CICLOS_CONCERTADOS_GM: 'CC',
+  CICLOS_CONCERTADOS_GS: 'CC',
+  CICLOS_PRIVADOS_GS: 'CP',
 };
 
 /**
- * B-2026-0001 / C-2026-0001 — contador por letra y año, atómico. Formato provisional.
- * Las solicitudes anteriores conservan su código SOL-AAAA-NNNN.
+ * B2027-0001 / CC2027-0001 / CP2027-0001 (ajuste A1): la serie, el año de inicio de los estudios
+ * (el del curso escolar de la vía: 2027-2028 → 2027) y un contador de cuatro cifras por serie y
+ * año, atómico. Las solicitudes anteriores conservan su código (B-2026-0001, C-2026-0001, SOL-…).
  */
-export async function siguienteCodigo(tx: Tx, familia: FamiliaVia, fecha = new Date()): Promise<string> {
-  const letra = LETRA_CODIGO[familia];
-  const anio = fecha.getFullYear();
-  return `${letra}-${anio}-${String(await siguienteValor(tx, `solicitud-${letra}-${anio}`)).padStart(4, '0')}`;
+export async function siguienteCodigo(tx: Tx, via: Pick<Via, 'familia' | 'cursoEscolar'>): Promise<string> {
+  const serie = SERIE_CODIGO[via.familia];
+  const anio = via.cursoEscolar.slice(0, 4);
+  return `${serie}${anio}-${String(await siguienteValor(tx, `solicitud-${serie}${anio}`)).padStart(4, '0')}`;
 }
 
 /** Posición de cada solicitud EN_ESPERA dentro de su vía, por orden de entrada en la lista. */

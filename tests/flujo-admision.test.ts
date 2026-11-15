@@ -988,19 +988,21 @@ describe('Código de la solicitud por tipo (reunión del 21/10/2026)', () => {
       email: `${nombre.toLowerCase()}@example.com`, telefono: '+34 600 000 000', canal: 'TELEFONO', consentimientoPrivacidad: true,
     });
 
-  it('B para Bachillerato y C para Ciclos, cada letra con su contador por año', async () => {
-    const anio = new Date().getFullYear();
+  it('series B, CC y CP con el año de inicio de los estudios, cada una con su contador (A1)', async () => {
     const [gm] = await db.insert(vias).values({ familia: 'CICLOS_CONCERTADOS_GM', curso: 1, nombre: 'GM concertado 1º', cursoEscolar: '2027-2028', plazas: 20 }).returning();
+    const [gsp] = await db.insert(vias).values({ familia: 'CICLOS_PRIVADOS_GS', curso: 1, nombre: 'GS privado 1º', cursoEscolar: '2027-2028', plazas: 20 }).returning();
 
+    // El año es el de inicio de los estudios (curso 2027-2028), no el de la solicitud.
     const ciclo = await alta(gm!.id, 'Ciclo');
     expect(ciclo.status).toBe(201);
-    expect(ciclo.body.codigo).toBe(`C-${anio}-0001`);
-    expect((await alta(gm!.id, 'Ciclodos')).body.codigo).toBe(`C-${anio}-0002`);
+    expect(ciclo.body.codigo).toBe('CC2027-0001');
+    expect((await alta(gm!.id, 'Ciclodos')).body.codigo).toBe('CC2027-0002');
+    expect((await alta(gsp!.id, 'Privada')).body.codigo).toBe('CP2027-0001');
 
-    // Bachillerato sigue su propia serie: ya hay solicitudes de antes en este fichero.
+    // Bachillerato sigue su propia serie, con el año de su vía; sin guion entre serie y año.
+    const [vb] = await db.select({ cursoEscolar: vias.cursoEscolar }).from(vias).where(eq(vias.id, viaBach));
     const bach = (await alta(viaBach, 'Bachi')).body.codigo as string;
-    expect(bach).toMatch(new RegExp(`^B-${anio}-\\d{4}$`));
-    expect(bach).not.toBe(`B-${anio}-0001`);
+    expect(bach).toMatch(new RegExp(`^B${vb!.cursoEscolar.slice(0, 4)}-\\d{4}$`));
   });
 });
 
