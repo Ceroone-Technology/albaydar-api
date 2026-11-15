@@ -123,7 +123,7 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 - `POST /solicitudes/:id/decision/previsualizar`: el correo que recibiría la familia, con sus datos reales, sin cambiar nada.
 - **Plazo de la reserva por solicitud** (05/11/2026): al admitir, `fechaLimite` opcional para acortarlo (de mañana al plazo general); después, `PATCH /reservas/:id/plazo` para acortarlo o ampliarlo (hasta 90 días; una vencida vuelve a pendiente), con motivo en el historial y aviso opcional a la familia.
 - **Reserva:** 300 € por defecto, con excepciones por vía; 15 días naturales; transferencia o efectivo. IBAN provisional y ficticio, validado. Todo en `ajustes.reserva`, vía `GET/PUT /reservas/configuracion`.
-- **Control de reservas:** `GET /reservas?porVencer=true`, con días restantes. "Recordar" (`POST /reservas/:id/recordar`), con un mínimo de 1 h entre envíos.
+- **Control de reservas:** `GET /reservas?porVencer=true`, con días restantes. "Recordar" (`POST /reservas/:id/recordar`), con un mínimo de 1 h entre envíos. «Liberar plaza» (`POST /reservas/:id/liberar`, ajuste A5, 15/11/2026): una reserva pendiente o vencida se anula, la solicitud pasa a `DESCARTADA` y deja de ocupar plaza; motivo obligatorio (interno), aviso `PLAZA_LIBERADA` opcional y `enEspera` en la respuesta. Con cobros, 409.
 - **Recordatorio automático** a 3 días del plazo, uno solo, que no sale si ya se usó "Recordar". Vencida: aviso a secretaría y administración; la plaza no se libera sola y el pago tardío se acepta.
 - **Cobros manuales** (`POST /cobros`):
   - recibo `R-AAAA-NNNN` correlativo por año; pagos parciales; nunca más de lo pendiente;

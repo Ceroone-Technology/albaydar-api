@@ -36,6 +36,14 @@ reservasRouter.post('/:id/recordar', requirePermiso('cobros.editar', 'solicitude
   res.json(await srv.recordar(v<typeof idParam>(req, 'params').id, req.user!.id));
 });
 
+/**
+ * "Liberar plaza" (ajuste A5): anula la reserva pendiente o vencida y descarta la solicitud.
+ * La decide secretaría (solicitudes.editar) o quien decide la admisión (evaluacion.editar).
+ */
+reservasRouter.post('/:id/liberar', requirePermiso('solicitudes.editar', 'evaluacion.editar'), validate({ params: idParam, body: srv.liberarBody }), async (req, res) => {
+  res.json(await srv.liberarPlaza(v<typeof idParam>(req, 'params').id, v<typeof srv.liberarBody>(req, 'body'), req.user!.id));
+});
+
 /** Importe (en céntimos), IBAN, titular, plazo y formas de pago. */
 reservasRouter.get('/configuracion', requirePermiso('configuracion.ver', 'cobros.ver', 'evaluacion.ver'), async (_req, res) => {
   res.json(await reservaConfig());

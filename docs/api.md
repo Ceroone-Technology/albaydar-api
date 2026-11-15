@@ -387,13 +387,14 @@ Respuesta: `{ estado, estadoEtiqueta, reserva, posicionEspera, notificada }`. `n
 
 - `diasRestantes`: días naturales hasta la fecha límite; negativo si ya pasó; `null` si está pagada o anulada.
 - Una sola reserva vigente por solicitud. Se anula sola al cambiar la decisión o al descartar una admitida (siempre que no tenga cobros).
-- A 3 días del plazo sale un recordatorio a la familia (uno solo). Pasado el plazo queda `VENCIDA` y se avisa a secretaría y administración: **la plaza no se libera sola**, y si la familia paga tarde se registra igual.
+- A 3 días del plazo sale un recordatorio a la familia (uno solo). Pasado el plazo queda `VENCIDA` y se avisa a secretaría y administración: **la plaza no se libera sola**, y si la familia paga tarde se registra igual. La libera secretaría, caso por caso, con «Liberar plaza» (ajuste A5).
 
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
 | GET | `/reservas?estado=&porVencer=true&q=&page=&pageSize=` | cobros.ver o evaluacion.ver | "Control de reservas" y "Reservas por vencer". Cada ítem: la reserva + `solicitud { id, codigo, estado, alumna, tutor, email, telefono, via }`. Sin `estado`, todas menos las anuladas; ordenadas por fecha límite |
 | PATCH | `/reservas/:id/plazo` | evaluacion.editar o cobros.editar | «Cambiar plazo» de una reserva pendiente o vencida: `{ fechaLimite, motivo?, notificar = true }`. Acortar (pocas plazas) o ampliar (fuerza mayor): de hoy a 90 días. Una vencida vuelve a `PENDIENTE`. Queda en el historial (`PLAZO_RESERVA_CAMBIADO` con `antes`, `despues` y `motivo`). Con `notificar`, la familia recibe `RECORDATORIO_PAGO` con la nueva fecha; si esta cae a 3 días o menos, cuenta como el recordatorio y el automático no repite; si no, el automático vuelve a salir 3 días antes. Devuelve la reserva y `notificada`. 400 `FECHA_LIMITE_PASADA`, `FECHA_LIMITE_FUERA_DE_PLAZO` o `MISMA_FECHA_LIMITE`; 409 `RESERVA_NO_PENDIENTE` si está pagada o anulada |
 | POST | `/reservas/:id/recordar` | cobros.editar o solicitudes.editar | Botón "Recordar": envía ya `RECORDATORIO_PAGO` a la familia y devuelve la reserva con `recordatorioEnviadoEn` actualizado. Cuenta como el recordatorio de la reserva: el automático de 3 días ya no sale. 409 `RECORDATORIO_RECIENTE` si se envió otro hace menos de una hora; 409 `RESERVA_NO_PENDIENTE` si está pagada o anulada; 409 `RECORDATORIO_NO_ENVIADO` si no hay correo o la plantilla está en borrador |
+| POST | `/reservas/:id/liberar` | solicitudes.editar o evaluacion.editar | «Liberar plaza» (ajuste A5, 15/11/2026): `{ motivo, notificar = true }`. Para una reserva pendiente o vencida de una solicitud `ADMITIDA`: la reserva pasa a `ANULADA` (motivo «Plaza liberada: …»), la solicitud a `DESCARTADA` (se puede reabrir) y deja de ocupar plaza. Queda en el historial (`PLAZA_LIBERADA` con `motivo`, que es interno: no va a la familia). Con `notificar`, la familia recibe `PLAZA_LIBERADA`. Devuelve `{ solicitudId, estado, notificada, enEspera, via }`: `enEspera` es cuántas solicitudes esperan en la lista de esa vía (no se admite a nadie solo). 400 `DATOS_INVALIDOS` sin motivo; 409 `RESERVA_CON_COBROS` si tiene cobros (se anulan antes en Cobros), `RESERVA_NO_PENDIENTE` si está pagada o anulada y `SOLICITUD_NO_ADMITIDA` si la solicitud cambió |
 | GET | `/reservas/configuracion` | configuracion.ver, cobros.ver o evaluacion.ver | Configuración (abajo) |
 | PUT | `/reservas/configuracion` | configuracion.editar | Guardar configuración |
 
@@ -913,6 +914,7 @@ Reglas:
 | `RECORDATORIO_PAGO` | Reserva sin pagar a 3 días del plazo (uno solo) | Activada |
 | `PAGO_RECIBIDO` | Se registra un cobro de la reserva: importe, recibo y si la plaza queda reservada o cuánto falta (`{{situacion}}`) | Activada |
 | `RESERVA_VENCIDA` | Pasa el plazo sin pagar (a secretaría y administración) | Activada |
+| `PLAZA_LIBERADA` | Secretaría libera la plaza de una reserva sin pagar («Liberar plaza»; sin el motivo, que es interno) | Activada |
 | `MATRICULA_ENLACE` | Se abre la matrícula o se envía un enlace nuevo a la familia | Activada · imprescindible |
 | `MATRICULA_ENLACE_PROGENITOR` | Enlace al otro progenitor para que firme | Activada · imprescindible |
 | `MATRICULA_RECIBIDA` | Se envía la matrícula: los documentos firmados en PDF, adjuntos | Activada |
