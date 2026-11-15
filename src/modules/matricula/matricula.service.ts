@@ -523,6 +523,11 @@ export async function crearEnlace(id: string, d: z.infer<typeof enlaceBody>, usu
   return db.transaction(async (tx) => {
     const m = await cargar(tx, id, true);
     if (m.estado !== 'BORRADOR') throw conflict('MATRICULA_ENVIADA', 'La matrícula ya está enviada: la familia no puede editarla.');
+    // El enlace de un progenitor solo sirve para firmar la LOPD, que solo lleva el alumnado
+    // nuevo (readerDocsFor). En una renovación de 2º no tendría nada que firmar.
+    if (d.alcance === 'PROGENITOR' && !m.nuevaAlumna) {
+      throw conflict('SIN_LOPD', 'Esta matrícula no lleva LOPD (la alumna continúa en el centro): no hace falta el enlace de un progenitor.');
+    }
     const para = d.enviar ? (d.email ?? (d.alcance === 'FAMILIA' ? await correoPrincipal(tx, m.alumnaId) : null)) : null;
     if (d.enviar && !para) throw badRequest('SIN_CORREO', 'La familia no tiene correo en su expediente. Indica a qué correo enviarlo.');
     const enlace = await nuevoEnlace(tx, m, { alcance: d.alcance, progenitor: d.progenitor ?? null, para, usuarioId });

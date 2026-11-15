@@ -12,7 +12,10 @@ import type { ReaderDocId, SignatureSlotId } from '../reglas';
  * borradores en curso dejan de valer y la familia vuelve a firmar.
  */
 export const VERSIONES: Record<ReaderDocId, string> = {
-  impreso: 'impreso@2026-1',
+  // 2026-2 (15/11/2026): el impreso lleva lo que enseña la Revisión del asistente
+  // (domicilio durante el curso, contacto, familia numerosa, modalidad o ciclo y
+  // la documentación que se acompaña).
+  impreso: 'impreso@2026-2',
   ideario: 'ideario@2026-1',
   lopd: 'lopd@2026-1',
   sepa: 'sepa@2026-1',
@@ -87,6 +90,35 @@ export const IMPRESO = {
   tutores: 'Tutores legales',
   etiquetasTutores: { bach: ['Madre / tutora', 'Padre / tutor'], ciclo: ['Tutor/a legal 1', 'Tutor/a legal 2'] },
   domicilioFamiliar: 'Domicilio familiar',
+  // Lo que el paso Revisión del asistente (el mockup) enseña del impreso.
+  domicilioCurso: 'Domicilio durante el curso',
+  contacto: 'Contacto',
+  familiaNumerosa: 'Familia numerosa',
+  tamanosFamilia: { no: 'No', general: 'General', special: 'Especial' },
+  tituloFamilia: (titulo: string) => `título ${titulo}`,
+  estudios: 'Estudios',
+  modalidad: 'Modalidad y materias',
+  modalidades: { hum: 'Humanidades y Ciencias Sociales', cie: 'Ciencias y Tecnología' },
+  ciclo: 'Ciclo formativo',
+  sinIndicar: 'Sin indicar',
+  sinElegir: 'Sin elegir',
+  materiasPendientes: 'materias sin elegir',
+  // Lo que se acompaña según la vía y si es alumna nueva. No dice si ya está
+  // subido o validado: eso cambia después de firmar y anularía la firma.
+  documentacion: 'Documentación que se acompaña',
+  documentos: {
+    m2: 'Aceptación de ideario y salidas',
+    m3: 'Autorización de protección de datos (LOPD)',
+    m4: 'Fotocopia del DNI de la alumna',
+    m5: '2 fotos tamaño carné',
+    m5Gsp: 'Foto tamaño carné',
+    c1: 'Impreso de matriculación oficial · Anexo VII',
+    c2: 'Fotocopia de la tarjeta de la Seguridad Social',
+    b1: 'Hoja de la alumna del Libro de Familia',
+    b2Bach: 'Certificación académica oficial de la ESO',
+    b2Gsp: 'Certificación académica oficial de Bachillerato',
+  },
+  origen: { generated: 'Se genera con la matrícula', family: 'La aporta la familia', manual: 'La aporta la familia' },
   declaracionTitulo: 'DECLARACIÓN',
   declaracion:
     'La persona abajo firmante declara, bajo su expresa responsabilidad, que son ciertos los datos que figuran en la presente solicitud, así como la documentación que se acompaña.',
