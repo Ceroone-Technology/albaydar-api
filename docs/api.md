@@ -471,7 +471,7 @@ Expedientes, familias e histórico de interacciones (pantalla Alumnado del mocku
 
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
-| GET | `/alumnado?q=&familia=&curso=&cursoEscolar=&estado=&promociona=&page=&pageSize=` | alumnado.ver | Listado ordenado por apellidos. `q` busca en nombre y apellidos (también «Apellidos, Nombre»), DNI/NIE y expediente, sin importar tildes ni mayúsculas. `pageSize` por defecto 25, máximo 200 |
+| GET | `/alumnado?q=&familia=&curso=&cursoEscolar=&estado=&resultadoCurso=&page=&pageSize=` | alumnado.ver | Listado ordenado por apellidos. `q` busca en nombre y apellidos (también «Apellidos, Nombre»), DNI/NIE y expediente, sin importar tildes ni mayúsculas. `pageSize` por defecto 25, máximo 200 |
 | GET | `/alumnado/exportar` (mismos filtros) | alumnado.ver | CSV (ver Exportaciones) |
 | GET | `/alumnado/:id` | alumnado.ver | Ficha con contactos e `historial` |
 | POST | `/alumnado` | alumnado.editar | Alta manual (201, devuelve la ficha) |
@@ -502,7 +502,7 @@ Cuerpo del alta (`POST /alumnado`):
   "nombre": "Julia", "apellidos": "Herrera Cifuentes", "documento": "49218735T", "fechaNacimiento": "2010-06-02",
   "email": null, "telefono": null, "domicilio": "C/ Feria 12, 41003 Sevilla",
   "familia": "BACHILLERATO", "curso": 1, "cursoEscolar": "2026-2027", "estudios": "Ciencias y Tecnología",
-  "estado": "MATRICULADA", "promociona": null,
+  "estado": "MATRICULADA", "resultadoCurso": null, "resultadoCursoEtiqueta": null,
   "contactos": [
     { "parentesco": "Madre", "nombre": "Lucía Cifuentes Mora", "telefono": "+34 699 100 200", "email": "lcifuentes@example.com", "principal": true }
   ]
@@ -529,7 +529,7 @@ Cada expediente (listado y ficha):
   "familia": "BACHILLERATO", "familiaEtiqueta": "Bachillerato", "etapa": "Bachillerato",
   "curso": 2, "cursoEtiqueta": "Bachillerato 2º", "cursoEscolar": "2026-2027", "estudios": "Ciencias y Tecnología",
   "estado": "MATRICULADA", "estadoEtiqueta": "Matriculada", "estadoTono": "green",
-  "origen": "MANUAL", "origenEtiqueta": "Alta manual", "promociona": null,
+  "origen": "MANUAL", "origenEtiqueta": "Alta manual", "resultadoCurso": null, "resultadoCursoEtiqueta": null,
   "fechaAlta": "2026-09-01", "baja": null, "solicitud": null,
   "contactos": [{ "id": "uuid", "parentesco": "Madre", "nombre": "Elena Peña Ríos", "telefono": "+34 622 418 903", "email": "epena@example.com", "principal": true }],
   "creadaEn": "…", "actualizadaEn": "…"
@@ -538,7 +538,7 @@ Cada expediente (listado y ficha):
 
 - `contactos` viene con el principal primero.
 - `solicitud`: `{ id, codigo }` de la solicitud de origen, si la hay.
-- `promociona`: la renovación 1º → 2º (`null` = sin decidir).
+- `resultadoCurso` (ajuste A7, 15/11/2026, sustituye a `promociona`): `PROMOCIONA` o `REPITE` en 1º; `TITULA` o `REPITE` en 2º; `null` = sin decidir. Otro valor para el curso: 400 `RESULTADO_NO_VALIDO`. Si cambia el curso y el resultado ya no vale, se vacía. Al exportar a Séneca la matrícula de otro curso escolar, se vacía para el curso nuevo. En el listado, `resultadoCurso=SIN_DECIDIR` filtra los vacíos.
 
 La ficha añade `historial`, del más reciente al más antiguo:
 
@@ -578,7 +578,7 @@ BORRADOR ──enviar──▶ ENVIADA ──exportar a Séneca──▶ EXPORTA
 |---|---|---|---|
 | GET | `/matriculas?q=&estado=&cursoEscolar=&familia=&curso=&page=&pageSize=` | matricula.ver | Listado, lo último guardado primero. `q` busca en nombre, apellidos y expediente de la alumna y en el código de la matrícula, sin importar tildes |
 | POST | `/matriculas` | matricula.editar | `{ alumnaId, enviarEnlace? }`: abre la matrícula (201) |
-| POST | `/matriculas/renovacion` | matricula.editar | `{ familia, cursoEscolar, alumnaIds?, enviarEnlace? }`: abre en bloque la de 2º |
+| POST | `/matriculas/renovacion` | matricula.editar | `{ familia, cursoEscolar, curso = 1, alumnaIds?, enviarEnlace? }`: cierra el curso en bloque según el resultado de cada alumna (abre la siguiente o da de baja a quien titula) |
 | GET | `/matriculas/:id` | matricula.ver | Ficha con `enlaces` e `historial` |
 | PUT | `/matriculas/:id` | matricula.editar | `{ borrador, version }`: guarda el borrador |
 | POST | `/matriculas/:id/paginas-leidas` | matricula.editar | `{ paginas: ["lopd-1", …] }` (Modo firma con la familia delante) |
@@ -603,9 +603,10 @@ BORRADOR ──enviar──▶ ENVIADA ──exportar a Séneca──▶ EXPORTA
 | Expediente | Matrícula |
 |---|---|
 | «Reserva confirmada» o «En proceso» (admisión, alta manual, Séneca) | Su curso escolar y curso, alumna nueva. El expediente pasa a «En proceso» |
-| «Matriculada» en 1º | **Renovación:** 2º del curso escolar siguiente, alumna que continúa (sin ideario ni LOPD). Se precarga con su matrícula de 1º. El expediente sigue «Matriculada» |
+| «Matriculada» en 1º | **Renovación:** 2º del curso escolar siguiente (promociona o sin decidir) o 1º si `resultadoCurso: REPITE`. Alumna que continúa (sin ideario ni LOPD). Se precarga con su matrícula anterior. El expediente sigue «Matriculada» |
+| «Matriculada» en 2º | Solo si `resultadoCurso: REPITE`: 2º del curso escolar siguiente, alumna que continúa |
 
-- **Errores:** 409 `MATRICULA_YA_EXISTE` (una por alumna y curso escolar), `ALUMNA_DE_BAJA`, `SIN_CURSO_SIGUIENTE` (ya está en 2º) y `NO_PROMOCIONA` (`promociona: false` en el expediente; `null` sí se abre).
+- **Errores:** 409 `MATRICULA_YA_EXISTE` (una por alumna y curso escolar), `ALUMNA_DE_BAJA`, `SIN_CURSO_SIGUIENTE` (en 2º sin `REPITE`) y `TITULA` (el expediente dice que titula).
 - **Enlace:** siempre se crea el enlace de la familia. Con `enviarEnlace` (por defecto `true`) se envía `MATRICULA_ENLACE` al primer contacto con correo, empezando por el principal.
 - **Respuesta:** `{ matricula, enlace: { id, alcance, progenitor, url, enviadoA, expiraEn } }`. `url` solo se devuelve aquí (en la BD queda el hash del token): secretaría la puede copiar si la familia no tiene correo. `enviadoA` es `null` si no se envió.
 - **Borrador inicial (alumnado nuevo):**
@@ -613,12 +614,13 @@ BORRADOR ──enviar──▶ ENVIADA ──exportar a Séneca──▶ EXPORTA
   - los dos primeros contactos pasan a ser la madre o tutora y el padre o tutor;
   - de la solicitud: el centro de procedencia;
   - `annex.minor`, por la fecha de nacimiento si la hay.
-- **Borrador de la renovación:** copia el de 1º, con curso `2`, la modalidad de 1º como `previousModality`, materias vacías, Albaydar como curso anterior y la promoción del expediente. Se vacían las becas, los documentos en papel, las páginas leídas y la declaración. Se conservan la familia y la cuenta.
+- **Borrador de la renovación:** copia el del curso que termina, con el curso nuevo (`2`, o el mismo si repite; quien repite 1º lleva `newStudent: false`), su modalidad como `previousModality`, materias vacías, Albaydar y ese curso como estudios anteriores y la promoción según el resultado (`promotes`: `true` si promociona, `false` si repite). Se vacían las becas, los documentos en papel, las páginas leídas y la declaración. Se conservan la familia y la cuenta.
 
 **Renovación en bloque** (`POST /matriculas/renovacion`):
-- **A quién incluye:** alumnas «Matriculada» de 1º de esa `familia` y `cursoEscolar` (el que termina) con `promociona: true`. Con `alumnaIds`, solo esas, sin mirar `promociona`.
+- **A quién incluye:** alumnas «Matriculada» del `curso` (1 o 2) de esa `familia` y `cursoEscolar` (el que termina). Con `alumnaIds`, solo esas.
+- **Según el resultado:** `PROMOCIONA` → matrícula de 2º; `REPITE` → matrícula del mismo curso; `TITULA` → baja con motivo «Titula: termina sus estudios en el centro» (en `tituladas`). Sin resultado se omite con su motivo; en 1º y elegida en `alumnaIds`, va a 2º como antes.
 - **Transacciones:** cada alumna va en la suya, así que una que falle no frena al resto.
-- **Respuesta:** `{ creadas: [{ alumnaId, expediente, matriculaId, codigo, enlaceEnviadoA }], omitidas: [{ alumnaId, expediente, motivo }] }`.
+- **Respuesta:** `{ creadas: [{ alumnaId, expediente, matriculaId, codigo, curso, repite, enlaceEnviadoA }], tituladas: [{ alumnaId, expediente }], omitidas: [{ alumnaId, expediente, motivo }] }`.
 
 **Cada matrícula** (ficha de secretaría):
 
@@ -932,7 +934,7 @@ Cada listado tiene su descarga con **los mismos filtros y permisos**, sin pagina
 | `GET /entrevistas/exportar` | entrevistas.ver | los de `GET /entrevistas` (`desde` y `hasta` obligatorios); sin las fechas sin confirmar | cita, familia, boletín y la ficha completa con observaciones |
 | `GET /reservas/exportar` | cobros.ver o evaluacion.ver | los de `GET /reservas` (`porVencer`, `estado`, `q`) | alumna, familia, estado, fechas, importe, pagado y pendiente |
 | `GET /cobros/exportar` | cobros.ver | los de `GET /cobros` (`desde`, `hasta`, `metodo`, `incluirAnulados`…) | recibo, fecha, alumna, concepto, forma de pago, importe (los anulados en su propia columna), anulación y quién lo registró |
-| `GET /alumnado/exportar` | alumnado.ver | los de `GET /alumnado` (`q`, `familia`, `curso`, `cursoEscolar`, `estado`, `promociona`) | expediente, alumna, DNI/NIE, nacimiento, etapa, curso, estudios, estado, promoción, contacto principal, datos de la alumna, origen, solicitud, alta y baja |
+| `GET /alumnado/exportar` | alumnado.ver | los de `GET /alumnado` (`q`, `familia`, `curso`, `cursoEscolar`, `estado`, `resultadoCurso`) | expediente, alumna, DNI/NIE, nacimiento, etapa, curso, estudios, estado, resultado del cursoón, contacto principal, datos de la alumna, origen, solicitud, alta y baja |
 
 Formato pensado para abrir con doble clic en Excel en español: separador `;`, coma decimal, BOM UTF-8, CRLF, fechas `dd/mm/aaaa` (y hora de Madrid), importes en euros sin símbolo y Sí/No. Una celda que empieza por `= + - @` lleva un apóstrofo delante (inyección de fórmulas); los teléfonos `+34 …`, un espacio. Cada exportación queda en el log (usuario, tipo, filas y nombres de los filtros, sin sus valores).
 

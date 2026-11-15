@@ -1,0 +1,5 @@
+CREATE TYPE "public"."resultado_curso" AS ENUM('PROMOCIONA', 'REPITE', 'TITULA');--> statement-breakpoint
+ALTER TABLE "alumnas" ADD COLUMN "resultado_curso" "resultado_curso";--> statement-breakpoint
+-- Datos: «promociona» pasa a resultado del curso (A7). En 1º, sí → PROMOCIONA; en 2º, sí → TITULA; no → REPITE.
+UPDATE "alumnas" SET "resultado_curso" = (CASE WHEN "promociona" IS TRUE AND "curso" = 1 THEN 'PROMOCIONA' WHEN "promociona" IS TRUE AND "curso" = 2 THEN 'TITULA' WHEN "promociona" IS FALSE THEN 'REPITE' END)::"resultado_curso";--> statement-breakpoint
+ALTER TABLE "alumnas" ADD CONSTRAINT "alumnas_resultado_chk" CHECK ("alumnas"."resultado_curso" is null or ("alumnas"."resultado_curso" = 'PROMOCIONA' and "alumnas"."curso" = 1) or ("alumnas"."resultado_curso" = 'TITULA' and "alumnas"."curso" = 2) or "alumnas"."resultado_curso" = 'REPITE');

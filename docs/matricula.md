@@ -156,7 +156,7 @@ Orden de trabajo: primero **Alumnado** (la matrícula cuelga de una alumna, punt
 - **De dónde sale una matrícula:**
   - **Admisión.** Al pagar la reserva, se crea la alumna (`RESERVA`; ya lo hace el cobro desde el 08/11/2026) y, al abrir el enlace de matrícula, su matrícula precargada (la alumna pasa a `EN_PROCESO`) con los datos de la solicitud (`nuevaAlumna = true`).
   - **Continuación (renovación 1º → 2º).** Secretaría abre la matrícula del curso siguiente para una alumna `MATRICULADA`, o para todas las de 1º de una vía a la vez. Se precarga con la matrícula anterior y `nuevaAlumna = false`. Por eso no hay ideario ni LOPD: es la regla `isNewStudent` del front.
-    - **Quién promociona** (reunión del 21/10). La apertura en bloque solo incluye a las alumnas marcadas con `promociona`. Esa marca la pone secretaría a mano, una a una o en bloque, o llega en la importación de Séneca.
+    - **Resultado del curso** (reunión del 21/10; ajuste A7, 15/11/2026). La apertura en bloque usa `resultadoCurso`: en 1º promociona (→ 2º) o repite (→ 1º); en 2º repite (→ 2º) o titula (→ baja «Titula»). Lo pone secretaría a mano, una a una o desde la renovación en bloque, o llegará en la importación de Séneca.
     - Las calificaciones no se gestionan en la plataforma: están en Séneca, y lo que se decida sobre Untis no cambia esto.
   - **Alumnado asignado por la Junta de Andalucía** (reunión del 21/10). Entra directo a matrícula, sin solicitud ni entrevista:
     - se importa desde Séneca (fichero ahora; API si la Junta la ofrece), o se da de alta a mano;

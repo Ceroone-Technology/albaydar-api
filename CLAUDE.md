@@ -144,7 +144,7 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 - La matrícula mueve el estado: abrirla → «En proceso»; exportarla a Séneca → «Matriculada» con el curso nuevo. Secretaría también lo cambia a mano.
 
 **Matrícula digital, entrega 1** (08/11/2026, detalle en `docs/api.md` y `docs/matricula.md`)
-- `POST /matriculas { alumnaId }`: alumnado nuevo (expediente en reserva o en proceso → «En proceso») o renovación 1º → 2º (expediente matriculado en 1º, a partir de su matrícula de 1º). `POST /matriculas/renovacion` la abre en bloque para quien promociona. Código `M-AAAA-NNNN`, una por alumna y curso escolar.
+- `POST /matriculas { alumnaId }`: alumnado nuevo (expediente en reserva o en proceso → «En proceso») o renovación (expediente matriculado, a partir de su matrícula anterior: a 2º si promociona, el mismo curso si repite; ajuste A7). `POST /matriculas/renovacion { curso }` cierra el curso en bloque según `resultadoCurso` (quien titula, baja «Titula»). Código `M-AAAA-NNNN`, una por alumna y curso escolar.
 - El borrador es el `EnrollmentDraft` del front tal cual (nombres en inglés) y las reglas son una copia de `enrollment.rules.ts`: la ficha trae `pendientes` por paso y `puedeEnviar`.
 - `PUT { borrador, version }` desde secretaría o desde el enlace: 409 `VERSION_ANTIGUA` con quién guardó; sin cambios no sube la versión. La familia no cambia la vía, el curso, «alumna nueva» ni `manualChecks`.
 - Páginas leídas con hora del servidor, que nunca se quitan; `POST …/paginas-leidas` no sube la versión.
@@ -305,7 +305,7 @@ Lo que propuso el front:
    - `conservarHasta` por tipo de fichero y tarea diaria de borrado. Plazos propuestos en la pregunta 25; no se borra nada hasta que se confirmen.
 8. **Alumnado primero**
    - La matrícula lleva `alumnaId` obligatorio y `solicitudId` opcional, una por alumna y curso escolar.
-   - Orígenes: reserva pagada, renovación 1º → 2º (solo quien `promociona`), alumnado de la Junta importado de Séneca y alta manual.
+   - Orígenes: reserva pagada, renovación según `resultadoCurso` (promociona → 2º, repite → mismo curso, titula → baja; A7), alumnado de la Junta importado de Séneca y alta manual.
 9. **Séneca:** adaptador `exportarSeneca` con CSV provisional hasta que llegue el formato oficial (pregunta 28).
 
 ### Otros módulos sin empezar

@@ -40,11 +40,11 @@ async function alumnadoDemo(usuarioId: string) {
   const demo: Demo[] = [
     { nombre: 'Clara', apellidos: 'Márquez Peña', documento: '49218734E', fechaNacimiento: '2009-04-12', familia: 'BACHILLERATO', curso: 2, estudios: 'Ciencias y Tecnología', estado: 'MATRICULADA', domicilio: 'C/ Asunción 18, 41011 Sevilla',
       contactos: [{ parentesco: 'Madre', nombre: 'Elena Peña Ríos', telefono: '+34 622 418 903', email: 'epena@example.com' }] },
-    { nombre: 'Irene', apellidos: 'Castaño Ruiz', documento: '49330127A', fechaNacimiento: '2010-02-03', familia: 'BACHILLERATO', curso: 1, estudios: 'Humanidades y Ciencias Sociales', estado: 'MATRICULADA', promociona: true,
+    { nombre: 'Irene', apellidos: 'Castaño Ruiz', documento: '49330127A', fechaNacimiento: '2010-02-03', familia: 'BACHILLERATO', curso: 1, estudios: 'Humanidades y Ciencias Sociales', estado: 'MATRICULADA', resultadoCurso: 'PROMOCIONA',
       contactos: [{ parentesco: 'Madre', nombre: 'Pilar Ruiz Ortega', telefono: '+34 655 120 334', email: 'pruiz@example.com' }, { parentesco: 'Padre', nombre: 'Javier Castaño León', telefono: '+34 655 120 335' }] },
     { nombre: 'Marina', apellidos: 'Serrano Pineda', documento: '48812655P', fechaNacimiento: '2010-11-27', familia: 'BACHILLERATO', curso: 1, estudios: 'Humanidades y Ciencias Sociales', estado: 'MATRICULADA',
       contactos: [{ parentesco: 'Madre', nombre: 'Rosa Pineda Gil', telefono: '+34 677 118 402', email: 'rpineda@example.com' }] },
-    { nombre: 'Adriana', apellidos: 'Quesada Ferrer', documento: '47920318W', fechaNacimiento: '2008-05-03', familia: 'CICLOS_PRIVADOS_GS', curso: 1, estudios: 'Marketing y Publicidad', estado: 'MATRICULADA', promociona: true, email: 'adriana.quesada@example.com',
+    { nombre: 'Adriana', apellidos: 'Quesada Ferrer', documento: '47920318W', fechaNacimiento: '2008-05-03', familia: 'CICLOS_PRIVADOS_GS', curso: 1, estudios: 'Marketing y Publicidad', estado: 'MATRICULADA', resultadoCurso: 'PROMOCIONA', email: 'adriana.quesada@example.com',
       contactos: [{ parentesco: 'Madre', nombre: 'Pilar Ferrer Ariza', telefono: '+34 690 118 774', email: 'pferrer@example.com' }] },
     { nombre: 'Nerea', apellidos: 'Domínguez Salas', documento: '49611042L', fechaNacimiento: '2008-09-19', familia: 'CICLOS_CONCERTADOS_GM', curso: 2, estudios: 'Sistemas Microinformáticos y Redes', estado: 'MATRICULADA',
       contactos: [{ parentesco: 'Padre', nombre: 'Manuel Domínguez Vera', telefono: '+34 611 447 208', email: 'mdominguez@example.com' }] },

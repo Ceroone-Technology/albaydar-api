@@ -11,7 +11,7 @@ const idParam = z.object({ id: z.string().uuid() });
 
 export const alumnadoRouter = Router();
 
-/** Listado: GET /alumnado?q=&familia=&curso=&cursoEscolar=&estado=&promociona=&page=&pageSize= */
+/** Listado: GET /alumnado?q=&familia=&curso=&cursoEscolar=&estado=&resultadoCurso=&page=&pageSize= */
 alumnadoRouter.get('/', requirePermiso('alumnado.ver'), validate({ query: srv.listarAlumnasQuery }), async (req, res) => {
   res.json(await srv.listar(v<typeof srv.listarAlumnasQuery>(req, 'query')));
 });

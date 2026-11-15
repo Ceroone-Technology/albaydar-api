@@ -1354,14 +1354,16 @@ describe('Alumnado: expedientes, familias e historial', () => {
     const editar = (body: Record<string, unknown>) => request(app).patch(`/api/alumnado/${julia}`).set(auth()).send(body);
     expect((await editar({ expediente: 'EXP-9999-0001' })).status).toBe(400); // el expediente no se edita
     const r = await editar({
-      domicilio: 'C/ Feria 12, 41003 Sevilla', estado: 'EN_PROCESO', promociona: true,
+      domicilio: 'C/ Feria 12, 41003 Sevilla', estado: 'EN_PROCESO', resultadoCurso: 'PROMOCIONA',
       contactos: [{ parentesco: 'Padre', nombre: 'Andrés Herrera Gil', telefono: '+34 699 100 201' }],
     });
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ domicilio: 'C/ Feria 12, 41003 Sevilla', estado: 'EN_PROCESO', promociona: true });
+    expect(r.body).toMatchObject({ domicilio: 'C/ Feria 12, 41003 Sevilla', estado: 'EN_PROCESO', resultadoCurso: 'PROMOCIONA', resultadoCursoEtiqueta: 'Promociona' });
+    // En 1º no se titula (A7).
+    expect((await editar({ resultadoCurso: 'TITULA' })).body.error.code).toBe('RESULTADO_NO_VALIDO');
     expect(r.body.contactos).toEqual([expect.objectContaining({ nombre: 'Andrés Herrera Gil', principal: true })]);
     const titulos = r.body.historial.slice(0, 2).map((h: { descripcion: string }) => h.descripcion);
-    expect(titulos).toEqual(expect.arrayContaining(['De «Matriculada» a «En proceso»', 'Cambia: domicilio, promoción, contactos de la familia']));
+    expect(titulos).toEqual(expect.arrayContaining(['De «Matriculada» a «En proceso»', 'Cambia: domicilio, resultado del curso, contactos de la familia']));
     expect(JSON.stringify(r.body.historial)).not.toContain('Feria');
     // Sin cambios reales, no se apunta nada.
     const n = r.body.historial.length;
@@ -1389,7 +1391,7 @@ describe('Alumnado: expedientes, familias e historial', () => {
     expect((await alumnado('?q=Julia, Herrera')).body.total).toBe(0);
     expect((await alumnado('?q=Herrera Cifuentes, Julia')).body.total).toBe(1);
 
-    const filtrado = await alumnado('?cursoEscolar=2026-2027&familia=BACHILLERATO&curso=1&promociona=true&estado=MATRICULADA');
+    const filtrado = await alumnado('?cursoEscolar=2026-2027&familia=BACHILLERATO&curso=1&resultadoCurso=PROMOCIONA&estado=MATRICULADA');
     expect(filtrado.body.items.map((a: { id: string }) => a.id)).toEqual([julia]);
     const reservas = await alumnado('?estado=RESERVA&pageSize=200');
     expect(reservas.body.items.every((a: { estado: string }) => a.estado === 'RESERVA')).toBe(true);

@@ -309,7 +309,7 @@ describe('Matrícula digital: apertura, borrador, enlaces y renovación', () => 
     expect((await request(app).get(`/api/public/matricula/${tPadre}`)).status).toBe(410);
   });
 
-  it('renovación en bloque: solo las de 1º que promocionan; parte de su matrícula de 1º', async () => {
+  it('renovación en bloque de 1º: promociona → 2º, repite → 1º (sin ideario ni LOPD), sin resultado se omite', async () => {
     // Lola: matrícula de 1º en 2026-2027 con cuenta y materias; luego queda matriculada y promociona.
     const lola = await alta('Lola', { estado: 'EN_PROCESO' });
     const m1 = (await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: lola, enviarEnlace: false })).body;
@@ -320,19 +320,22 @@ describe('Matrícula digital: apertura, borrador, enlaces y renovación', () => 
     b.economic.sepa = { iban: 'ES9121000418450200051332', holder: 'Madre de Lola', holderDocument: '12345678Z', bic: '', paymentType: 'monthly' };
     b.declaration = { day: '12', month: 'junio', signer: 'guardian' };
     expect((await guardarInterno(m1.matricula.id, b, 1)).status).toBe(200);
-    await request(app).patch(`/api/alumnado/${lola}`).set(auth()).send({ estado: 'MATRICULADA', promociona: true });
+    await request(app).patch(`/api/alumnado/${lola}`).set(auth()).send({ estado: 'MATRICULADA', resultadoCurso: 'PROMOCIONA' });
 
     const sinDecidir = await alta('Nora', {});
-    const noPromociona = await alta('Olga', { promociona: false });
-    const enSegundo = await alta('Paula', { curso: 2 });
+    const repite = await alta('Olga', { resultadoCurso: 'REPITE' });
+    const enSegundo = await alta('Paula', { curso: 2, resultadoCurso: 'REPITE' });
+    expect((await request(app).post('/api/alumnado').set(auth()).send({ nombre: 'Mal', apellidos: 'Resultado', documento: nuevoDni(), fechaNacimiento: '2010-05-05', familia: 'BACHILLERATO', curso: 1, cursoEscolar: '2026-2027', estado: 'MATRICULADA', resultadoCurso: 'TITULA', contactos: [{ parentesco: 'Madre', nombre: 'Madre', telefono: '+34 699 000 111' }] })).body.error.code).toBe('RESULTADO_NO_VALIDO');
 
     const r = await request(app).post('/api/matriculas/renovacion').set(auth()).send({ familia: 'BACHILLERATO', cursoEscolar: '2026-2027', enviarEnlace: false });
     expect(r.status).toBe(200);
-    expect(r.body.creadas).toHaveLength(1);
-    expect(r.body.creadas[0]).toMatchObject({ alumnaId: lola, codigo: 'M-2027-0002', enlaceEnviadoA: null });
-    expect(r.body.omitidas).toEqual([]);
+    expect(r.body.creadas.map((c: { alumnaId: string }) => c.alumnaId).sort()).toEqual([lola, repite].sort());
+    expect(r.body.tituladas).toEqual([]);
+    expect(r.body.omitidas).toEqual([expect.objectContaining({ alumnaId: sinDecidir, motivo: 'Sin resultado del curso: indica si promociona o repite.' })]);
 
-    const m2 = await ficha(r.body.creadas[0].matriculaId);
+    const deLola = r.body.creadas.find((c: { alumnaId: string }) => c.alumnaId === lola);
+    expect(deLola).toMatchObject({ curso: 2, repite: false, enlaceEnviadoA: null });
+    const m2 = await ficha(deLola.matriculaId);
     expect(m2).toMatchObject({ cursoEscolar: '2027-2028', curso: 2, nuevaAlumna: false, solicitud: null });
     expect(m2.borrador).toMatchObject({
       course: '2', newStudent: null,
@@ -344,14 +347,22 @@ describe('Matrícula digital: apertura, borrador, enlaces y renovación', () => 
     expect(Object.keys(m2.pendientes)).not.toContain('ideario'); // continúa: sin ideario ni LOPD
     // Sin LOPD, el enlace de un progenitor no tendría nada que firmar.
     const progenitor = await request(app)
-      .post(`/api/matriculas/${r.body.creadas[0].matriculaId}/enlaces`)
+      .post(`/api/matriculas/${deLola.matriculaId}/enlaces`)
       .set(auth())
       .send({ alcance: 'PROGENITOR', progenitor: 'padre', enviar: false });
     expect(progenitor.status).toBe(409);
     expect(progenitor.body.error.code).toBe('SIN_LOPD');
     expect((await request(app).get(`/api/alumnado/${lola}`).set(auth())).body.estado).toBe('MATRICULADA');
 
-    // Repetirla no duplica; a mano, sí se abre la de quien no tiene decidido si promociona.
+    // Olga repite 1º: matrícula de 1º del curso siguiente, sin ideario ni LOPD (ya es del centro).
+    const deOlga = r.body.creadas.find((c: { alumnaId: string }) => c.alumnaId === repite);
+    expect(deOlga).toMatchObject({ curso: 1, repite: true });
+    const mo = await ficha(deOlga.matriculaId);
+    expect(mo).toMatchObject({ cursoEscolar: '2027-2028', curso: 1, nuevaAlumna: false });
+    expect(mo.borrador).toMatchObject({ course: '1', newStudent: false, previousStudies: { course: 'Bachillerato 1º', promotes: false } });
+    expect(Object.keys(mo.pendientes)).not.toContain('ideario');
+
+    // Repetirla no duplica; a mano, sí se abre la de quien no tiene decidido el resultado (va a 2º, como antes).
     const otra = await request(app).post('/api/matriculas/renovacion').set(auth()).send({ familia: 'BACHILLERATO', cursoEscolar: '2026-2027', alumnaIds: [lola, enSegundo] });
     expect(otra.body.creadas).toEqual([]);
     expect(otra.body.omitidas.map((o: { motivo: string }) => o.motivo)).toEqual([
@@ -359,8 +370,26 @@ describe('Matrícula digital: apertura, borrador, enlaces y renovación', () => 
       'No es una alumna de 1º matriculada en esa vía y curso escolar.',
     ]);
     expect((await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: sinDecidir, enviarEnlace: false })).body.matricula.borrador.previousStudies.promotes).toBeNull();
-    expect((await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: noPromociona })).body.error.code).toBe('NO_PROMOCIONA');
-    expect((await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: enSegundo })).body.error.code).toBe('SIN_CURSO_SIGUIENTE');
+  });
+
+  it('renovación en bloque de 2º: repite → 2º, titula → baja «Titula», sin resultado se omite', async () => {
+    const repite = await alta('Rita', { curso: 2, resultadoCurso: 'REPITE' });
+    const titula = await alta('Sonia', { curso: 2, resultadoCurso: 'TITULA' });
+    const sinDecidir = await alta('Tina', { curso: 2 });
+    // Una a una: titula y 2º sin repetir no tienen curso siguiente.
+    expect((await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: titula })).body.error.code).toBe('TITULA');
+    expect((await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: sinDecidir })).body.error.code).toBe('SIN_CURSO_SIGUIENTE');
+
+    const r = await request(app).post('/api/matriculas/renovacion').set(auth()).send({ familia: 'BACHILLERATO', cursoEscolar: '2026-2027', curso: 2, alumnaIds: [repite, titula, sinDecidir], enviarEnlace: false });
+    expect(r.status).toBe(200);
+    expect(r.body.creadas).toEqual([expect.objectContaining({ alumnaId: repite, curso: 2, repite: true })]);
+    expect(r.body.tituladas).toEqual([expect.objectContaining({ alumnaId: titula })]);
+    expect(r.body.omitidas).toEqual([expect.objectContaining({ alumnaId: sinDecidir, motivo: 'Sin resultado del curso: indica si titula o repite.' })]);
+    const mr = await ficha(r.body.creadas[0].matriculaId);
+    expect(mr).toMatchObject({ cursoEscolar: '2027-2028', curso: 2, nuevaAlumna: false });
+    expect(mr.borrador.previousStudies).toMatchObject({ course: 'Bachillerato 2º', promotes: false });
+    const sonia = (await request(app).get(`/api/alumnado/${titula}`).set(auth())).body;
+    expect(sonia).toMatchObject({ estado: 'BAJA', baja: { motivo: 'Titula: termina sus estudios en el centro' } });
   });
 
   it('un expediente de baja no se matricula', async () => {
