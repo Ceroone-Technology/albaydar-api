@@ -89,8 +89,12 @@ export function showsPreviousStudies(via: ViaId | null): boolean {
   return isBachillerato(via);
 }
 
-export function familySizeOptions(via: ViaId | null): FamilySize[] {
-  return isBachillerato(via) ? ['general', 'special'] : ['no', 'general', 'special'];
+// «No», General o Especial en todas las vías. El mockup quitaba «No» en
+// Bachillerato y así una familia no numerosa no podía completar el paso
+// Familia (pruebas E2E del 11/11/2026). El nº de título solo se pide si es
+// numerosa. Copia de la regla del front (domain/rules/enrollment.rules.ts).
+export function familySizeOptions(): FamilySize[] {
+  return ['no', 'general', 'special'];
 }
 
 export function showsFamilySizeTitle(draft: Draft): boolean {
@@ -445,7 +449,7 @@ export function stepMissing(draft: Draft, step: EnrollmentStepId): string[] {
       need(filled(first.document), 'family.guardians.0.document');
       need(EMAIL_PATTERN.test(first.email.trim()), 'family.guardians.0.email');
       need(filled(first.phone), 'family.guardians.0.phone');
-      need(family.familySize !== null && familySizeOptions(draft.via).includes(family.familySize), 'family.familySize');
+      need(family.familySize !== null && familySizeOptions().includes(family.familySize), 'family.familySize');
       if (showsFamilySizeTitle(draft)) {
         need(filled(family.familySizeTitle), 'family.familySizeTitle');
       }

@@ -347,6 +347,19 @@ describe('Matrícula: borrador y reglas', () => {
     expect(canSubmit(d)).toBe(false);
   });
 
+  it('familia numerosa: «No» vale en todas las vías y solo con General o Especial se pide el título', () => {
+    const bach = (familySize: 'no' | 'general' | null) => {
+      const d = { ...exp(), via: 'bach' as const, course: '1' as const };
+      return { ...d, family: { ...d.family, familySize } };
+    };
+    expect(stepMissing(bach(null), 'family')).toContain('family.familySize');
+    expect(stepMissing(bach('no'), 'family')).not.toContain('family.familySize');
+    expect(stepMissing(bach('no'), 'family')).not.toContain('family.familySizeTitle');
+    expect(stepMissing(bach('general'), 'family')).toContain('family.familySizeTitle');
+    const gm = { ...exp(), via: 'gm' as const, course: '1' as const };
+    expect(stepMissing({ ...gm, family: { ...gm.family, familySize: 'no' as const } }, 'family')).not.toContain('family.familySize');
+  });
+
   it('código, curso siguiente y caducidad del enlace', () => {
     expect(formatoCodigoMatricula('2027-2028', 7)).toBe('M-2027-0007');
     expect(cursoEscolarSiguiente('2026-2027')).toBe('2027-2028');
