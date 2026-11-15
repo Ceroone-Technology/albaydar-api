@@ -4,7 +4,19 @@ import type { FamiliaVia } from '../../../db/schema';
 import { acreedorDe, type MatriculaConfig } from '../../ajustes/ajustes.service';
 import type { Expediente, LopdAuthorizationId } from '../borrador';
 import { jsonCanonico } from '../json-canonico';
-import { idearioPoints, isBachillerato, READER_DOCS, sepaPaymentType, type ReaderDocId, type SignatureSlotId } from '../reglas';
+import {
+  checklist,
+  idearioPoints,
+  isBachillerato,
+  READER_DOCS,
+  sepaPaymentType,
+  showsFamilySizeTitle,
+  subjectChoice,
+  subjectGroups,
+  subjectsComplete,
+  type ReaderDocId,
+  type SignatureSlotId,
+} from '../reglas';
 import {
   AMBAS_FIRMAS,
   AUTORIZA,
@@ -178,9 +190,46 @@ function autorizaciones(exp: Expediente, ids: LopdAuthorizationId[]): Bloque {
 
 // ── Documentos ───────────────────────────────────────────────────────────────
 
+/** «General · título 41/0001234/2024», «No» o «Sin indicar». */
+function familiaNumerosa(exp: Expediente): string {
+  const { familySize, familySizeTitle } = exp.family;
+  if (familySize === null) return IMPRESO.sinIndicar;
+  return unir([IMPRESO.tamanosFamilia[familySize], showsFamilySizeTitle(exp) && familySizeTitle.trim() ? IMPRESO.tituloFamilia(familySizeTitle.trim()) : ''], ' · ');
+}
+
+/** «Ciencias y Tecnología · Biología, Química, TIC, Anatomía Aplicada», como la Revisión del asistente. */
+function modalidadYMaterias(exp: Expediente): string {
+  const { modality } = exp.bachillerato;
+  if (modality === null) return IMPRESO.sinElegir;
+  const nombre = IMPRESO.modalidades[modality];
+  if (!subjectsComplete(exp)) return `${nombre} · ${IMPRESO.materiasPendientes}`;
+  return `${nombre} · ${subjectGroups(exp)
+    .map((g) => subjectChoice(exp, g))
+    .join(', ')}`;
+}
+
+/** La documentación que se acompaña: la de la lista del paso Documentos que cuenta, salvo la económica (va en su orden). */
+function documentacion(exp: Expediente): Bloque {
+  const docs = IMPRESO.documentos;
+  const nombre = (id: string): string | null => {
+    if (id === 'm5') return exp.via === 'gsp' ? docs.m5Gsp : docs.m5;
+    if (id === 'b2') return exp.via === 'gsp' ? docs.b2Gsp : docs.b2Bach;
+    return (docs as Record<string, string>)[id] ?? null;
+  };
+  const filas = checklist(exp)
+    .filter((item) => item.counts && item.id !== 'e1')
+    .flatMap((item) => {
+      const clave = nombre(item.id);
+      return clave ? [{ clave, valor: IMPRESO.origen[item.origin] }] : [];
+    });
+  return { tipo: 'tabla', filas };
+}
+
 function impreso(exp: Expediente, ctx: ContextoDocumento, hoy: Date): Pagina[] {
-  const etiquetas = isBachillerato(exp.via) ? IMPRESO.etiquetasTutores.bach : IMPRESO.etiquetasTutores.ciclo;
+  const bach = isBachillerato(exp.via);
+  const etiquetas = bach ? IMPRESO.etiquetasTutores.bach : IMPRESO.etiquetasTutores.ciclo;
   const d = domicilio(exp);
+  const s = exp.student;
   return [
     pagina(
       1,
@@ -196,6 +245,8 @@ function impreso(exp: Expediente, ctx: ContextoDocumento, hoy: Date): Pagina[] {
             { etiqueta: CAMPOS.birthDate, valor: exp.student.birthDate },
             { etiqueta: CAMPOS.document, valor: exp.student.document },
             { etiqueta: CAMPOS.courseGroup, valor: etiquetaCurso(exp) },
+            { etiqueta: IMPRESO.domicilioCurso, valor: unir([s.address, unir([s.postalCode, s.municipality], ' ')], ' · '), ancho: 'completo' },
+            { etiqueta: IMPRESO.contacto, valor: unir([s.email, s.phone], ' · '), ancho: 'completo' },
           ],
         },
         {
@@ -205,8 +256,18 @@ function impreso(exp: Expediente, ctx: ContextoDocumento, hoy: Date): Pagina[] {
             { etiqueta: etiquetas[0]!, valor: exp.family.guardians[0].fullName },
             { etiqueta: etiquetas[1]!, valor: exp.family.guardians[1].fullName },
             { etiqueta: IMPRESO.domicilioFamiliar, valor: unir([d.address, unir([d.postalCode, d.municipality], ' ')], ' · '), ancho: 'completo' },
+            { etiqueta: IMPRESO.familiaNumerosa, valor: familiaNumerosa(exp) },
           ],
         },
+        {
+          tipo: 'campos',
+          titulo: IMPRESO.estudios,
+          campos: bach
+            ? [{ etiqueta: IMPRESO.modalidad, valor: modalidadYMaterias(exp), ancho: 'completo' }]
+            : [{ etiqueta: IMPRESO.ciclo, valor: exp.annex.cycle ?? IMPRESO.sinIndicar, ancho: 'completo' }],
+        },
+        t('subtitulo', IMPRESO.documentacion),
+        documentacion(exp),
         t('subtitulo', IMPRESO.declaracionTitulo),
         t('parrafo', IMPRESO.declaracion),
         t('nota', IMPRESO.nota),

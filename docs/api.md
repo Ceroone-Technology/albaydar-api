@@ -684,7 +684,7 @@ BORRADOR ──enviar──▶ ENVIADA ──exportar a Séneca──▶ EXPORTA
 - **Envío:**
   - con `enviar: false` solo se crea, y la `url` de la respuesta se puede copiar;
   - con `enviar` y sin `email`, el de `FAMILIA` va al contacto principal (400 `SIN_CORREO` si no hay ninguno).
-- **Cuándo se puede crear:** solo con la matrícula en `BORRADOR`.
+- **Cuándo se puede crear:** solo con la matrícula en `BORRADOR`. El de `PROGENITOR`, además, solo si la matrícula lleva LOPD (alumnado nuevo): en una renovación de 2º no tendría nada que firmar y responde 409 `SIN_LOPD`.
 - **Caducidad:** el 30 de septiembre del curso de la matrícula (a las 23:59 de Madrid), y nunca antes de 30 días desde que se crea. Caducado, 410 `ENLACE_CADUCADO`. Un token que no existe es 404 `ENLACE_NO_VALIDO`.
 
 ### Familia (sin login)
@@ -709,6 +709,8 @@ BORRADOR ──enviar──▶ ENVIADA ──exportar a Séneca──▶ EXPORTA
 ### Documentos y firmas
 
 Los cinco documentos (`impreso`, `ideario`, `lopd`, `sepa`, `plus`) los da la API, rellenados con los datos de la matrícula: el lector del front pinta lo que recibe y deja de usar sus propios textos. Los textos legales están en `src/modules/matricula/documentos/textos.ts`, versionados (`lopd@2026-1`); no se editan desde Comunicaciones.
+
+**Impreso (`impreso@2026-2`, desde el 15/11/2026):** lleva lo que enseña la tabla «Impreso de matriculación» del paso Revisión del asistente: datos de la alumna con el domicilio durante el curso y el contacto; tutores, domicilio familiar y familia numerosa (con el nº de título si lo es); modalidad y materias (Bachillerato) o ciclo formativo; y la **documentación que se acompaña** según la vía y si es alumna nueva (bloque `tabla`). La lista no dice si un documento ya está subido o validado: eso cambia después de firmar y anularía la firma del impreso. La declaración no lleva el día y mes escritos a mano: la fecha es la de la firma.
 
 **`GET …/documentos/:doc`:**
 

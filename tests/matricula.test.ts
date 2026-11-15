@@ -342,6 +342,13 @@ describe('Matrícula digital: apertura, borrador, enlaces y renovación', () => 
       declaration: { day: '', month: '', signer: null },
     });
     expect(Object.keys(m2.pendientes)).not.toContain('ideario'); // continúa: sin ideario ni LOPD
+    // Sin LOPD, el enlace de un progenitor no tendría nada que firmar.
+    const progenitor = await request(app)
+      .post(`/api/matriculas/${r.body.creadas[0].matriculaId}/enlaces`)
+      .set(auth())
+      .send({ alcance: 'PROGENITOR', progenitor: 'padre', enviar: false });
+    expect(progenitor.status).toBe(409);
+    expect(progenitor.body.error.code).toBe('SIN_LOPD');
     expect((await request(app).get(`/api/alumnado/${lola}`).set(auth())).body.estado).toBe('MATRICULADA');
 
     // Repetirla no duplica; a mano, sí se abre la de quien no tiene decidido si promociona.
@@ -390,13 +397,26 @@ describe('Matrícula digital: documentos con huella, firmas y mandatos SEPA', ()
     token = r.body.enlace.url.split('/').at(-1);
 
     const d = await doc('impreso');
-    expect(d).toMatchObject({ id: 'impreso', version: 'impreso@2026-1', nombre: 'Impreso de matriculación', puedeFirmar: false, paginasLeidas: [], firmas: {} });
+    expect(d).toMatchObject({ id: 'impreso', version: 'impreso@2026-2', nombre: 'Impreso de matriculación', puedeFirmar: false, paginasLeidas: [], firmas: {} });
     expect(d.huella).toMatch(/^[0-9a-f]{64}$/);
     expect(d.paginas).toHaveLength(1);
     expect(d.paginas[0].bloques[0]).toEqual({ tipo: 'titulo', texto: 'IMPRESO DE MATRICULACIÓN · CURSO 2027/28' });
     const campos = d.paginas[0].bloques.filter((b: { tipo: string }) => b.tipo === 'campos').flatMap((b: { campos: unknown[] }) => b.campos);
     expect(campos).toContainEqual({ etiqueta: 'Nombre', valor: 'Sara' });
     expect(campos).toContainEqual({ etiqueta: 'Curso y grupo', valor: '1º Bachillerato' });
+    // Lo que enseña la Revisión del asistente (impreso@2026-2).
+    expect(campos).toContainEqual({ etiqueta: 'Familia numerosa', valor: 'Sin indicar' });
+    expect(campos).toContainEqual({ etiqueta: 'Modalidad y materias', valor: 'Sin elegir', ancho: 'completo' });
+    expect(campos.map((c: { etiqueta: string }) => c.etiqueta)).toEqual(expect.arrayContaining(['Domicilio durante el curso', 'Contacto']));
+    const documentacion = d.paginas[0].bloques.find((b: { tipo: string }) => b.tipo === 'tabla');
+    expect(documentacion.filas.map((f: { clave: string }) => f.clave)).toEqual([
+      'Aceptación de ideario y salidas',
+      'Autorización de protección de datos (LOPD)',
+      'Fotocopia del DNI de la alumna',
+      '2 fotos tamaño carné',
+      'Hoja de la alumna del Libro de Familia',
+      'Certificación académica oficial de la ESO',
+    ]);
     expect(d.paginas[0].firma).toMatchObject({ declaracion: 'He leído el documento completo y lo firmo.', huecos: [{ id: 'impreso-titular', etiqueta: 'Firma' }] });
     // La misma matrícula da siempre la misma huella; la fecha (la de la firma) no entra en ella.
     expect((await doc('impreso')).huella).toBe(d.huella);
