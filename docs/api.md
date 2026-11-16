@@ -61,13 +61,13 @@ Cuatro perfiles acordados con el cliente. **Dirección** es superadministrador: 
 | `alumnado` | ver/editar | ver/editar | ver | ver |
 | `solicitudes` | ver/editar | ver/editar | — | ver/editar |
 | `entrevistas` | ver/editar | ver/editar | — | ver |
-| `evaluacion` (decisión de admisión) | ver/editar | ver | — | — |
-| `matricula` | ver/editar | ver/editar | — | — |
-| `cobros` | ver/editar | — | ver/editar | — |
+| `evaluacion` (decisión de admisión) | ver/editar | ver | — | ver |
+| `matricula` | ver/editar | ver/editar | — | ver |
+| `cobros` | ver/editar | — | ver/editar | ver |
 | `comunicaciones` | ver/editar | ver/editar | ver/editar | — |
 | `configuracion` (usuarios, roles, agenda) | ver/editar | — | ver | — |
 
-Son los valores iniciales (tomados de la navegación y la matriz del mockup); Dirección los cambia y se aplican en segundos, sin volver a iniciar sesión.
+Son los valores iniciales (tomados de la navegación y la matriz del mockup; Comercial, ajustado el 15/11/2026, ajuste A2: ve todo el proceso hasta la matrícula, cobros incluidos, y solo edita solicitudes). Dirección los cambia y se aplican en segundos, sin volver a iniciar sesión. La migración `0014` lleva ese ajuste a las bases ya creadas solo si el rol Comercial conservaba los permisos de partida.
 
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|

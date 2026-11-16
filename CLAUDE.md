@@ -334,7 +334,7 @@ Lo que propuso el front:
 - regla de "familia ya vinculada";
 - curso escolar de destino de las solicitudes.
 
-**Permisos:** perfil Comercial.
+**Permisos:** ~~perfil Comercial~~ hecho el 15/11/2026 (ajuste A2): ve todo hasta la matrícula, cobros incluidos; solo edita solicitudes (`ROLES_INICIALES` y migración `0014`).
 
 **RGPD**
 - plazo de conservación de los datos de no admitidas;

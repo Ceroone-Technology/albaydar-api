@@ -183,11 +183,14 @@ describe('Matrícula digital: apertura, borrador, enlaces y renovación', () => 
     expect(a.matriculas).toEqual([{ id, codigo: 'M-2027-0001', cursoEscolar: '2027-2028', curso: 1, estado: 'BORRADOR', estadoEtiqueta: 'Borrador' }]);
   });
 
-  it('una sola matrícula por alumna y curso escolar; Comercial no la ve', async () => {
+  it('una sola matrícula por alumna y curso escolar; Comercial la ve pero no la abre ni la edita', async () => {
     const r = await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: carmen.alumnaId });
     expect(r.status).toBe(409);
     expect(r.body.error.code).toBe('MATRICULA_YA_EXISTE');
-    expect((await request(app).get('/api/matriculas').set(auth('comercial'))).status).toBe(403);
+    // Comercial ve la Matrícula (ajuste A2), sin editarla.
+    expect((await request(app).get('/api/matriculas').set(auth('comercial'))).status).toBe(200);
+    expect((await request(app).post('/api/matriculas').set(auth('comercial')).send({ alumnaId: carmen.alumnaId })).status).toBe(403);
+    expect((await request(app).put(`/api/matriculas/${id}`).set(auth('comercial')).send({ borrador: {}, version: 1 })).status).toBe(403);
     const l = await request(app).get('/api/matriculas?q=carmen matricula').set(auth());
     expect(l.body).toMatchObject({ total: 1, items: [{ id, codigo: 'M-2027-0001', documentos: { done: 0 }, puedeEnviar: false }] });
   });

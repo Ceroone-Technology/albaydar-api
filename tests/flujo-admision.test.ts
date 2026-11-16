@@ -828,7 +828,10 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     expect(r.body.html).toContain('250,00'); // importe de su vía (excepción configurada arriba)
     const espera = await previa({ decision: 'EN_ESPERA', motivo: 'Grupo completo.' }, 'secretaria'); // Secretaría ve Evaluación
     expect(espera.body.html).toContain('posición <strong>2</strong>'); // Berta ya está la 1.ª
-    expect((await previa({ decision: 'ADMITIDA' }, 'comercial')).status).toBe(403);
+    // Comercial ve Evaluación (ajuste A2) pero no decide.
+    expect((await previa({ decision: 'ADMITIDA' }, 'comercial')).status).toBe(200);
+    expect((await request(app).post(`/api/solicitudes/${nora.id}/decision`).set(auth('comercial')).send({ decision: 'ADMITIDA', notificar: false })).status).toBe(403);
+    expect((await previa({ decision: 'ADMITIDA' }, 'administracion')).status).toBe(403);
     // Nada ha cambiado.
     expect(await ficha(nora.id)).toMatchObject({ estado: 'ENTREVISTA_REALIZADA', reserva: null });
     const recibida = (await request(app).post('/api/solicitudes').set(auth()).send({
@@ -1275,7 +1278,10 @@ describe('Exportaciones CSV', () => {
   });
 
   it('con los permisos de su listado', async () => {
-    expect((await request(app).get('/api/cobros/exportar').set(auth('comercial'))).status).toBe(403);
+    // Comercial ve Cobros (ajuste A2), así que también lo exporta; no registra cobros.
+    expect((await request(app).get('/api/cobros/exportar').set(auth('comercial'))).status).toBe(200);
+    expect((await request(app).post('/api/cobros').set(auth('comercial')).send({})).status).toBe(403);
+    expect((await request(app).get('/api/cobros/exportar').set(auth('secretaria'))).status).toBe(403);
   });
 });
 
