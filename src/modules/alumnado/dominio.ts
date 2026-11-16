@@ -1,4 +1,4 @@
-import type { EstadoAlumna, OrigenAlumna } from '../../db/schema';
+import type { EstadoAlumna, OrigenAlumna, ResultadoCurso } from '../../db/schema';
 
 /**
  * Expediente del alumnado. Estados y textos del mockup (pantalla Alumnado):
@@ -38,6 +38,19 @@ export const ESTADOS_EDITABLES = ['RESERVA', 'EN_PROCESO', 'MATRICULADA'] as con
 export const ESTADOS_VINCULAN_FAMILIA: EstadoAlumna[] = ['RESERVA', 'EN_PROCESO', 'MATRICULADA'];
 
 /** Motivo de la baja automática cuando se anula el cobro que reservó la plaza. */
+/** Resultado del curso (A7): en 1º promociona o repite; en 2º titula o repite. */
+export const ETIQUETA_RESULTADO_CURSO: Record<ResultadoCurso, string> = {
+  PROMOCIONA: 'Promociona',
+  REPITE: 'Repite',
+  TITULA: 'Titula',
+};
+
+/** Resultados que admite cada curso. */
+export const RESULTADOS_POR_CURSO: Record<1 | 2, ResultadoCurso[]> = { 1: ['PROMOCIONA', 'REPITE'], 2: ['TITULA', 'REPITE'] };
+
+/** Motivo de la baja de quien titula, al cerrar el curso con la renovación en bloque de 2º. */
+export const MOTIVO_TITULA = 'Titula: termina sus estudios en el centro';
+
 export const MOTIVO_RESERVA_ANULADA = 'Reserva anulada: se anuló el cobro que la confirmaba';
 
 /** EXP-2026-0001: formato del mockup, correlativo por año de alta. */

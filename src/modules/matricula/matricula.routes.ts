@@ -63,7 +63,7 @@ matriculasRouter.post('/', requirePermiso('matricula.editar'), validate({ body: 
   res.status(201).json(await srv.crear(v<typeof srv.crearMatriculaBody>(req, 'body'), req.user!.id));
 });
 
-/** Renovación en bloque 1º → 2º de las alumnas que promocionan (antes de /:id). */
+/** Renovación en bloque al cerrar un curso, según el resultado de cada alumna (A7; antes de /:id). */
 matriculasRouter.post('/renovacion', requirePermiso('matricula.editar'), validate({ body: srv.renovacionBody }), async (req, res) => {
   res.json(await srv.renovacion(v<typeof srv.renovacionBody>(req, 'body'), req.user!.id));
 });

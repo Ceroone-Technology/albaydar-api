@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   alumnaContactos,
@@ -10,6 +10,7 @@ import {
   estadoAlumnaEnum,
   matriculas,
   familiaViaEnum,
+  resultadoCursoEnum,
   solicitudes,
   usuarios,
   type Alumna,
@@ -39,7 +40,10 @@ import {
   ESTADOS_VINCULAN_FAMILIA,
   ETIQUETA_ESTADO_ALUMNA,
   ETIQUETA_ORIGEN_ALUMNA,
+  ETIQUETA_RESULTADO_CURSO,
   MOTIVO_RESERVA_ANULADA,
+  MOTIVO_TITULA,
+  RESULTADOS_POR_CURSO,
   PARENTESCO_TUTOR_SOLICITUD,
   TONO_ESTADO_ALUMNA,
   formatoExpediente,
@@ -103,7 +107,7 @@ export const crearAlumnaBody = z.object({
   cursoEscolar,
   estudios: textoOpcional(150),
   estado: z.enum(ESTADOS_EDITABLES),
-  promociona: z.boolean().nullable().optional(),
+  resultadoCurso: z.enum(resultadoCursoEnum.enumValues).nullable().optional(),
   contactos: contactos.optional(),
 });
 
@@ -123,7 +127,7 @@ export const editarAlumnaBody = z
     estudios: textoOpcional(150),
     /** En una baja, reactiva el expediente en ese estado. */
     estado: z.enum(ESTADOS_EDITABLES).optional(),
-    promociona: z.boolean().nullable().optional(),
+    resultadoCurso: z.enum(resultadoCursoEnum.enumValues).nullable().optional(),
     contactos: contactos.optional(),
   })
   .strict();
@@ -138,8 +142,6 @@ export const notaBody = z.object({
   texto: z.string().trim().min(1, 'Escribe la nota.').max(2000),
 });
 
-const booleano = z.enum(['true', 'false']).transform((v) => v === 'true');
-
 export const listarAlumnasQuery = z.object({
   /** Nombre, apellidos, DNI/NIE o número de expediente (sin importar tildes ni mayúsculas). */
   q: z.string().trim().max(100).optional(),
@@ -147,7 +149,8 @@ export const listarAlumnasQuery = z.object({
   curso: z.coerce.number().int().min(1).max(2).optional(),
   cursoEscolar: z.string().regex(/^\d{4}-\d{4}$/).optional(),
   estado: z.enum(estadoAlumnaEnum.enumValues).optional(),
-  promociona: booleano.optional(),
+  /** Resultado del curso; `SIN_DECIDIR` = vacío. */
+  resultadoCurso: z.enum([...resultadoCursoEnum.enumValues, 'SIN_DECIDIR']).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(25),
 });
@@ -184,7 +187,8 @@ function vista(a: Alumna, cs: AlumnaContacto[], solicitud: { id: string; codigo:
     estadoTono: TONO_ESTADO_ALUMNA[a.estado],
     origen: a.origen,
     origenEtiqueta: ETIQUETA_ORIGEN_ALUMNA[a.origen],
-    promociona: a.promociona,
+    resultadoCurso: a.resultadoCurso,
+    resultadoCursoEtiqueta: a.resultadoCurso ? ETIQUETA_RESULTADO_CURSO[a.resultadoCurso] : null,
     fechaAlta: a.fechaAlta,
     baja: a.fechaBaja ? { fecha: a.fechaBaja, motivo: a.motivoBaja } : null,
     solicitud,
@@ -216,7 +220,7 @@ function filtros(q: z.infer<typeof listarAlumnasQuery>): SQL | undefined {
   if (q.curso) c.push(eq(alumnas.curso, q.curso));
   if (q.cursoEscolar) c.push(eq(alumnas.cursoEscolar, q.cursoEscolar));
   if (q.estado) c.push(eq(alumnas.estado, q.estado));
-  if (q.promociona !== undefined) c.push(eq(alumnas.promociona, q.promociona));
+  if (q.resultadoCurso) c.push(q.resultadoCurso === 'SIN_DECIDIR' ? isNull(alumnas.resultadoCurso) : eq(alumnas.resultadoCurso, q.resultadoCurso));
   if (q.q) {
     const t = `%${plegar(q.q).replace(/[%_\\]/g, (m) => '\\' + m)}%`;
     const doc = `%${normalizarDocumento(q.q).replace(/[%_\\]/g, (m) => '\\' + m)}%`;
@@ -419,7 +423,17 @@ async function evento(tx: Tx, alumnaId: string, tipo: (typeof alumnaEventos.$inf
 }
 
 /** Alta manual (secretaría). */
+/** En 1º promociona o repite; en 2º titula o repite (A7). */
+function comprobarResultado(curso: number, resultado: Alumna['resultadoCurso'] | undefined) {
+  if (!resultado) return;
+  if (!RESULTADOS_POR_CURSO[curso as 1 | 2].includes(resultado)) {
+    const validos = RESULTADOS_POR_CURSO[curso as 1 | 2].map((r) => `«${ETIQUETA_RESULTADO_CURSO[r]}»`).join(' o ');
+    throw badRequest('RESULTADO_NO_VALIDO', `En ${curso}º el resultado del curso es ${validos}.`);
+  }
+}
+
 export async function crear(d: z.infer<typeof crearAlumnaBody>, usuarioId: string) {
+  comprobarResultado(d.curso, d.resultadoCurso);
   const id = await conDocumentoUnico(() =>
     db.transaction(async (tx) => {
       await comprobarDocumento(tx, d.documento);
@@ -441,7 +455,7 @@ export async function crear(d: z.infer<typeof crearAlumnaBody>, usuarioId: strin
           estudios: d.estudios ?? null,
           estado: d.estado,
           origen: 'MANUAL',
-          promociona: d.promociona ?? null,
+          resultadoCurso: d.resultadoCurso ?? null,
           fechaAlta: hoy,
           creadaPorId: usuarioId,
         })
@@ -455,7 +469,7 @@ export async function crear(d: z.infer<typeof crearAlumnaBody>, usuarioId: strin
   return detalle(id);
 }
 
-const CAMPOS_EDITABLES = ['nombre', 'apellidos', 'documento', 'fechaNacimiento', 'email', 'telefono', 'domicilio', 'familia', 'curso', 'cursoEscolar', 'estudios', 'promociona'] as const;
+const CAMPOS_EDITABLES = ['nombre', 'apellidos', 'documento', 'fechaNacimiento', 'email', 'telefono', 'domicilio', 'familia', 'curso', 'cursoEscolar', 'estudios', 'resultadoCurso'] as const;
 
 const NOMBRE_CAMPO: Record<(typeof CAMPOS_EDITABLES)[number] | 'contactos', string> = {
   nombre: 'nombre',
@@ -469,7 +483,7 @@ const NOMBRE_CAMPO: Record<(typeof CAMPOS_EDITABLES)[number] | 'contactos', stri
   curso: 'curso',
   cursoEscolar: 'curso escolar',
   estudios: 'estudios',
-  promociona: 'promoción',
+  resultadoCurso: 'resultado del curso',
   contactos: 'contactos de la familia',
 };
 
@@ -478,6 +492,10 @@ export async function editar(id: string, d: z.infer<typeof editarAlumnaBody>, us
     db.transaction(async (tx) => {
       const a = await cargar(tx, id, true);
       if (d.documento !== undefined) await comprobarDocumento(tx, d.documento, id);
+      // Si cambia el curso, un resultado que ya no vale se vacía en vez de quedar incoherente.
+      const curso = d.curso ?? a.curso;
+      if (d.resultadoCurso !== undefined) comprobarResultado(curso, d.resultadoCurso);
+      else if (d.curso !== undefined && a.resultadoCurso && !RESULTADOS_POR_CURSO[curso as 1 | 2].includes(a.resultadoCurso)) d = { ...d, resultadoCurso: null };
 
       const cambios: Partial<typeof alumnas.$inferInsert> = {};
       const campos: string[] = [];
@@ -612,13 +630,25 @@ export async function estadoPorMatricula(
   a: Exclude<Alumna['estado'], 'BAJA'>,
   texto: string,
   usuarioId: string | null,
-  cambios: Partial<Pick<Alumna, 'curso' | 'cursoEscolar' | 'familia'>> = {},
+  cambios: Partial<Pick<Alumna, 'curso' | 'cursoEscolar' | 'familia' | 'resultadoCurso'>> = {},
 ) {
   const actual = await cargar(tx, alumnaId, true);
+  // Al pasar a otro curso escolar, el resultado del anterior ya no vale (A7).
+  if (cambios.cursoEscolar && cambios.cursoEscolar !== actual.cursoEscolar) Object.assign(cambios, { resultadoCurso: null });
   if (actual.estado !== a) {
     await evento(tx, alumnaId, 'ESTADO', usuarioId, `De «${ETIQUETA_ESTADO_ALUMNA[actual.estado]}» a «${ETIQUETA_ESTADO_ALUMNA[a]}» · ${texto}`, { deEstado: actual.estado, aEstado: a });
   }
   await tx.update(alumnas).set({ estado: a, ...cambios }).where(eq(alumnas.id, alumnaId));
+}
+
+/** Quien titula (A7): baja con motivo «Titula» al cerrar el curso (renovación en bloque de 2º). */
+export async function bajaPorTitulo(tx: Tx, alumnaId: string, usuarioId: string) {
+  const a = await cargar(tx, alumnaId, true);
+  if (a.estado === 'BAJA') return false;
+  const fechaBaja = fechaLocal(new Date());
+  await tx.update(alumnas).set({ estado: 'BAJA', fechaBaja, motivoBaja: MOTIVO_TITULA }).where(eq(alumnas.id, alumnaId));
+  await evento(tx, alumnaId, 'BAJA', usuarioId, MOTIVO_TITULA, { deEstado: a.estado, fecha: fechaBaja });
+  return true;
 }
 
 // ── «Familia ya vinculada» ───────────────────────────────────────────────────

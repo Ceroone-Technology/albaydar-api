@@ -131,6 +131,12 @@ export const estadoAlumnaEnum = pgEnum('estado_alumna', [
 /** De dónde sale el expediente. */
 export const origenAlumnaEnum = pgEnum('origen_alumna', ['ADMISION', 'MANUAL', 'SENECA']);
 
+/**
+ * Resultado del curso según las actas (ajuste A7, respuesta del centro del 11/11/2026):
+ * en 1º promociona o repite; en 2º titula o repite. null = sin decidir.
+ */
+export const resultadoCursoEnum = pgEnum('resultado_curso', ['PROMOCIONA', 'REPITE', 'TITULA']);
+
 export const tipoEventoAlumnaEnum = pgEnum('tipo_evento_alumna', ['ALTA', 'EDICION', 'ESTADO', 'BAJA', 'REACTIVADA', 'NOTA']);
 
 /** Matrícula digital (fase 04): ver docs/matricula.md. */
@@ -659,8 +665,8 @@ export const alumnas = pgTable(
     solicitudId: uuid('solicitud_id')
       .unique()
       .references(() => solicitudes.id, { onDelete: 'set null' }),
-    /** Para la renovación 1º → 2º: null = sin decidir. */
-    promociona: boolean('promociona'),
+    /** Resultado del curso para la renovación (A7): null = sin decidir. Se vacía al pasar al curso siguiente. */
+    resultadoCurso: resultadoCursoEnum('resultado_curso'),
     fechaAlta: date('fecha_alta', { mode: 'string' }).notNull(),
     fechaBaja: date('fecha_baja', { mode: 'string' }),
     motivoBaja: text('motivo_baja'),
@@ -674,6 +680,8 @@ export const alumnas = pgTable(
     index('alumnas_apellidos_idx').on(t.apellidos, t.nombre),
     check('alumnas_curso_chk', sql`${t.curso} in (1, 2)`),
     check('alumnas_baja_chk', sql`(${t.estado} = 'BAJA') = (${t.fechaBaja} is not null)`),
+    // Promociona solo desde 1º; titula solo en 2º.
+    check('alumnas_resultado_chk', sql`${t.resultadoCurso} is null or (${t.resultadoCurso} = 'PROMOCIONA' and ${t.curso} = 1) or (${t.resultadoCurso} = 'TITULA' and ${t.curso} = 2) or ${t.resultadoCurso} = 'REPITE'`),
   ],
 );
 
@@ -991,6 +999,7 @@ export type Alumna = typeof alumnas.$inferSelect;
 export type AlumnaContacto = typeof alumnaContactos.$inferSelect;
 export type EstadoAlumna = (typeof estadoAlumnaEnum.enumValues)[number];
 export type OrigenAlumna = (typeof origenAlumnaEnum.enumValues)[number];
+export type ResultadoCurso = (typeof resultadoCursoEnum.enumValues)[number];
 export type Matricula = typeof matriculas.$inferSelect;
 export type EnlaceMatricula = typeof enlacesMatricula.$inferSelect;
 export type EstadoMatricula = (typeof estadoMatriculaEnum.enumValues)[number];

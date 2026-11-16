@@ -25,7 +25,7 @@ import { db, type Tx } from '../../lib/db';
 import { badRequest, codigoPg, conflict, gone, notFound } from '../../lib/errors';
 import { diaLargo } from '../../lib/fechas';
 import { matriculaConfig } from '../ajustes/ajustes.service';
-import { estadoPorMatricula, plegar, plegarSql } from '../alumnado/alumnado.service';
+import { bajaPorTitulo, estadoPorMatricula, plegar, plegarSql } from '../alumnado/alumnado.service';
 import { siguienteValor } from '../solicitudes/comun';
 import { cursoEscolarCorto, nombrePila, nombreVia } from '../solicitudes/dominio';
 import { jsonCanonico } from './json-canonico';
@@ -69,9 +69,11 @@ export const crearMatriculaBody = z.object({
 
 export const renovacionBody = z.object({
   familia: z.enum(familiaViaEnum.enumValues),
-  /** Curso escolar que termina (el de 1º). La matrícula es para el siguiente. */
+  /** Curso escolar que termina. La matrícula es para el siguiente. */
   cursoEscolar,
-  /** Para abrir solo algunas; si no, todas las que promocionan. */
+  /** Curso que termina (A7): 1º (promocionan o repiten) o 2º (repiten o titulan). */
+  curso: z.union([z.literal(1), z.literal(2)]).default(1),
+  /** Para abrir solo algunas; si no, todas las que tienen resultado del curso. */
   alumnaIds: z.array(z.string().uuid()).min(1).max(300).optional(),
   enviarEnlace: z.boolean().default(true),
 });
@@ -160,24 +162,31 @@ function borradorDesdeExpediente(a: Alumna, contactos: AlumnaContacto[], centroP
   return d;
 }
 
+/** Estudios previos de quien renueva: el curso que termina en el centro y su resultado (A7). */
+function estudiosEnElCentro(a: Alumna, base: Borrador['previousStudies']): Borrador['previousStudies'] {
+  return {
+    ...base,
+    school: CENTRO.nombre,
+    course: nombreVia(a.familia, a.curso),
+    stage: a.familia === 'BACHILLERATO' ? 'Bachillerato' : null,
+    promotes: a.resultadoCurso === 'PROMOCIONA' ? true : a.resultadoCurso === 'REPITE' ? false : null,
+  };
+}
+
 /**
- * Renovación 1º → 2º: se parte de la matrícula de 1º. Se conservan los datos personales, la
- * familia y la cuenta; se vacía lo que es de cada curso (materias, becas, lecturas y declaración).
+ * Renovación: se parte de la matrícula del curso que termina. 1º → 2º si promociona; el mismo
+ * curso si repite (A7). Se conservan los datos personales, la familia y la cuenta; se vacía lo
+ * que es de cada curso (materias, becas, lecturas y declaración). Quien repite 1º no es alumna
+ * nueva: sin ideario ni LOPD.
  */
-function borradorDeRenovacion(anterior: Borrador, a: Alumna): Borrador {
+function borradorDeRenovacion(anterior: Borrador, a: Alumna, curso: (typeof CURSOS)[number]): Borrador {
   const vacio = borradorVacio();
   const d = structuredClone(anterior);
-  d.course = '2';
-  d.newStudent = null;
+  d.course = curso;
+  d.newStudent = curso === '1' ? false : null;
   d.bachillerato = { modality: anterior.bachillerato.modality, subjects: {}, previousModality: anterior.bachillerato.modality };
-  d.annex.enrollmentCourse = '2';
-  d.previousStudies = {
-    ...vacio.previousStudies,
-    school: CENTRO.nombre,
-    course: nombreVia(a.familia, 1),
-    stage: a.familia === 'BACHILLERATO' ? 'Bachillerato' : null,
-    promotes: a.promociona,
-  };
+  d.annex.enrollmentCourse = curso;
+  d.previousStudies = estudiosEnElCentro(a, vacio.previousStudies);
   d.economic = { ...vacio.economic, gsPayment: anterior.economic.gsPayment, sepa: { ...anterior.economic.sepa }, plus: anterior.economic.plus };
   d.manualChecks = {};
   d.readPages = {};
@@ -589,7 +598,8 @@ async function conMatriculaUnica<T>(f: () => Promise<T>): Promise<T> {
  * Abre la matrícula de una alumna en la transacción dada.
  *  - «Reserva confirmada» o «En proceso» (admisión, Séneca, alta manual): su curso escolar, alumna nueva.
  *    El expediente pasa a «En proceso».
- *  - «Matriculada» en 1º: renovación a 2º del curso siguiente, a partir de su matrícula de 1º.
+ *  - «Matriculada»: renovación del curso siguiente, a partir de su matrícula (A7). En 1º, a 2º
+ *    (o sin resultado, como hasta ahora) o a 1º si repite; en 2º, solo si repite; si titula, no hay.
  */
 async function abrir(tx: Tx, alumnaId: string, enviarEnlace: boolean, usuarioId: string) {
   const [a] = await tx.select().from(alumnas).where(eq(alumnas.id, alumnaId)).for('update');
@@ -597,10 +607,13 @@ async function abrir(tx: Tx, alumnaId: string, enviarEnlace: boolean, usuarioId:
   if (a.estado === 'BAJA') throw conflict('ALUMNA_DE_BAJA', 'El expediente está de baja: reactívalo antes de abrir la matrícula.');
 
   const renovacion = a.estado === 'MATRICULADA';
-  if (renovacion && a.curso === 2) throw conflict('SIN_CURSO_SIGUIENTE', 'La alumna ya está en 2º: no hay curso siguiente que matricular.');
-  if (renovacion && a.promociona === false) throw conflict('NO_PROMOCIONA', 'El expediente indica que la alumna no promociona a 2º.');
+  if (renovacion && a.resultadoCurso === 'TITULA') throw conflict('TITULA', 'El expediente indica que la alumna titula: no hay curso siguiente que matricular.');
+  if (renovacion && a.curso === 2 && a.resultadoCurso !== 'REPITE') {
+    throw conflict('SIN_CURSO_SIGUIENTE', 'La alumna ya está en 2º: solo se abre matrícula si repite (márcalo en su expediente).');
+  }
+  const repite = renovacion && a.resultadoCurso === 'REPITE';
   const destino = renovacion ? cursoEscolarSiguiente(a.cursoEscolar) : a.cursoEscolar;
-  const curso: (typeof CURSOS)[number] = renovacion ? '2' : a.curso === 2 ? '2' : '1';
+  const curso: (typeof CURSOS)[number] = repite ? (a.curso === 2 ? '2' : '1') : renovacion ? '2' : a.curso === 2 ? '2' : '1';
 
   const [existente] = await tx
     .select({ id: matriculas.id, codigo: matriculas.codigo })
@@ -615,7 +628,12 @@ async function abrir(tx: Tx, alumnaId: string, enviarEnlace: boolean, usuarioId:
       .from(matriculas)
       .where(and(eq(matriculas.alumnaId, a.id), eq(matriculas.cursoEscolar, a.cursoEscolar)));
     const contactos = anterior ? [] : await tx.select().from(alumnaContactos).where(eq(alumnaContactos.alumnaId, a.id));
-    datos = anterior ? borradorDeRenovacion(anterior.datos, a) : borradorDesdeExpediente(a, contactos, CENTRO.nombre, '2');
+    datos = anterior ? borradorDeRenovacion(anterior.datos, a, curso) : borradorDesdeExpediente(a, contactos, CENTRO.nombre, curso);
+    if (!anterior) {
+      // Sin matrícula anterior en la plataforma (alumnado de antes): los estudios previos, del expediente.
+      datos.previousStudies = estudiosEnElCentro(a, datos.previousStudies);
+      if (repite) datos.newStudent = curso === '1' ? false : null;
+    }
   } else {
     const contactos = await tx.select().from(alumnaContactos).where(eq(alumnaContactos.alumnaId, a.id));
     const [s] = a.solicitudId ? await tx.select({ centro: solicitudes.centroProcedencia }).from(solicitudes).where(eq(solicitudes.id, a.solicitudId)) : [];
@@ -637,7 +655,8 @@ async function abrir(tx: Tx, alumnaId: string, enviarEnlace: boolean, usuarioId:
     })
     .returning();
   const actor = { tipo: 'usuario' as const, usuarioId };
-  await evento(tx, m!.id, 'CREADA', actor, renovacion ? `Renovación a ${nombreVia(a.familia, 2)} · ${destino}` : `Matrícula abierta · ${destino}`);
+  const texto = repite ? `Repite ${nombreVia(a.familia, Number(curso))} · ${destino}` : renovacion ? `Renovación a ${nombreVia(a.familia, 2)} · ${destino}` : `Matrícula abierta · ${destino}`;
+  await evento(tx, m!.id, 'CREADA', actor, texto);
   if (!renovacion) await estadoPorMatricula(tx, a.id, 'EN_PROCESO', `matrícula ${m!.codigo}`, usuarioId);
 
   const para = enviarEnlace ? await correoPrincipal(tx, a.id) : null;
@@ -655,36 +674,47 @@ export async function crear(d: z.infer<typeof crearMatriculaBody>, usuarioId: st
 }
 
 /**
- * Apertura en bloque de 2º: alumnas de 1º matriculadas de esa vía y curso que promocionan
- * (reunión del 21/10). Cada una en su transacción: una que falle no frena al resto.
+ * Renovación en bloque al cerrar un curso (reunión del 21/10 y ajuste A7): alumnas matriculadas de
+ * esa vía, curso y curso escolar, según su resultado. Promociona → 2º; repite → el mismo curso;
+ * titula → baja con motivo «Titula». Sin resultado, se omite (o, en 1º y elegida a mano, va a 2º).
+ * Cada alumna en su transacción: una que falle no frena al resto.
  */
 export async function renovacion(d: z.infer<typeof renovacionBody>, usuarioId: string) {
   const candidatas = await db
-    .select({ id: alumnas.id, expediente: alumnas.expediente, promociona: alumnas.promociona })
+    .select({ id: alumnas.id, expediente: alumnas.expediente, resultadoCurso: alumnas.resultadoCurso })
     .from(alumnas)
     .where(
       and(
         eq(alumnas.familia, d.familia),
-        eq(alumnas.curso, 1),
+        eq(alumnas.curso, d.curso),
         eq(alumnas.cursoEscolar, d.cursoEscolar),
         eq(alumnas.estado, 'MATRICULADA'),
-        d.alumnaIds ? inArray(alumnas.id, d.alumnaIds) : eq(alumnas.promociona, true),
+        ...(d.alumnaIds ? [inArray(alumnas.id, d.alumnaIds)] : []),
       ),
     );
-  const creadas: { alumnaId: string; expediente: string; matriculaId: string; codigo: string; enlaceEnviadoA: string | null }[] = [];
+  const creadas: { alumnaId: string; expediente: string; matriculaId: string; codigo: string; curso: number; repite: boolean; enlaceEnviadoA: string | null }[] = [];
+  const tituladas: { alumnaId: string; expediente: string }[] = [];
   const omitidas: { alumnaId: string; expediente: string; motivo: string }[] = [];
   for (const a of candidatas) {
     try {
+      if (a.resultadoCurso === 'TITULA') {
+        if (await db.transaction((tx) => bajaPorTitulo(tx, a.id, usuarioId))) tituladas.push({ alumnaId: a.id, expediente: a.expediente });
+        continue;
+      }
+      if (!a.resultadoCurso && (d.curso === 2 || !d.alumnaIds)) {
+        omitidas.push({ alumnaId: a.id, expediente: a.expediente, motivo: d.curso === 2 ? 'Sin resultado del curso: indica si titula o repite.' : 'Sin resultado del curso: indica si promociona o repite.' });
+        continue;
+      }
       // En serie a propósito: una transacción por alumna.
       const r = await conMatriculaUnica(() => db.transaction((tx) => abrir(tx, a.id, d.enviarEnlace, usuarioId)));
-      creadas.push({ alumnaId: a.id, expediente: a.expediente, matriculaId: r.matricula.id, codigo: r.matricula.codigo, enlaceEnviadoA: r.enlace.enviadoA });
+      creadas.push({ alumnaId: a.id, expediente: a.expediente, matriculaId: r.matricula.id, codigo: r.matricula.codigo, curso: r.matricula.curso, repite: a.resultadoCurso === 'REPITE', enlaceEnviadoA: r.enlace.enviadoA });
     } catch (e) {
       omitidas.push({ alumnaId: a.id, expediente: a.expediente, motivo: e instanceof Error ? e.message : 'Error' });
     }
   }
-  const sinPromocion = d.alumnaIds?.filter((id) => !candidatas.some((c) => c.id === id)) ?? [];
-  for (const id of sinPromocion) omitidas.push({ alumnaId: id, expediente: '', motivo: 'No es una alumna de 1º matriculada en esa vía y curso escolar.' });
-  return { creadas, omitidas };
+  const fuera = d.alumnaIds?.filter((id) => !candidatas.some((c) => c.id === id)) ?? [];
+  for (const id of fuera) omitidas.push({ alumnaId: id, expediente: '', motivo: `No es una alumna de ${d.curso}º matriculada en esa vía y curso escolar.` });
+  return { creadas, tituladas, omitidas };
 }
 
 // ── Guardar el borrador ──────────────────────────────────────────────────────
