@@ -178,8 +178,8 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 ## Modelo de datos y migraciones
 
 Tablas:
-- `usuarios`, `refresh_tokens`, `roles`, `ajustes`, `vias`, `ciclos`, `plazas_ciclo`, `familias`;
-- `solicitudes`, `solicitud_eventos` (historial auditable), `eventos_vistos`;
+- `usuarios`, `refresh_tokens`, `roles`, `ajustes`, `vias`, `ciclos`, `plazas_ciclo`, `entrevistadores`, `familias`;
+- `solicitudes`, `solicitud_responsables`, `solicitud_eventos` (historial auditable), `eventos_vistos`;
 - `propuestas_cita`, `franjas_agenda`, `entrevistas`, `tokens_publicos`, `documentos`;
 - `plantillas_correo`, `correos_salientes`, `reservas`, `cobros`, `secuencias`;
 - `alumnas`, `alumna_contactos`, `alumna_eventos`;
@@ -203,6 +203,8 @@ Tablas:
 | `0014_comercial_hasta_matricula` | Solo datos: permisos de serie del perfil Comercial (A2) |
 | `0015_catalogo_ciclos` | `ciclos` con los 8 del centro y `solicitudes.ciclo_id`; rellena el ciclo de las antiguas cuya «modalidad que le interesa» coincide (A6) |
 | `0016_plazas_por_ciclo` | `plazas_ciclo` (plazas de cada ciclo en cada vía: 30, y 60 en Administración y Finanzas); la vía pasa a la suma y GS concertado deja el cupo de la Junta (A6, entrega 2) |
+| `0017_comprobante_cobro` | `cobros.comprobante_*`: comprobante de la familia adjunto al cobro (16/11/2026) |
+| `0018_responsables_multiples` | `entrevistadores` (lista de Configuración) y `solicitud_responsables` (varios responsables: personal o entrevistadoras); copia `solicitudes.responsable_id` y la retira (16/11/2026) |
 
 ## Convenciones
 

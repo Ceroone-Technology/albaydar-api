@@ -50,7 +50,7 @@ export const COLUMNAS_SOLICITUDES: Columna<ItemSolicitud>[] = [
   { titulo: 'Correo', valor: (s) => s.email },
   { titulo: 'Teléfono', valor: (s) => s.telefono },
   { titulo: 'Origen', valor: (s) => s.origen },
-  { titulo: 'Responsable', valor: (s) => s.responsable?.nombre },
+  { titulo: 'Responsable', valor: (s) => s.responsables.map((r) => r.nombre).join(', ') || null },
   { titulo: 'Datos que faltan', valor: (s) => s.revision.faltan.join(', ') || null },
   { titulo: 'Boletín subido', valor: (s) => s.notasSubidas },
   { titulo: 'Entrevista', valor: (s) => (s.entrevista ? fechaHoraCsv(s.entrevista.inicio) : null) },
@@ -96,6 +96,7 @@ export const COLUMNAS_COBROS: Columna<ItemCobro>[] = [
   { titulo: 'Motivo de anulación', valor: (c) => c.anulado?.motivo },
   { titulo: 'Anulado por', valor: (c) => c.anulado?.por },
   { titulo: 'Observaciones', valor: (c) => c.observaciones },
+  { titulo: 'Comprobante', valor: (c) => c.comprobante?.nombre },
   { titulo: 'Registrado por', valor: (c) => c.registradoPor?.nombre },
   { titulo: 'Registrado el', valor: (c) => fechaHoraCsv(c.registradoEn) },
 ];

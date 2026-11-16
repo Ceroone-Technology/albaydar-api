@@ -15,6 +15,7 @@ import { alumnaContactos, alumnaEventos, alumnas, ciclos, familias, solicitudes,
 import { sembrarBase } from './datos-base';
 import { asegurarPlazasCiclo, plazasCicloDelCentro, siguienteCodigo, siguienteValor, registrarEvento } from '../modules/solicitudes/comun';
 import { formatoExpediente } from '../modules/alumnado/dominio';
+import { fijarResponsables } from '../modules/solicitudes/responsables';
 
 const CURSO_ESCOLAR = process.env.SEED_CURSO_ESCOLAR ?? '2027-2028';
 
@@ -142,8 +143,9 @@ async function main() {
       await db.transaction(async (tx) => {
         const [s] = await tx
           .insert(solicitudes)
-          .values({ ...e, codigo: await siguienteCodigo(tx, todas.find((x) => x.id === e.viaId)!), consentimientoPrivacidad: true, consentimientoEn: new Date(), responsableId: maria.id })
+          .values({ ...e, codigo: await siguienteCodigo(tx, todas.find((x) => x.id === e.viaId)!), consentimientoPrivacidad: true, consentimientoEn: new Date() })
           .returning();
+        await fijarResponsables(tx, s!.id, [{ tipo: 'usuario', id: maria.id }]);
         await registrarEvento(tx, s!.id, { tipo: 'familia' }, 'CREADA', { aEstado: 'RECIBIDA', detalle: { canal: e.canal, seed: true } });
         console.log(`  solicitud ${s!.codigo} · ${e.alumnaNombre} ${e.alumnaApellidos}`);
       });

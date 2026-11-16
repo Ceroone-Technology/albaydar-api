@@ -991,6 +991,88 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     const reabrir = await request(app).patch(`/api/solicitudes/${lidia.id}/estado`).set(auth()).send({ estado: 'EN_REVISION' });
     expect(reabrir.status).toBe(200);
   });
+
+  it('comprobante del pago: se adjunta (PDF o imagen), se sustituye, se descarga y queda en el historial', async () => {
+    const carla = await evaluada('Carla');
+    await decidir(carla.id, { decision: 'ADMITIDA', notificar: false });
+    // Lo que falte de la reserva (otro caso de este bloque puede haber cambiado el importe).
+    const { pendiente } = (await ficha(carla.id)).reserva;
+    const cobro = (await cobrar({ solicitudId: carla.id, importe: pendiente, metodo: 'TRANSFERENCIA', notificar: false })).body.cobro;
+    expect(cobro.comprobante).toBeNull();
+    const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
+    const PDF = Buffer.from('%PDF-1.4\n%prueba\n');
+    const adjuntar = (datos: Buffer, nombre: string, quien = 'administracion', id = cobro.id) =>
+      request(app).post(`/api/cobros/${id}/comprobante`).set(auth(quien)).attach('archivo', datos, nombre);
+
+    expect((await adjuntar(Buffer.from('no soy una imagen'), 'captura.png')).body.error.code).toBe('TIPO_NO_PERMITIDO');
+    expect((await adjuntar(PNG, 'captura.png', 'secretaria')).status).toBe(403);
+    const primero = await adjuntar(PNG, 'captura.png');
+    expect(primero.status).toBe(201);
+    expect(primero.body.comprobante).toMatchObject({ nombre: 'captura.png', mime: 'image/png' });
+    const segundo = await adjuntar(PDF, 'transferencia.pdf');
+    expect(segundo.body.comprobante).toMatchObject({ nombre: 'transferencia.pdf', mime: 'application/pdf' });
+
+    const d = await request(app).get(`/api/cobros/${cobro.id}/comprobante`).set(auth('direccion')).buffer(true).parse((res, cb) => {
+      const trozos: Buffer[] = [];
+      res.on('data', (c: Buffer) => trozos.push(c));
+      res.on('end', () => cb(null, Buffer.concat(trozos)));
+    });
+    expect(d.headers['content-type']).toMatch(/^application\/pdf/);
+    expect(Buffer.compare(d.body as Buffer, PDF)).toBe(0);
+    const lista = (await request(app).get(`/api/cobros?solicitudId=${carla.id}`).set(auth('administracion'))).body.items;
+    expect(lista[0].comprobante.nombre).toBe('transferencia.pdf');
+    const csv = (await request(app).get(`/api/cobros/exportar?solicitudId=${carla.id}`).set(auth('administracion'))).text.replace(/^﻿/, '').trimEnd().split('\r\n');
+    expect(csv[1]!.split(';')[csv[0]!.split(';').indexOf('Comprobante')]).toBe('transferencia.pdf');
+    expect((await ficha(carla.id)).eventos.filter((e: { tipo: string }) => e.tipo === 'COMPROBANTE_ADJUNTO')).toHaveLength(2);
+
+    // En un cobro anulado ya no se adjunta.
+    expect((await request(app).post(`/api/cobros/${cobro.id}/anular`).set(auth('administracion')).send({ motivo: 'Prueba' })).status).toBe(200);
+    expect((await adjuntar(PNG, 'otra.png')).body.error.code).toBe('COBRO_ANULADO');
+  });
+});
+
+describe('Entrevistadoras y varios responsables (16/11/2026)', () => {
+  it('la lista de entrevistadoras se gestiona en Configuración y una solicitud tiene varios responsables', async () => {
+    const nueva = (nombre: string, quien = 'direccion') => request(app).post('/api/catalogo/entrevistadores').set(auth(quien)).send({ nombre, email: '' });
+    expect((await nueva('Sin Permiso', 'secretaria')).status).toBe(403);
+    const veronica = (await nueva('Verónica Prueba')).body;
+    const rosa = (await nueva('Rosa Prueba')).body;
+    expect(veronica).toMatchObject({ nombre: 'Verónica Prueba', email: null, activo: true });
+    expect(rosa.orden).toBeGreaterThan(veronica.orden);
+
+    const posibles = (await request(app).get('/api/usuarios/responsables').set(auth())).body.items as { id: string; tipo: string }[];
+    expect(posibles.filter((p) => p.tipo === 'entrevistador').map((p) => p.id)).toEqual(expect.arrayContaining([veronica.id, rosa.id]));
+    const personal = posibles.find((p) => p.tipo === 'usuario')!;
+
+    const alta = await request(app).post('/api/solicitudes').set(auth()).send({
+      viaId: viaBach, alumnaNombre: 'Varios', alumnaApellidos: 'Responsables Prueba', tutorNombre: 'Tutora Varios', centroProcedencia: 'IES Uno',
+      email: 'varios.responsables@example.com', telefono: '+34 600 800 900', canal: 'TELEFONO', consentimientoPrivacidad: true,
+    });
+    // De partida, quien da el alta.
+    expect((await request(app).get(`/api/solicitudes/${alta.body.id}`).set(auth())).body.responsables).toHaveLength(1);
+
+    const patch = (responsables: unknown) => request(app).patch(`/api/solicitudes/${alta.body.id}`).set(auth()).send({ responsables });
+    expect((await patch([{ tipo: 'usuario', id: personal.id }, { tipo: 'entrevistador', id: veronica.id }, { tipo: 'entrevistador', id: rosa.id }])).status).toBe(200);
+    const ficha = (await request(app).get(`/api/solicitudes/${alta.body.id}`).set(auth())).body;
+    expect(ficha.responsables.map((r: { tipo: string; nombre: string }) => `${r.tipo}:${r.nombre}`)).toEqual([
+      `usuario:${(await db.select({ nombre: usuarios.nombre }).from(usuarios).where(eq(usuarios.id, personal.id)))[0]!.nombre}`,
+      'entrevistador:Verónica Prueba',
+      'entrevistador:Rosa Prueba',
+    ]);
+    expect(ficha.eventos.find((e: { tipo: string }) => e.tipo === 'GESTION_ACTUALIZADA').detalle.responsablesNuevos).toContain('Rosa Prueba');
+
+    // El filtro por responsable vale para personal y entrevistadoras.
+    const porRosa = (await request(app).get(`/api/solicitudes?responsableId=${rosa.id}`).set(auth())).body.items.map((s: { id: string }) => s.id);
+    expect(porRosa).toEqual([alta.body.id]);
+    const csv = (await request(app).get('/api/solicitudes/exportar?q=Responsables%20Prueba').set(auth())).text.replace(/^﻿/, '').trimEnd().split('\r\n');
+    expect(csv[1]!.split(';')[csv[0]!.split(';').indexOf('Responsable')]).toMatch(/Verónica Prueba, Rosa Prueba$/);
+
+    // Desactivada: deja de ofrecerse y no se puede asignar; quien ya la tenía la conserva.
+    expect((await request(app).patch(`/api/catalogo/entrevistadores/${rosa.id}`).set(auth('direccion')).send({ activo: false })).body.activo).toBe(false);
+    expect((await request(app).get('/api/usuarios/responsables').set(auth())).body.items.map((p: { id: string }) => p.id)).not.toContain(rosa.id);
+    expect((await patch([{ tipo: 'entrevistador', id: rosa.id }])).body.error.code).toBe('RESPONSABLE_NO_VALIDO');
+    expect((await request(app).get(`/api/solicitudes/${alta.body.id}`).set(auth())).body.responsables).toHaveLength(3);
+  });
 });
 
 describe('Cola de correos', () => {

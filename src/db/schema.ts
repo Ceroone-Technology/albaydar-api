@@ -281,6 +281,22 @@ export const plazasCiclo = pgTable(
   (t) => [unique('plazas_ciclo_via_ciclo_uq').on(t.viaId, t.cicloId), check('plazas_ciclo_plazas_chk', sql`${t.plazas} >= 0`)],
 );
 
+// ── Entrevistadoras (lista de Configuración) ────────────────────────────────
+
+/**
+ * Personas que hacen las entrevistas (correo del centro, 11/11/2026). No entran en la plataforma:
+ * se asignan como responsables de una solicitud junto al personal. El correo, si se tiene, servirá
+ * para su calendario (B1).
+ */
+export const entrevistadores = pgTable('entrevistadores', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  nombre: text('nombre').notNull(),
+  email: text('email'),
+  activo: boolean('activo').notNull().default(true),
+  orden: integer('orden').notNull().default(0),
+  createdAt: creado(),
+});
+
 // ── Familias conocidas (para "familia ya vinculada") ────────────────────────
 
 export const familias = pgTable('familias', {
@@ -336,7 +352,6 @@ export const solicitudes = pgTable(
     consentimientoEn: ts('consentimiento_en').notNull(),
 
     // Gestión interna
-    responsableId: uuid('responsable_id').references(() => usuarios.id),
     observacionesInternas: text('observaciones_internas'),
     /** Resultado de las cinco comprobaciones de la última revisión. */
     revision: jsonb('revision').$type<import('../modules/solicitudes/revision').ResultadoRevision>(),
@@ -360,6 +375,29 @@ export const solicitudes = pgTable(
 );
 
 /** Historial auditable de todo lo que le pasa a una solicitud. */
+/**
+ * Responsables de una solicitud (16/11/2026): uno o varios, del personal de la plataforma o de la
+ * lista de entrevistadoras. Cada fila es de uno de los dos.
+ */
+export const solicitudResponsables = pgTable(
+  'solicitud_responsables',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    solicitudId: uuid('solicitud_id')
+      .notNull()
+      .references(() => solicitudes.id, { onDelete: 'cascade' }),
+    usuarioId: uuid('usuario_id').references(() => usuarios.id),
+    entrevistadorId: uuid('entrevistador_id').references(() => entrevistadores.id),
+    orden: integer('orden').notNull().default(0),
+  },
+  (t) => [
+    unique('solicitud_responsables_usuario_uq').on(t.solicitudId, t.usuarioId),
+    unique('solicitud_responsables_entrevistador_uq').on(t.solicitudId, t.entrevistadorId),
+    check('solicitud_responsables_uno_chk', sql`(${t.usuarioId} is null) <> (${t.entrevistadorId} is null)`),
+    index('solicitud_responsables_solicitud_idx').on(t.solicitudId),
+  ],
+);
+
 export const solicitudEventos = pgTable(
   'solicitud_eventos',
   {
@@ -626,6 +664,12 @@ export const cobros = pgTable(
     anuladoEn: ts('anulado_en'),
     anuladoPorId: uuid('anulado_por_id').references(() => usuarios.id),
     motivoAnulacion: text('motivo_anulacion'),
+    /** Comprobante que manda la familia (captura o escaneo de la transferencia): opcional. */
+    comprobanteClave: text('comprobante_clave'),
+    comprobanteNombre: text('comprobante_nombre'),
+    comprobanteMime: text('comprobante_mime'),
+    comprobanteTamano: integer('comprobante_tamano'),
+    comprobanteSubidoEn: ts('comprobante_subido_en'),
     createdAt: creado(),
   },
   (t) => [
@@ -1021,6 +1065,7 @@ export const pdfsMatricula = pgTable(
 export type Usuario = typeof usuarios.$inferSelect;
 export type Via = typeof vias.$inferSelect;
 export type Ciclo = typeof ciclos.$inferSelect;
+export type Entrevistador = typeof entrevistadores.$inferSelect;
 export type Solicitud = typeof solicitudes.$inferSelect;
 export type NuevaSolicitud = typeof solicitudes.$inferInsert;
 export type FranjaAgenda = typeof franjasAgenda.$inferSelect;
