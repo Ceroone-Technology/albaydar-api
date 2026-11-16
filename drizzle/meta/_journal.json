@@ -120,6 +120,20 @@
       "when": 1794800611455,
       "tag": "0016_plazas_por_ciclo",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794856489940,
+      "tag": "0017_comprobante_cobro",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794856748219,
+      "tag": "0018_responsables_multiples",
+      "breakpoints": true
     }
   ]
 }

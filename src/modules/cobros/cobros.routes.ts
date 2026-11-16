@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { badRequest } from '../../lib/errors';
 import { requirePermiso } from '../../middleware/auth';
+import { unFichero } from '../../middleware/subida';
 import { v, validate } from '../../middleware/validate';
 import * as srv from './cobros.service';
 import { todasLasPaginas } from '../../lib/csv';
@@ -46,4 +48,18 @@ cobrosRouter.post('/', requirePermiso('cobros.editar'), validate({ body: srv.reg
 /** Anula un cobro con motivo (nunca se borra). */
 cobrosRouter.post('/:id/anular', requirePermiso('cobros.editar'), validate({ params: idParam, body: srv.anularCobroBody }), async (req, res) => {
   res.json(await srv.anular(v<typeof idParam>(req, 'params').id, v<typeof srv.anularCobroBody>(req, 'body').motivo, req.user!.id));
+});
+
+/** Comprobante del pago (opcional): multipart con el campo «archivo»; sustituye al anterior. */
+cobrosRouter.post('/:id/comprobante', requirePermiso('cobros.editar'), validate({ params: idParam }), unFichero, async (req, res) => {
+  if (!req.file) throw badRequest('FALTA_ARCHIVO', 'Adjunta el comprobante en el campo «archivo».');
+  res.status(201).json(await srv.adjuntarComprobante(v<typeof idParam>(req, 'params').id, req.file, req.user!.id));
+});
+
+/** Descarga del comprobante, sin caché (datos personales). */
+cobrosRouter.get('/:id/comprobante', requirePermiso('cobros.ver'), validate({ params: idParam }), async (req, res) => {
+  const d = await srv.descargarComprobante(v<typeof idParam>(req, 'params').id);
+  res
+    .set({ 'Content-Type': d.mime, 'Content-Disposition': `attachment; filename="${encodeURIComponent(d.nombre)}"`, 'Cache-Control': 'no-store' })
+    .send(d.datos);
 });

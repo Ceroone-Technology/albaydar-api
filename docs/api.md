@@ -87,7 +87,7 @@ Son los valores iniciales (tomados de la navegación y la matriz del mockup; Com
 | PATCH | `/usuarios/:id` | configuracion.editar | `{ email?, nombre?, roles?, activo? }`. Al cambiar roles o desactivar se cierran sus sesiones. |
 | POST | `/usuarios/:id/password` | configuracion.editar | `{ password }` (contraseña temporal; desbloquea la cuenta) |
 | DELETE | `/usuarios/:id` | configuracion.editar | Lo borra; si tiene actividad registrada lo desactiva (`{ eliminado: false, desactivado: true }`) |
-| GET | `/usuarios/responsables` | solicitudes.ver | Chips de responsable: usuarios activos que pueden gestionar solicitudes (`solicitudes.editar` según la matriz actual) |
+| GET | `/usuarios/responsables` | solicitudes.ver | Chips de responsable: usuarios activos que pueden gestionar solicitudes (`solicitudes.editar` según la matriz actual), con `tipo: "usuario"`, y las entrevistadoras activas de la lista de Configuración, con `tipo: "entrevistador"` (16/11/2026) |
 
 Contraseña: mínimo 10 caracteres, con letras y números. Siempre debe quedar un usuario activo de Dirección (`ULTIMO_SUPERADMIN`).
 
@@ -173,7 +173,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 | POST | `/solicitudes/respuestas-familia/visto` | solicitudes.ver | `{ eventoIds: [...] }` → 204. No se vuelve a avisar a este usuario |
 | POST | `/solicitudes` | solicitudes.editar | Alta interna (teléfono, presencial…): puede faltar el correo o el centro; la revisión lo marca |
 | GET | `/solicitudes/:id` | solicitudes.ver | Ficha: `revision`, `siguientes`, `propuesta` vigente con sus franjas, `entrevista`, `documentos`, `correos`, `eventos`. La revisión se recalcula en cada lectura (las plazas libres cambian con otras solicitudes) |
-| PATCH | `/solicitudes/:id` | solicitudes.editar | `{ responsableId?, observacionesInternas?, asignadaSnec?, canal?, cicloId? }`. Solo cambia lo que llega (lo que no viene se queda como estaba). `cicloId`: asigna o corrige el ciclo, de la familia de la vía (mismos errores que el alta; en una vía de ciclos no se puede quitar). Queda en `GESTION_ACTUALIZADA` con `cicloAnterior` y `cicloNuevo` |
+| PATCH | `/solicitudes/:id` | solicitudes.editar | `{ responsables?, responsableId?, observacionesInternas?, asignadaSnec?, canal?, cicloId? }`. `responsables` (16/11/2026): `[{ tipo: "usuario" | "entrevistador", id }]`, uno o varios (personal activo o entrevistadoras activas; si no, 400 `RESPONSABLE_NO_VALIDO`), sustituye la lista; `[]` la vacía. `responsableId` sigue valiendo (un único usuario). Queda en `GESTION_ACTUALIZADA` con `responsablesAnteriores` y `responsablesNuevos`. Solo cambia lo que llega (lo que no viene se queda como estaba). `cicloId`: asigna o corrige el ciclo, de la familia de la vía (mismos errores que el alta; en una vía de ciclos no se puede quitar). Queda en `GESTION_ACTUALIZADA` con `cicloAnterior` y `cicloNuevo` |
 | POST | `/solicitudes/:id/revisar` | solicitudes.editar | Las cinco comprobaciones |
 | POST | `/solicitudes/:id/pedir-completar` | solicitudes.editar | `{ campos?, mensaje? }` |
 | POST | `/solicitudes/:id/citar` | solicitudes.editar | Ver abajo |
@@ -193,6 +193,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
   "via": { "familia": "BACHILLERATO", "curso": 1, "nombre": "1º Bachillerato", "etiqueta": "Bachillerato", "etapa": "Bachillerato" },
   "ciclo": null,
   "origen": "Solicitud web", "canal": "SOLICITUD_WEB", "asignadaSnec": false,
+  "responsables": [{ "tipo": "usuario", "id": "uuid", "nombre": "María Reyes" }, { "tipo": "entrevistador", "id": "uuid", "nombre": "Rosa Jurado" }],
   "responsable": { "id": "uuid", "nombre": "María Reyes" },
   "revision": { "checks": [{ "id": "datos", "resultado": "ok", "texto": "Datos básicos completos" }], "completa": true, "faltan": [], "puedeCitar": true, "calculadaEn": "…" },
   "propuesta": {
@@ -425,6 +426,8 @@ Las solicitudes que se admitieron antes de existir la reserva (con el `PATCH /es
 | POST | `/cobros` | cobros.editar | "Registrar cobro manual": `{ solicitudId, importe, metodo, fecha?, observaciones?, notificar = true }`. Con `notificar`, la familia recibe `PAGO_RECIBIDO` con el recibo; la respuesta trae `notificado` |
 | GET | `/cobros?solicitudId=&concepto=&metodo=&desde=&hasta=&incluirAnulados=&page=&pageSize=` | cobros.ver | Pestaña "Pagos". Devuelve también `suma` (de los no anulados, en céntimos) y `sumaTexto` |
 | POST | `/cobros/:id/anular` | cobros.editar | `{ motivo }` (obligatorio). Un cobro nunca se borra |
+| POST | `/cobros/:id/comprobante` | cobros.editar | Comprobante de la familia (16/11/2026): multipart, campo `archivo`, PDF, JPG, PNG o HEIC (tipo real; si no, 400 `TIPO_NO_PERMITIDO`). Sustituye al anterior; no en un cobro anulado (409 `COBRO_ANULADO`). 201 con el cobro (`comprobante: { nombre, mime, tamano, subidoEn }`). Queda en el historial (`COMPROBANTE_ADJUNTO`) y en el CSV de cobros |
+| GET | `/cobros/:id/comprobante` | cobros.ver | Descarga del comprobante, sin caché (404 `SIN_COMPROBANTE` si no hay) |
 | GET | `/cobros/resumen?desde=&hasta=` | cobros.ver | KPIs (abajo) |
 | GET | `/cobros/:id/recibo` | cobros.ver | Recibo imprimible en HTML (`text/html`). El navegador lo imprime o lo guarda como PDF. Los anulados salen marcados «RECIBO ANULADO» |
 
@@ -823,7 +826,7 @@ Al firmar la orden SEPA (`sepa-titular`) o la de AlbaydarPLUS (`plus-titular`) n
 ### Archivos de la familia
 
 `destino`: `photo` (foto de carné, que cuenta para «2 fotos tamaño carné», `m5`), `m4` (fotocopia del DNI), `c2` (tarjeta de la Seguridad Social), `b1` (Libro de Familia) o `b2` (certificación académica).
-- **Solo los que pide la matrícula:** según el checklist de las reglas. Si no hace falta, 409 `DOCUMENTO_NO_APLICA`; por ejemplo, el Libro de Familia en GM.
+- **Solo los que pide la matrícula:** según el checklist de las reglas. Si no hace falta, 409 `DOCUMENTO_NO_APLICA`; por ejemplo, el Libro de Familia en GM. **La foto se admite siempre** (16/11/2026): aunque el sobre no la pida (concertados, alumna que no es nueva), puede no tener foto o traer una reciente; solo cuenta para `m5` donde se pide.
 - **Tipo real del fichero:** PDF, JPG, PNG o HEIC; la foto, solo imagen. Si no, 400 `TIPO_NO_PERMITIDO`. Hasta `UPLOAD_MAX_MB` (10 MB).
 - **Uno por destino:** subir otro lo sustituye; el anterior se marca eliminado y sale del almacén. Quitar: 404 `ARCHIVO_NO_ENCONTRADO` si no había.
 - **Cuándo:** solo en `BORRADOR`. El enlace de un progenitor no sube archivos (403 `ENLACE_SIN_PERMISO`).
@@ -951,6 +954,8 @@ Formato pensado para abrir con doble clic en Excel en español: separador `;`, c
 |---|---|---|---|
 | GET | `/catalogo/vias` | sesión | Vías con `ocupadas` y `libres`. En las de ciclos (A6, entrega 2), `plazasPorCiclo: true` y `ciclos: [{ cicloId, nombre, plazas, ocupadas, libres }]`; las `plazas` de la vía son la suma de las de sus ciclos |
 | PATCH | `/catalogo/vias/:id/ciclos/:cicloId` | configuracion.editar | `{ plazas }` de un ciclo en esa vía → `{ cicloId, plazas, via: { id, plazas } }` (la vía pasa a la nueva suma) |
+| GET | `/catalogo/entrevistadores` | sesión | Lista de entrevistadoras (16/11/2026): `{ items: [{ id, nombre, email, activo, orden }] }`, también las desactivadas. No entran en la plataforma: se asignan como responsables |
+| POST / PATCH | `/catalogo/entrevistadores`, `/catalogo/entrevistadores/:id` | configuracion.editar | Alta `{ nombre, email? }` (al final de la lista) y edición `{ nombre?, email?, activo?, orden? }`. No se borran: se desactivan |
 | GET | `/catalogo/ciclos` | sesión | Catálogo de ciclos (A6): `{ items: [{ id, familia, etiquetaFamilia, nombre, orden, activo }] }`, también los retirados (filtros de lo antiguo). Se carga por migración (0015) |
 
 **Plazas por ciclo** (A6, entrega 2, migración 0016): cada vía de ciclos tiene las plazas de cada ciclo (`plazas_ciclo`; las del centro: 30 por ciclo y curso, 60 en Administración y Finanzas) y GS concertado deja de ser «cupo asignado por la Junta». Con ciclo, la comprobación de plazas de la revisión, la posición en la lista de espera y el aviso de «Liberar plaza» (`enEspera`, `via` con el ciclo) son los de su ciclo en esa vía; sin ciclo (antiguas), los de la vía.

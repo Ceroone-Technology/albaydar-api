@@ -678,6 +678,22 @@ describe('Matrícula digital: archivos, envío, PDF, devolución y Séneca', () 
     expect(h).toEqual(expect.arrayContaining(['Sube: Fotocopia del DNI de la alumna', 'Sustituye: Fotocopia del DNI de la alumna', 'Quita: Foto de carné']));
   });
 
+  it('la foto se puede subir aunque la matrícula no la pida (concertado de 2º, alumna que no es nueva)', async () => {
+    const [gm2] = await db.insert(vias).values({ familia: 'CICLOS_CONCERTADOS_GM', curso: 2, nombre: '2º GM concertado', cursoEscolar: '2027-2028', plazas: 20 }).returning();
+    const [gestion] = await db.select().from(ciclos).where(eq(ciclos.nombre, 'Gestión Administrativa'));
+    const segunda = await reservaPagada('Gala', gm2!.id, gestion!.id);
+    const r = await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: segunda.alumnaId, enviarEnlace: false });
+    expect(r.body.matricula.borrador).toMatchObject({ via: 'gm', course: '2', photo: null });
+    expect(r.body.matricula.nuevaAlumna).toBe(false);
+    const t = r.body.enlace.url.split('/').at(-1) as string;
+    const foto = await subir('photo', pngBuf(), 'foto-reciente.png', t);
+    expect(foto.status).toBe(201);
+    expect(foto.body.borrador.photo).toMatchObject({ name: 'foto-reciente.png' });
+    // Sigue sin contar como requisito: no aparece entre lo pendiente de esa matrícula.
+    const ficha = (await request(app).get(`/api/matriculas/${r.body.matricula.id}`).set(auth())).body;
+    expect(JSON.stringify(ficha.pendientes)).not.toMatch(/m5|photo/);
+  });
+
   it('enviar exige la matrícula completa y la versión que se ve; genera los PDF y avisa', async () => {
     const incompleta = await request(app).post(`/api/public/matricula/${token}/enviar`).send({ version: (await pub()).body.version });
     expect(incompleta.status).toBe(409);

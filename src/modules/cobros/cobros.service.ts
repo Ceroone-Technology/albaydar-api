@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { and, count, desc, eq, gte, inArray, isNull, lte, sql, sum, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
@@ -6,6 +7,7 @@ import { db } from '../../lib/db';
 import { euros } from '../../lib/dinero';
 import { badRequest, conflict, notFound } from '../../lib/errors';
 import { fechaLocal } from '../../lib/fechas';
+import { almacen, tipoReal } from '../../lib/storage';
 import { CENTRO } from '../../config/env';
 import { enviarEvento } from '../../correo/enviar';
 import { escapar } from '../../correo/plantillas';
@@ -74,6 +76,10 @@ function vista(c: Cobro, extra: { registradoPor: string | null; anuladoPor?: str
     anulado: c.anuladoEn ? { en: c.anuladoEn, motivo: c.motivoAnulacion, por: extra.anuladoPor ?? null } : null,
     solicitudId: c.solicitudId,
     reservaId: c.reservaId,
+    /** Comprobante adjunto por secretaría (opcional): se descarga con GET /cobros/:id/comprobante. */
+    comprobante: c.comprobanteClave
+      ? { nombre: c.comprobanteNombre, mime: c.comprobanteMime, tamano: c.comprobanteTamano, subidoEn: c.comprobanteSubidoEn }
+      : null,
   };
 }
 
@@ -322,4 +328,48 @@ export async function listar(q: z.infer<typeof listarCobrosQuery>) {
     suma,
     sumaTexto: euros(suma),
   };
+}
+
+// ── Comprobante del pago ─────────────────────────────────────────────────────
+
+const MIME_COMPROBANTE = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic'];
+
+/**
+ * Adjunta (o sustituye) el comprobante de un cobro: la captura o el escaneo de la transferencia
+ * que manda la familia. Tipo real PDF, JPG, PNG o HEIC; no en un cobro anulado. Queda en el
+ * historial de la solicitud.
+ */
+export async function adjuntarComprobante(id: string, f: Express.Multer.File, usuarioId: string) {
+  const tipo = tipoReal(f.buffer);
+  if (!tipo || !MIME_COMPROBANTE.includes(tipo.mime)) {
+    throw badRequest('TIPO_NO_PERMITIDO', 'El comprobante tiene que ser un PDF o una imagen (JPG, PNG o HEIC).');
+  }
+  const clave = `cobros/${id}/comprobante-${randomUUID()}.${tipo.ext}`;
+  const { previo, c, registradoPor } = await db.transaction(async (tx) => {
+    const [x] = await tx.select().from(cobros).where(eq(cobros.id, id)).for('update');
+    if (!x) throw notFound('Cobro no encontrado.', 'COBRO_NO_ENCONTRADO');
+    if (x.anuladoEn) throw conflict('COBRO_ANULADO', 'El cobro está anulado: no se le puede adjuntar el comprobante.');
+    await almacen.guardar(clave, f.buffer);
+    const [act] = await tx
+      .update(cobros)
+      .set({ comprobanteClave: clave, comprobanteNombre: f.originalname, comprobanteMime: tipo.mime, comprobanteTamano: f.size, comprobanteSubidoEn: new Date() })
+      .where(eq(cobros.id, id))
+      .returning();
+    await registrarEvento(tx, x.solicitudId, { tipo: 'usuario', usuarioId }, 'COMPROBANTE_ADJUNTO', {
+      detalle: { cobroId: id, recibo: x.reciboNumero, nombre: f.originalname },
+    });
+    const [u] = await tx.select({ nombre: usuarios.nombre }).from(usuarios).where(eq(usuarios.id, x.registradoPorId));
+    return { previo: x.comprobanteClave, c: act!, registradoPor: u?.nombre ?? null };
+  });
+  // El sustituido sale del almacén una vez guardado el nuevo.
+  if (previo) await almacen.borrar(previo);
+  return vista(c, { registradoPor });
+}
+
+/** Descarga del comprobante: el fichero tal cual se subió. */
+export async function descargarComprobante(id: string) {
+  const [c] = await db.select().from(cobros).where(eq(cobros.id, id));
+  if (!c) throw notFound('Cobro no encontrado.', 'COBRO_NO_ENCONTRADO');
+  if (!c.comprobanteClave) throw notFound('Este cobro no tiene comprobante.', 'SIN_COMPROBANTE');
+  return { datos: await almacen.leer(c.comprobanteClave), nombre: c.comprobanteNombre ?? 'comprobante', mime: c.comprobanteMime ?? 'application/octet-stream' };
 }

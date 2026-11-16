@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { ciclos, familiaViaEnum, plazasCiclo, vias } from '../../db/schema';
+import { ciclos, entrevistadores, familiaViaEnum, plazasCiclo, vias } from '../../db/schema';
 import { db } from '../../lib/db';
 import { badRequest, notFound } from '../../lib/errors';
 import { requirePermiso } from '../../middleware/auth';
@@ -143,5 +143,54 @@ catalogoRouter.patch(
       return { cicloId, plazas: fila.plazas, via: { id: via.id, plazas: via.plazas } };
     });
     res.json(r);
+  },
+);
+
+// ── Entrevistadoras (16/11/2026) ─────────────────────────────────────────────
+
+const entrevistadorBody = z.object({
+  nombre: z.string().trim().min(1, 'Escribe el nombre.').max(120),
+  /** Opcional: servirá para su calendario (B1). */
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email('Correo no válido.')
+    .max(200)
+    .nullable()
+    .optional()
+    .or(z.literal('').transform(() => null)),
+});
+const entrevistadorEditarBody = entrevistadorBody
+  .partial()
+  .extend({ activo: z.boolean().optional(), orden: z.number().int().min(0).optional() })
+  .refine((o) => Object.values(o).some((x) => x !== undefined), 'Nada que actualizar.');
+const entrevistadorParams = z.object({ id: z.string().uuid() });
+
+/** Lista de entrevistadoras (también las desactivadas, para leer lo antiguo). */
+catalogoRouter.get('/entrevistadores', async (_req, res) => {
+  res.json({ items: await db.select().from(entrevistadores).orderBy(asc(entrevistadores.orden), asc(entrevistadores.nombre)) });
+});
+
+catalogoRouter.post('/entrevistadores', requirePermiso('configuracion.editar'), validate({ body: entrevistadorBody }), async (req, res) => {
+  const d = v<typeof entrevistadorBody>(req, 'body');
+  const [ultimo] = await db.select({ orden: sql<number>`coalesce(max(${entrevistadores.orden}), -1)` }).from(entrevistadores);
+  const [x] = await db
+    .insert(entrevistadores)
+    .values({ nombre: d.nombre, email: d.email ?? null, orden: Number(ultimo?.orden ?? -1) + 1 })
+    .returning();
+  res.status(201).json(x);
+});
+
+/** Nombre, correo, orden o desactivar (no se borra: puede ser responsable de solicitudes antiguas). */
+catalogoRouter.patch(
+  '/entrevistadores/:id',
+  requirePermiso('configuracion.editar'),
+  validate({ params: entrevistadorParams, body: entrevistadorEditarBody }),
+  async (req, res) => {
+    const { id } = v<typeof entrevistadorParams>(req, 'params');
+    const [x] = await db.update(entrevistadores).set(v<typeof entrevistadorEditarBody>(req, 'body')).where(eq(entrevistadores.id, id)).returning();
+    if (!x) throw notFound('Entrevistadora no encontrada.', 'ENTREVISTADOR_NO_ENCONTRADO');
+    res.json(x);
   },
 );
