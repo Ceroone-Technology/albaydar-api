@@ -262,6 +262,25 @@ export const ciclos = pgTable(
   (t) => [unique('ciclos_familia_nombre_uq').on(t.familia, t.nombre), check('ciclos_familia_chk', sql`${t.familia} <> 'BACHILLERATO'`)],
 );
 
+/**
+ * Plazas de cada ciclo en una vía de ciclos (A6, entrega 2): la vía fija el curso y el curso
+ * escolar. Las plazas de la vía son la suma de las de sus ciclos (`sumarPlazasVia`).
+ */
+export const plazasCiclo = pgTable(
+  'plazas_ciclo',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    viaId: uuid('via_id')
+      .notNull()
+      .references(() => vias.id, { onDelete: 'cascade' }),
+    cicloId: uuid('ciclo_id')
+      .notNull()
+      .references(() => ciclos.id),
+    plazas: integer('plazas').notNull(),
+  },
+  (t) => [unique('plazas_ciclo_via_ciclo_uq').on(t.viaId, t.cicloId), check('plazas_ciclo_plazas_chk', sql`${t.plazas} >= 0`)],
+);
+
 // ── Familias conocidas (para "familia ya vinculada") ────────────────────────
 
 export const familias = pgTable('familias', {

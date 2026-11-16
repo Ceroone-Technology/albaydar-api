@@ -113,6 +113,13 @@
       "when": 1794798882566,
       "tag": "0015_catalogo_ciclos",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794800611455,
+      "tag": "0016_plazas_por_ciclo",
+      "breakpoints": true
     }
   ]
 }
