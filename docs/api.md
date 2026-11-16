@@ -303,13 +303,15 @@ La disponibilidad no se crea a mano: es la **jornada** (por defecto lunes a vier
 {
   "diasSemana": [1, 2, 3, 4, 5],
   "horaInicio": "08:00", "horaFin": "18:00",
-  "duraciones": [45, 60], "duracionPorDefecto": 45,
+  "duraciones": [30, 45, 60], "duracionPorDefecto": 45,
   "pasoMin": 30,
   "antelacionMinHoras": 2,
   "permitirMismoDia": false,
   "diasNoLectivos": ["2026-12-08"]
 }
 ```
+
+Duraciones de serie (ajuste A4, «entrevistas de 30 a 60 minutos»): 30, 45 y 60, con 45 por defecto. Solo se aplican a un entorno nuevo; en uno ya creado, se marcan en Configuración › Agenda.
 
 ## Entrevistas
 

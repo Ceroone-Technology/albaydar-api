@@ -413,7 +413,7 @@ export const propuestasCita = pgTable(
     /** "Ninguna me encaja": franja que propone la familia y si prefiere que la llamen. */
     franjaSolicitada: text('franja_solicitada'),
     prefiereLlamada: boolean('prefiere_llamada').notNull().default(false),
-    /** Duración de cada franja propuesta: 45 o 60 minutos. */
+    /** Duración de cada franja propuesta: una de las de la agenda (30, 45 o 60 minutos de serie). */
     duracionMin: integer('duracion_min').notNull().default(45),
     respondidaEn: ts('respondida_en'),
     /** Momento en que la familia aceptó una franja: puede cambiarla durante las 24 h siguientes. */
