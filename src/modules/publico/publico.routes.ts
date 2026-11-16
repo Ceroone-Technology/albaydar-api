@@ -1,13 +1,13 @@
-import { Router, type NextFunction, type Request, type Response } from 'express';
+import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import multer from 'multer';
 import { z } from 'zod';
-import { env } from '../../config/env';
 import { badRequest } from '../../lib/errors';
+import { unFichero } from '../../middleware/subida';
 import { v, validate } from '../../middleware/validate';
 import { viasPublicas } from '../catalogo/catalogo.routes';
 import * as citacion from '../citacion/citacion.service';
 import * as documentosSrv from '../documentos/documentos.service';
+import { matriculaPublicaRouter } from '../matricula/matricula.routes';
 import * as solicitudesSrv from '../solicitudes/solicitudes.service';
 import { completarBody, solicitudPublicaBody, tokenParam } from '../solicitudes/solicitudes.schemas';
 
@@ -29,6 +29,9 @@ publicoRouter.use((_req, res, next) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   next();
 });
+
+/** Matrícula digital desde el enlace de la familia (límites propios, por enlace). */
+publicoRouter.use('/matricula', matriculaPublicaRouter);
 
 publicoRouter.get('/vias', async (_req, res) => {
   res.json(await viasPublicas());
@@ -64,6 +67,13 @@ publicoRouter.post('/citas/:token/elegir', limiteEnlace, validate({ params: toke
   res.json(await citacion.elegir(v<typeof tokenParam>(req, 'params').token, v<typeof elegirBody>(req, 'body').huecoId));
 });
 
+const cancelarCitaBody = z.object({ motivo: z.string().trim().max(500).optional().nullable() });
+
+/** La familia cancela su cita confirmada (desde el recordatorio del día antes o su enlace). */
+publicoRouter.post('/citas/:token/cancelar', limiteEnlace, validate({ params: tokenParam, body: cancelarCitaBody }), async (req, res) => {
+  res.json(await citacion.cancelarPorFamilia(v<typeof tokenParam>(req, 'params').token, v<typeof cancelarCitaBody>(req, 'body').motivo ?? null));
+});
+
 publicoRouter.post('/citas/:token/otra-franja', limiteEnlace, validate({ params: tokenParam, body: otraFranjaBody }), async (req, res) => {
   const b = v<typeof otraFranjaBody>(req, 'body');
   res.json(await citacion.pedirOtraFranja(v<typeof tokenParam>(req, 'params').token, b.franja ?? null, b.prefiereLlamada));
@@ -77,15 +87,6 @@ publicoRouter.get('/citas/:token/ics', limiteEnlace, validate({ params: tokenPar
   res.send(ics);
 });
 
-const subida = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: env.UPLOAD_MAX_MB * 1024 * 1024, files: 1 },
-});
-const unFichero = (req: Request, res: Response, next: NextFunction) =>
-  subida.single('archivo')(req, res, (err: unknown) => {
-    if ((err as { code?: string })?.code === 'LIMIT_FILE_SIZE') return next(badRequest('ARCHIVO_DEMASIADO_GRANDE', `El archivo supera ${env.UPLOAD_MAX_MB} MB.`));
-    next(err);
-  });
 
 /** Boletín de notas: multipart/form-data con el campo "archivo". Reemplaza el anterior. */
 publicoRouter.post('/citas/:token/notas', limiteEnvio, validate({ params: tokenParam }), unFichero, async (req, res) => {

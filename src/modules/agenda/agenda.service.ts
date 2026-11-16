@@ -4,7 +4,7 @@ import { CENTRO } from '../../config/env';
 import { entrevistas, franjasAgenda, propuestasCita, solicitudes, usuarios } from '../../db/schema';
 import { db, type Tx } from '../../lib/db';
 import { badRequest, codigoPg, conflict, notFound } from '../../lib/errors';
-import { diaLargo, diasEntre, fechaLocal, franja, hora, horaLocalAUtc, sumarMin } from '../../lib/fechas';
+import { diaLargo, diaSiguiente, diasEntre, fechaLocal, franja, hora, horaLocalAUtc, sumarMin } from '../../lib/fechas';
 import { aMin, agendaConfig, type AgendaConfig } from '../ajustes/ajustes.service';
 
 const fecha = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha AAAA-MM-DD.');
@@ -35,6 +35,17 @@ export async function ocupaciones(tx: Tx, ini: Date, fin: Date) {
     .orderBy(asc(franjasAgenda.inicio));
 }
 
+/**
+ * Primera hora a la que se puede proponer una entrevista: la antelación mínima
+ * y, si no se permite el mismo día (lo acordado), mañana a las 00:00 del centro.
+ * Devuelve los dos límites por separado para explicar cuál se incumple.
+ */
+export function primerInicioPermitido(cfg: AgendaConfig, ahora = new Date()): { desde: Date; antelacion: Date; manana: Date | null } {
+  const antelacion = new Date(ahora.getTime() + cfg.antelacionMinHoras * 3_600_000);
+  const manana = cfg.permitirMismoDia ? null : horaLocalAUtc(diaSiguiente(fechaLocal(ahora)), '00:00');
+  return { desde: manana && manana > antelacion ? manana : antelacion, antelacion, manana };
+}
+
 /** ¿Cae la franja dentro de la jornada de entrevistas? */
 export function dentroDeJornada(inicio: Date, fin: Date, cfg: AgendaConfig): string | null {
   const f = fechaLocal(inicio);
@@ -59,7 +70,7 @@ export async function disponibilidad(desde: string, hasta: string, duracionPedid
   if (!cfg.duraciones.includes(duracion)) throw badRequest('DURACION_NO_VALIDA', `Duración permitida: ${cfg.duraciones.join(' o ')} minutos.`);
 
   const ocup = await ocupaciones(db, horaLocalAUtc(desde, '00:00'), horaLocalAUtc(hasta, '23:59'));
-  const limite = new Date(Date.now() + cfg.antelacionMinHoras * 3_600_000);
+  const { antelacion, manana } = primerInicioPermitido(cfg);
   const dias = [];
   let n = 0;
   for (const { fecha: f, diaSemana } of diasEntre(desde, hasta)) {
@@ -72,7 +83,17 @@ export async function disponibilidad(desde: string, hasta: string, duracionPedid
       const inicio = horaLocalAUtc(f, hh);
       const fin = sumarMin(inicio, duracion);
       const choca = ocup.find((o) => o.inicio < fin && o.fin > inicio);
-      const motivo = noLectivo ? 'No lectivo' : inicio < limite ? 'Pasado' : choca ? (choca.estado === 'BLOQUEADA' ? 'Bloqueado' : 'Ocupado') : null;
+      const motivo = noLectivo
+        ? 'No lectivo'
+        : inicio < antelacion
+          ? 'Pasado'
+          : manana && inicio < manana
+            ? 'Mismo día'
+            : choca
+              ? choca.estado === 'BLOQUEADA'
+                ? 'Bloqueado'
+                : 'Ocupado'
+              : null;
       huecos.push({ inicio, fin, hora: hh, franja: franja(inicio, fin), disponible: !motivo, motivo });
     }
     dias.push({ fecha: f, dia: diaLargo(horaLocalAUtc(f, '12:00')), libres: huecos.filter((h) => h.disponible).length, huecos });

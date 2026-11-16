@@ -4,6 +4,9 @@ import { requirePermiso } from '../../middleware/auth';
 import { v, validate } from '../../middleware/validate';
 import { guardarReservaConfig, reservaConfig, reservaConfigSchema } from '../ajustes/ajustes.service';
 import * as srv from './reservas.service';
+import { todasLasPaginas } from '../../lib/csv';
+import { COLUMNAS_RESERVAS } from '../exportaciones/columnas';
+import { responderCsv } from '../exportaciones/exportar';
 
 const idParam = z.object({ id: z.string().uuid() });
 
@@ -18,8 +21,27 @@ reservasRouter.get('/', requirePermiso('cobros.ver', 'evaluacion.ver'), validate
 });
 
 /** Botón "Recordar": envía ya el recordatorio de pago a la familia. */
+/** CSV del control de reservas, con sus filtros: GET /reservas/exportar?porVencer=true */
+reservasRouter.get('/exportar', requirePermiso('cobros.ver', 'evaluacion.ver'), validate({ query: srv.listarReservasQuery }), async (req, res) => {
+  const filas = await todasLasPaginas(srv.listar, v<typeof srv.listarReservasQuery>(req, 'query'));
+  responderCsv(req, res, 'reservas', COLUMNAS_RESERVAS, filas);
+});
+
+/** "Cambiar plazo": acortar o ampliar la fecha límite de una reserva pendiente o vencida. */
+reservasRouter.patch('/:id/plazo', requirePermiso('evaluacion.editar', 'cobros.editar'), validate({ params: idParam, body: srv.cambiarPlazoBody }), async (req, res) => {
+  res.json(await srv.cambiarPlazo(v<typeof idParam>(req, 'params').id, v<typeof srv.cambiarPlazoBody>(req, 'body'), req.user!.id));
+});
+
 reservasRouter.post('/:id/recordar', requirePermiso('cobros.editar', 'solicitudes.editar'), validate({ params: idParam }), async (req, res) => {
   res.json(await srv.recordar(v<typeof idParam>(req, 'params').id, req.user!.id));
+});
+
+/**
+ * "Liberar plaza" (ajuste A5): anula la reserva pendiente o vencida y descarta la solicitud.
+ * La decide secretaría (solicitudes.editar) o quien decide la admisión (evaluacion.editar).
+ */
+reservasRouter.post('/:id/liberar', requirePermiso('solicitudes.editar', 'evaluacion.editar'), validate({ params: idParam, body: srv.liberarBody }), async (req, res) => {
+  res.json(await srv.liberarPlaza(v<typeof idParam>(req, 'params').id, v<typeof srv.liberarBody>(req, 'body'), req.user!.id));
 });
 
 /** Importe (en céntimos), IBAN, titular, plazo y formas de pago. */

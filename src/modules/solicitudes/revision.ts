@@ -38,6 +38,8 @@ export interface EntradaRevision {
   familia: { vinculo: string | null } | null;
   /** Otras solicitudes con el mismo correo o teléfono. */
   otrasSolicitudes: { codigo: string; alumna: string }[];
+  /** Alumnas del centro (no de baja) con un contacto con ese correo o teléfono. */
+  alumnas?: { expediente: string; alumna: string }[];
 }
 
 /** Etiquetas de los campos obligatorios, en el orden en que se muestran. */
@@ -90,6 +92,7 @@ export function revisar(x: EntradaRevision, ahora = new Date()): ResultadoRevisi
 
   const vinculos = [
     ...(x.familia ? [x.familia.vinculo ?? 'familia registrada en el centro'] : []),
+    ...(x.alumnas ?? []).map((a) => `alumna del centro ${a.alumna} (${a.expediente})`),
     ...x.otrasSolicitudes.map((o) => `otra solicitud ${o.codigo} (${o.alumna})`),
   ];
   checks.push(

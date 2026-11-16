@@ -2,16 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { generarIcs } from '../src/correo/ics';
 import { diaLargo, fechaLocal, franja, horaLocalAUtc } from '../src/lib/fechas';
 import { tipoReal } from '../src/lib/storage';
-import { euros, formatearIban, ibanValido } from '../src/lib/dinero';
+import { bicValido, enmascararIban, euros, formatearIban, ibanSepaValido, ibanValido, identificadorAcreedorValido } from '../src/lib/dinero';
 import { diasRestantes, fechaTexto } from '../src/modules/reservas/reservas.service';
 import { columnaDe, cursoEscolarCorto, puedeTransicionar, siguientesEstados } from '../src/modules/solicitudes/dominio';
 import { revisar, type EntradaRevision } from '../src/modules/solicitudes/revision';
+import { combinarFicha, erroresFicha, faltanParaRealizada } from '../src/modules/entrevistas/ficha';
+import { aCsv, eurosCsv, fechaCsv } from '../src/lib/csv';
+import { documentoValido, normalizarDocumento } from '../src/lib/documento-identidad';
+import { borradorSchema, borradorVacio } from '../src/modules/matricula/borrador';
+import { caducidadEnlace, cursoEscolarSiguiente, formatoCodigoMatricula } from '../src/modules/matricula/dominio';
+import { jsonCanonico } from '../src/modules/matricula/matricula.service';
+import { MATRICULA_POR_DEFECTO } from '../src/modules/ajustes/ajustes.service';
+import { cambiosEntre, contenidoFirmado, generarDocumento } from '../src/modules/matricula/documentos/generar';
+import { canSubmit, enrollmentFlow, stepMissing } from '../src/modules/matricula/reglas';
 
 const base: EntradaRevision = {
   alumnaNombre: 'Lucía',
   alumnaApellidos: 'Márquez Peña',
   tutorNombre: 'Elena Peña Ríos',
-  email: 'epena@correo.es',
+  email: 'epena@example.com',
   telefono: '+34 622 418 903',
   centroProcedencia: 'IES Martínez Montañés',
   asignadaSnec: false,
@@ -59,6 +68,29 @@ describe('revisión: cinco comprobaciones', () => {
     expect(r.checks[3]).toMatchObject({ resultado: 'aviso', texto: 'Familia ya vinculada al centro · Hermana en 2º Bachillerato · Clara Márquez Peña' });
     expect(r.checks[4]).toMatchObject({ resultado: 'aviso', texto: 'Solicitud asignada por la Junta (SNEC) · comprobar el cupo de la resolución' });
     expect(r.puedeCitar).toBe(true);
+  });
+});
+
+describe('familia ya vinculada: alumnas del centro', () => {
+  it('una alumna con el mismo contacto avisa con su nombre y expediente', () => {
+    const r = revisar({ ...base, alumnas: [{ expediente: 'EXP-2026-0001', alumna: 'Clara Márquez Peña' }] });
+    const familia = r.checks.find((c) => c.id === 'familia')!;
+    expect(familia.resultado).toBe('aviso');
+    expect(familia.texto).toBe('Familia ya vinculada al centro · alumna del centro Clara Márquez Peña (EXP-2026-0001)');
+  });
+});
+
+describe('DNI y NIE', () => {
+  it('normaliza y comprueba la letra', () => {
+    expect(normalizarDocumento(' 12.345.678-z ')).toBe('12345678Z');
+    expect(normalizarDocumento('y-4821533-b')).toBe('Y4821533B');
+    expect(documentoValido('12345678Z')).toBe(true);
+    expect(documentoValido('12345678A')).toBe(false);
+    expect(documentoValido('X1234567L')).toBe(true);
+    expect(documentoValido('Y4821533B')).toBe(true);
+    expect(documentoValido('Z1234567R')).toBe(true);
+    expect(documentoValido('1234567Z')).toBe(false);
+    expect(documentoValido('A1234567L')).toBe(false);
   });
 });
 
@@ -112,9 +144,13 @@ describe('pipeline y transiciones', () => {
       { estado: 'DESCARTADA', columna: null },
       { estado: 'PENDIENTE_COMPLETAR', columna: 'nueva', accion: 'PEDIR_QUE_COMPLETE' },
       { estado: 'CITACION_ENVIADA', columna: 'entrevista', accion: 'CITAR_A_ENTREVISTA' },
+      { estado: 'ENTREVISTA_REALIZADA', columna: 'evaluada', accion: 'REGISTRAR_ENTREVISTA_PREVIA' },
     ]);
-    // Incompleta: no se ofrece citar.
+    // Incompleta: no se ofrece citar ni registrar una entrevista previa.
     expect(siguientesEstados('EN_REVISION', { ...todo, puedeCitar: false }).map((s) => s.estado)).not.toContain('CITACION_ENVIADA');
+    expect(siguientesEstados('EN_REVISION', { ...todo, puedeCitar: false }).map((s) => s.estado)).not.toContain('ENTREVISTA_REALIZADA');
+    // Con la entrevista ya programada, el resultado se registra en ella, no como entrevista previa.
+    expect(siguientesEstados('ENTREVISTA_PROGRAMADA', todo).map((s) => s.accion)).not.toContain('REGISTRAR_ENTREVISTA_PREVIA');
     // Sin evaluacion.editar no se ofrecen las decisiones de admisión.
     expect(siguientesEstados('ENTREVISTA_REALIZADA', { ...todo, evaluar: false })).toEqual([]);
     // Las decisiones van por "Registrar decisión" (notifica y crea la reserva).
@@ -218,5 +254,162 @@ describe('agenda: jornada laboral', async () => {
   });
   it('respeta los días no lectivos', () => {
     expect(dentroDeJornada(...f('2026-12-08', '10:00', 45), { ...cfg, diasNoLectivos: ['2026-12-08'] })).toMatch(/no lectivo/);
+  });
+});
+
+describe('agenda: nunca el mismo día', async () => {
+  const { primerInicioPermitido } = await import('../src/modules/agenda/agenda.service');
+  const { AGENDA_POR_DEFECTO: cfg } = await import('../src/modules/ajustes/ajustes.service');
+  const { diaSiguiente } = await import('../src/lib/fechas');
+
+  it('por defecto no se permite el mismo día: lo primero es mañana a las 00:00 del centro', () => {
+    expect(cfg.permitirMismoDia).toBe(false);
+    const ahora = horaLocalAUtc('2026-11-02', '09:00');
+    const r = primerInicioPermitido(cfg, ahora);
+    expect(r.manana).toEqual(horaLocalAUtc('2026-11-03', '00:00'));
+    expect(r.desde).toEqual(r.manana);
+    expect(r.antelacion).toEqual(horaLocalAUtc('2026-11-02', '11:00'));
+  });
+
+  it('a última hora manda la antelación si cae ya en el día siguiente', () => {
+    const r = primerInicioPermitido({ ...cfg, antelacionMinHoras: 4 }, horaLocalAUtc('2026-11-02', '22:30'));
+    expect(r.desde).toEqual(horaLocalAUtc('2026-11-03', '02:30'));
+  });
+
+  it('con permitirMismoDia sólo cuenta la antelación', () => {
+    const ahora = horaLocalAUtc('2026-11-02', '09:00');
+    const r = primerInicioPermitido({ ...cfg, permitirMismoDia: true }, ahora);
+    expect(r.manana).toBeNull();
+    expect(r.desde).toEqual(horaLocalAUtc('2026-11-02', '11:00'));
+  });
+
+  it('día siguiente sin depender del cambio de hora ni del fin de mes', () => {
+    expect(diaSiguiente('2026-10-24')).toBe('2026-10-25');
+    expect(diaSiguiente('2026-10-25')).toBe('2026-10-26'); // cambio de hora en España
+    expect(diaSiguiente('2026-12-31')).toBe('2027-01-01');
+  });
+});
+
+describe('Ficha de la entrevista', () => {
+  const ficha = (d: object) => combinarFicha(null, d as never);
+  it('modalidad y optativa: coherentes y solo en Bachillerato', () => {
+    expect(erroresFicha(ficha({ modalidad: 'HUMANIDADES_CCSS', optativa: 'LATIN' }), 'BACHILLERATO', '2026-11-05')).toEqual([]);
+    expect(erroresFicha(ficha({ optativa: 'LATIN' }), 'BACHILLERATO', '2026-11-05')[0]!.campo).toBe('ficha.optativa');
+    expect(erroresFicha(ficha({ modalidad: 'CIENCIAS_TECNOLOGIA' }), 'CICLOS_CONCERTADOS_GM', '2026-11-05')[0]!.campo).toBe('ficha.modalidad');
+    expect(erroresFicha(ficha({ fechaEntregaNotas: '2026-11-06' }), 'BACHILLERATO', '2026-11-05')[0]!.campo).toBe('ficha.fechaEntregaNotas');
+  });
+  it('lo mínimo para darla por realizada', () => {
+    expect(faltanParaRealizada(null)).toEqual(['valoracion', 'entrevistados']);
+    expect(faltanParaRealizada(ficha({ valoracion: 'FAVORABLE', entrevistados: ['PADRE'] }))).toEqual([]);
+  });
+});
+
+describe('CSV para Excel', () => {
+  const cols = [
+    { titulo: 'Texto', valor: (f: { t: string }) => f.t },
+    { titulo: 'Número', valor: () => 8.5 },
+    { titulo: 'Sí/No', valor: () => true },
+    { titulo: 'Vacío', valor: () => null },
+  ];
+  it('separador ;, comillas, BOM y coma decimal', () => {
+    const s = aCsv(cols, [{ t: 'Sevilla; "centro"\nnorte' }]);
+    expect(s.startsWith('\uFEFF')).toBe(true);
+    expect(s).toBe('\uFEFFTexto;Número;Sí/No;Vacío\r\n"Sevilla; ""centro""\nnorte";8,5;Sí;\r\n');
+  });
+  it('neutraliza fórmulas y deja los teléfonos como texto', () => {
+    const fila = (t: string) => aCsv([cols[0]!], [{ t }]).split('\r\n')[1];
+    expect(fila('=HYPERLINK("http://x")')).toBe('"\'=HYPERLINK(""http://x"")"');
+    expect(fila('@SUM(A1)')).toBe("'@SUM(A1)");
+    expect(fila('-2+3')).toBe("'-2+3");
+    expect(fila('+34 600 000 001')).toBe(' +34 600 000 001');
+  });
+  it('fechas y euros', () => {
+    expect(fechaCsv('2026-11-05')).toBe('05/11/2026');
+    expect(eurosCsv(30000)).toBe('300,00');
+    expect(eurosCsv(null)).toBeNull();
+  });
+});
+
+describe('Matrícula: borrador y reglas', () => {
+  const exp = () => ({ ...borradorVacio(), photo: null, documents: {}, signatures: {} });
+
+  it('el borrador vacío cumple el esquema estricto y uno con un campo de más no', () => {
+    expect(borradorSchema.safeParse(borradorVacio()).success).toBe(true);
+    expect(borradorSchema.safeParse({ ...borradorVacio(), otro: 1 }).success).toBe(false);
+  });
+
+  it('las reglas copiadas del front: flujo por vía y alumna nueva, y lo que falta por paso', () => {
+    const d = { ...exp(), via: 'gs' as const, course: '2' as const };
+    expect(enrollmentFlow(d, false)).toEqual(['student', 'family', 'annex', 'economic', 'documents', 'review']);
+    expect(enrollmentFlow({ ...d, newStudent: true }, true)).toContain('ideario');
+    expect(stepMissing(exp(), 'via')).toEqual(['via', 'course']);
+    expect(stepMissing(d, 'student')).toContain('student.nuss'); // ciclos: NUSS
+    expect(canSubmit(d)).toBe(false);
+  });
+
+  it('familia numerosa: «No» vale en todas las vías y solo con General o Especial se pide el título', () => {
+    const bach = (familySize: 'no' | 'general' | null) => {
+      const d = { ...exp(), via: 'bach' as const, course: '1' as const };
+      return { ...d, family: { ...d.family, familySize } };
+    };
+    expect(stepMissing(bach(null), 'family')).toContain('family.familySize');
+    expect(stepMissing(bach('no'), 'family')).not.toContain('family.familySize');
+    expect(stepMissing(bach('no'), 'family')).not.toContain('family.familySizeTitle');
+    expect(stepMissing(bach('general'), 'family')).toContain('family.familySizeTitle');
+    const gm = { ...exp(), via: 'gm' as const, course: '1' as const };
+    expect(stepMissing({ ...gm, family: { ...gm.family, familySize: 'no' as const } }, 'family')).not.toContain('family.familySize');
+  });
+
+  it('código, curso siguiente y caducidad del enlace', () => {
+    expect(formatoCodigoMatricula('2027-2028', 7)).toBe('M-2027-0007');
+    expect(cursoEscolarSiguiente('2026-2027')).toBe('2027-2028');
+    const ahora = new Date('2027-06-10T10:00:00Z');
+    expect(caducidadEnlace('2027-2028', ahora).toISOString()).toBe('2027-09-30T21:59:00.000Z');
+    // Matrícula tardía: al menos 30 días.
+    expect(caducidadEnlace('2027-2028', new Date('2027-09-20T10:00:00Z')).toISOString()).toBe('2027-10-20T10:00:00.000Z');
+  });
+
+  it('jsonCanonico no depende del orden de las claves (jsonb las reordena)', () => {
+    expect(jsonCanonico({ b: 1, a: { d: [1, { y: 2, x: 1 }], c: null } })).toBe(jsonCanonico({ a: { c: null, d: [1, { x: 1, y: 2 }] }, b: 1 }));
+    expect(jsonCanonico({ a: 1 })).not.toBe(jsonCanonico({ a: 2 }));
+  });
+});
+
+describe('Matrícula: documentos con huella y datos bancarios', () => {
+  const exp = () => ({ ...borradorVacio(), via: 'bach' as const, course: '1' as const, photo: null, documents: {}, signatures: {} });
+  const ctx = { familia: 'BACHILLERATO' as const, cursoEscolar: '2027-2028', config: MATRICULA_POR_DEFECTO };
+
+  it('la huella no depende de la fecha (es la de la firma) pero sí de cualquier dato que se ve', () => {
+    const e = exp();
+    const a = generarDocumento('sepa', e, { ...ctx, fecha: new Date('2027-06-10T10:00:00Z') });
+    const b = generarDocumento('sepa', e, { ...ctx, fecha: new Date('2027-07-01T10:00:00Z') });
+    expect(a.huella).toBe(b.huella);
+    expect(JSON.stringify(a)).toContain('10 de junio de 2027');
+    const c = generarDocumento('sepa', { ...e, economic: { ...e.economic, sepa: { ...e.economic.sepa, iban: 'ES9121000418450200051332' } } }, ctx);
+    expect(c.huella).not.toBe(a.huella);
+    expect(cambiosEntre(contenidoFirmado(a), c)).toEqual(['Número de cuenta · IBAN']);
+    // Un dato que no sale en el documento no cambia la huella.
+    expect(generarDocumento('sepa', { ...e, pasen: { enabled: true, holder: 'X', phone: '1' } }, ctx).huella).toBe(a.huella);
+  });
+
+  it('GS concertado: acreedor propio y cargo único sin elección', () => {
+    const e = { ...exp(), via: 'gs' as const };
+    const d = generarDocumento('sepa', e, { ...ctx, familia: 'CICLOS_CONCERTADOS_GS' });
+    expect(JSON.stringify(d)).toContain('ES09605G41829037');
+    const opcion = d.paginas[0]!.bloques.find((b) => b.tipo === 'opcion');
+    expect(opcion).toMatchObject({ aviso: null, opciones: [{ etiqueta: 'Pago único', marcada: true }] });
+    expect(d.nota).toBe('Cargo único anual de 180,30 € en septiembre');
+  });
+
+  it('IBAN de la zona SEPA, BIC, identificador de acreedor (AT-02) y enmascarado', () => {
+    expect(ibanSepaValido('es91 2100 0418 4502 0005 1332')).toBe(true);
+    expect(ibanSepaValido('ES9121000418450200051333')).toBe(false); // control
+    expect(ibanSepaValido('BR1800360305000010009795493C1')).toBe(false); // fuera de SEPA
+    expect(bicValido('CAIXESBBXXX')).toBe(true);
+    expect(bicValido('CAIXESB')).toBe(false);
+    expect(identificadorAcreedorValido('ES09000G41829037')).toBe(true);
+    expect(identificadorAcreedorValido('ES09605G41829037')).toBe(true); // el sufijo no cuenta en el control
+    expect(identificadorAcreedorValido('G-41829037/605')).toBe(false);
+    expect(enmascararIban('ES9121000418450200051332')).toBe('ES91 **** **** **** **** 1332');
   });
 });

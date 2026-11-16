@@ -55,6 +55,12 @@ export const fechaLocal = (d: Date) => {
 };
 
 export const sumarDias = (d: Date, dias: number) => new Date(d.getTime() + dias * 86_400_000);
+
+/** "2026-09-01" → "2026-09-02": día natural siguiente (sin depender de las 24 h ni del cambio de hora). */
+export const diaSiguiente = (fecha: string) => {
+  const [a, m, d] = fecha.split('-').map(Number) as [number, number, number];
+  return new Date(Date.UTC(a, m - 1, d + 1)).toISOString().slice(0, 10);
+};
 export const sumarMin = (d: Date, min: number) => new Date(d.getTime() + min * 60_000);
 
 /** Recorre días naturales (YYYY-MM-DD) entre dos fechas incluidas. */

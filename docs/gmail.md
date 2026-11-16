@@ -29,7 +29,7 @@ MAIL_SECRETARIA=tucorreo@gmail.com
 ```
 
 - `MAIL_FROM` tiene que llevar **tu misma dirección de Gmail**; si pones otra, Gmail la cambia por la tuya.
-- `MAIL_DESVIO` es muy recomendable mientras haya datos de ejemplo: evita escribir a direcciones como `epena@correo.es`, que podrían existir de verdad. Quítalo cuando pruebes con familias reales.
+- `MAIL_DESVIO` es muy recomendable mientras haya datos de ejemplo: evita escribir a direcciones de prueba que podrían existir de verdad (las de la semilla ya son `@example.com`, que no entrega). Quítalo cuando pruebes con familias reales.
 
 Después, reinicia la API:
 

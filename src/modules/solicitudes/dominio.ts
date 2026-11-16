@@ -125,11 +125,17 @@ export const DECISIONES_ADMISION: EstadoSolicitud[] = ['ADMITIDA', 'NO_ADMITIDA'
 export const ESTADOS_PUEDE_PEDIR_COMPLETAR: EstadoSolicitud[] = ['RECIBIDA', 'EN_REVISION', 'PENDIENTE_COMPLETAR'];
 export const ESTADOS_PUEDE_CITAR: EstadoSolicitud[] = ['RECIBIDA', 'EN_REVISION', 'CITACION_ENVIADA', 'OTRA_FRANJA_SOLICITADA', 'ENTREVISTA_PROGRAMADA'];
 
+/**
+ * Paso 6 del diagrama, «¿Ya tuvo entrevista?»: desde dónde se registra una entrevista hecha
+ * fuera de la plataforma, sin repetirla. Con una entrevista ya programada se usa su resultado.
+ */
+export const ESTADOS_ENTREVISTA_PREVIA: EstadoSolicitud[] = ['RECIBIDA', 'EN_REVISION', 'CITACION_ENVIADA', 'OTRA_FRANJA_SOLICITADA'];
+
 export interface Siguiente {
   estado: EstadoSolicitud;
   columna: ColumnaPipeline | null;
   /** Si está, no se mueve con PATCH /estado: el front abre el panel de esa acción. */
-  accion?: 'PEDIR_QUE_COMPLETE' | 'CITAR_A_ENTREVISTA' | 'DECIDIR' | 'REGISTRAR_COBRO';
+  accion?: 'PEDIR_QUE_COMPLETE' | 'CITAR_A_ENTREVISTA' | 'REGISTRAR_ENTREVISTA_PREVIA' | 'DECIDIR' | 'REGISTRAR_COBRO';
 }
 
 /**
@@ -153,6 +159,9 @@ export function siguientesEstados(
   }
   if (o.puedeCitar && estado !== 'CITACION_ENVIADA' && ESTADOS_PUEDE_CITAR.includes(estado)) {
     r.push({ estado: 'CITACION_ENVIADA', columna: columnaDe('CITACION_ENVIADA'), accion: 'CITAR_A_ENTREVISTA' });
+  }
+  if (o.puedeCitar && ESTADOS_ENTREVISTA_PREVIA.includes(estado)) {
+    r.push({ estado: 'ENTREVISTA_REALIZADA', columna: columnaDe('ENTREVISTA_REALIZADA'), accion: 'REGISTRAR_ENTREVISTA_PREVIA' });
   }
   return r;
 }
@@ -189,8 +198,11 @@ export const DIAS_RESERVA_POR_VENCER = 3;
 /** "2027-2028" → "2027/28" (como en los correos del mockup). */
 export const cursoEscolarCorto = (c: string) => c.replace(/^(\d{4})-\d{2}(\d{2})$/, '$1/$2');
 
-/** Respuestas de la familia que sacan la solicitud de la bandeja: se avisa una vez a cada usuario. */
-export const EVENTOS_RESPUESTA_FAMILIA = ['CITA_CONFIRMADA', 'CITA_CAMBIADA'] as const;
+/**
+ * Respuestas de la familia que se avisan una vez a cada usuario: elegir o cambiar la fecha (la
+ * solicitud sale de la bandeja) y cancelar la cita (vuelve a la bandeja para proponer otras).
+ */
+export const EVENTOS_RESPUESTA_FAMILIA = ['CITA_CONFIRMADA', 'CITA_CAMBIADA', 'CITA_CANCELADA_FAMILIA'] as const;
 export const DIAS_AVISO_RESPUESTAS = 7;
 
 /** Nombre de pila del tutor para los saludos ("Hola, Elena"). */

@@ -3,6 +3,9 @@ import { alias } from 'drizzle-orm/pg-core';
 import type { z } from 'zod';
 import { env } from '../../config/env';
 import {
+  alumnaContactos,
+  alumnas,
+  ciclos,
   correosSalientes,
   documentos,
   entrevistas,
@@ -82,6 +85,25 @@ async function viaActiva(tx: Tx, viaId: string): Promise<Via> {
   return via;
 }
 
+/**
+ * Ciclo de la solicitud (A6): obligatorio en las vías de ciclos y de la misma familia;
+ * Bachillerato no lleva. Devuelve el id que se guarda.
+ */
+async function cicloDeVia(tx: Tx, via: Via, cicloId: string | null | undefined): Promise<string | null> {
+  if (via.familia === 'BACHILLERATO') {
+    if (cicloId) throw badRequest('CICLO_NO_VALIDO', 'Bachillerato no lleva ciclo.');
+    return null;
+  }
+  if (!cicloId) throw badRequest('CICLO_OBLIGATORIO', 'Elige el ciclo.');
+  const [c] = await tx
+    .select({ id: ciclos.id })
+    .from(ciclos)
+    .where(and(eq(ciclos.id, cicloId), eq(ciclos.familia, via.familia), eq(ciclos.activo, true)))
+    .limit(1);
+  if (!c) throw badRequest('CICLO_NO_VALIDO', 'El ciclo elegido no se imparte en esa etapa.');
+  return c.id;
+}
+
 /** Formulario público: entra con estado "recibida" y se envía acuse a la familia. */
 export async function crearDesdeWeb(d: z.infer<typeof solicitudPublicaBody>, ip?: string) {
   return db.transaction(async (tx) => {
@@ -90,8 +112,9 @@ export async function crearDesdeWeb(d: z.infer<typeof solicitudPublicaBody>, ip?
     const [s] = await tx
       .insert(solicitudes)
       .values({
-        codigo: await siguienteCodigo(tx, ahora),
+        codigo: await siguienteCodigo(tx, via),
         viaId: via.id,
+        cicloId: await cicloDeVia(tx, via, d.cicloId),
         alumnaNombre: d.alumnaNombre,
         alumnaApellidos: d.alumnaApellidos,
         centroProcedencia: d.centroProcedencia,
@@ -124,8 +147,9 @@ export async function crearInterna(d: z.infer<typeof solicitudInternaBody>, usua
     const [s] = await tx
       .insert(solicitudes)
       .values({
-        codigo: await siguienteCodigo(tx, ahora),
+        codigo: await siguienteCodigo(tx, via),
         viaId: via.id,
+        cicloId: await cicloDeVia(tx, via, d.cicloId),
         alumnaNombre: d.alumnaNombre,
         alumnaApellidos: d.alumnaApellidos,
         centroProcedencia: d.centroProcedencia,
@@ -175,6 +199,7 @@ function condiciones(f: Partial<Filtros>): SQL[] {
   if (f.estado?.length) c.push(inArray(solicitudes.estado, f.estado as EstadoSolicitud[]));
   if (f.familiaVia?.length) c.push(inArray(vias.familia, f.familiaVia as Via['familia'][]));
   if (f.curso) c.push(eq(vias.curso, f.curso));
+  if (f.ciclo?.length) c.push(inArray(solicitudes.cicloId, f.ciclo));
   if (f.canal?.length) c.push(inArray(solicitudes.canal, f.canal as Solicitud['canal'][]));
   if (f.asignadaSnec !== undefined) c.push(eq(solicitudes.asignadaSnec, f.asignadaSnec));
   if (f.responsableId) c.push(eq(solicitudes.responsableId, f.responsableId));
@@ -195,6 +220,12 @@ function condiciones(f: Partial<Filtros>): SQL[] {
     // La misma regla que la comprobación "Familia ya vinculada" (calcularRevisiones).
     c.push(sql`(
       (${solicitudes.email} <> '' and exists (select 1 from ${familias} where ${familias.email} = ${solicitudes.email}))
+      or exists (
+        select 1 from ${alumnaContactos} join ${alumnas} on ${alumnas.id} = ${alumnaContactos.alumnaId}
+        where ${alumnas.estado} in ('RESERVA', 'EN_PROCESO', 'MATRICULADA')
+        and ${alumnas.solicitudId} is distinct from ${solicitudes.id}
+        and ((${solicitudes.email} <> '' and ${alumnaContactos.email} = lower(trim(${solicitudes.email}))) or ${alumnaContactos.telefono} = trim(${solicitudes.telefono}))
+      )
       or exists (
         select 1 from ${solicitudes} ${otra} where ${otra.id} <> ${solicitudes.id}
         and ((${solicitudes.email} <> '' and ${otra.email} = ${solicitudes.email}) or ${otra.telefono} = ${solicitudes.telefono})
@@ -238,6 +269,8 @@ const columnasResumen = {
   viaNombre: vias.nombre,
   viaPlazas: vias.plazas,
   viaPlazasJunta: vias.plazasAsignadasPorJunta,
+  cicloId: solicitudes.cicloId,
+  cicloNombre: ciclos.nombre,
   responsableId: solicitudes.responsableId,
   responsableNombre: usuarios.nombre,
 };
@@ -259,6 +292,7 @@ function aResumen(r: FilaResumen) {
     centroProcedencia: r.centroProcedencia,
     modalidadInteres: r.modalidadInteres,
     via: { familia: r.viaFamilia, curso: r.viaCurso, nombre: r.viaNombre, etiqueta: ETIQUETA_FAMILIA_VIA[r.viaFamilia], etapa: ETAPA[r.viaFamilia] },
+    ciclo: r.cicloId ? { id: r.cicloId, nombre: r.cicloNombre ?? '' } : null,
     origen: r.asignadaSnec ? 'Asignada por la Junta (SNEC)' : ETIQUETA_CANAL[r.canal],
     canal: r.canal,
     asignadaSnec: r.asignadaSnec,
@@ -340,7 +374,7 @@ async function enriquecer(filas: FilaResumen[], p: Permisos) {
       entrevista: e
         ? {
             id: e.id, inicio: e.inicio, fin: e.fin, dia: diaLargo(e.inicio), franja: franja(e.inicio, e.fin),
-            estado: e.estado, estadoEtiqueta: ETIQUETA_ESTADO_ENTREVISTA[e.estado], notas: e.notas,
+            estado: e.estado, estadoEtiqueta: ETIQUETA_ESTADO_ENTREVISTA[e.estado], notas: e.notas, ficha: e.ficha ?? null,
           }
         : null,
       notasSubidas: conNotas.has(f.id),
@@ -358,6 +392,7 @@ function consultaBase(tx: Tx) {
     .select(columnasResumen)
     .from(solicitudes)
     .innerJoin(vias, eq(vias.id, solicitudes.viaId))
+    .leftJoin(ciclos, eq(ciclos.id, solicitudes.cicloId))
     .leftJoin(usuarios, eq(usuarios.id, solicitudes.responsableId));
 }
 
@@ -425,6 +460,7 @@ export async function detalle(id: string, p: Permisos) {
   const [responsable] = s.responsableId
     ? await db.select({ id: usuarios.id, nombre: usuarios.nombre }).from(usuarios).where(eq(usuarios.id, s.responsableId))
     : [];
+  const [ciclo] = s.cicloId ? await db.select({ id: ciclos.id, nombre: ciclos.nombre }).from(ciclos).where(eq(ciclos.id, s.cicloId)) : [];
 
   const eventos = await db
     .select({
@@ -485,6 +521,7 @@ export async function detalle(id: string, p: Permisos) {
     columna: columnaDe(s.estado),
     origen: s.asignadaSnec ? 'Asignada por la Junta (SNEC)' : ETIQUETA_CANAL[s.canal],
     via: { ...via, etiqueta: ETIQUETA_FAMILIA_VIA[via.familia], etapa: ETAPA[via.familia] },
+    ciclo: ciclo ?? null,
     responsable: responsable ?? null,
     revision,
     siguientes: siguientesEstados(s.estado, { ...p, puedeCitar: revision.puedeCitar, reservaPendiente: reservaAbierta(reserva) }),
@@ -554,7 +591,7 @@ export async function marcarRespuestasVistas(usuarioId: string, eventoIds: strin
 
 export async function actualizarGestion(id: string, d: z.infer<typeof gestionBody>, usuarioId: string) {
   return db.transaction(async (tx) => {
-    const { s } = await obtenerSolicitud(tx, id, true);
+    const { s, via } = await obtenerSolicitud(tx, id, true);
     if (d.responsableId) {
       const [u] = await tx.select({ id: usuarios.id }).from(usuarios).where(and(eq(usuarios.id, d.responsableId), eq(usuarios.activo, true)));
       if (!u) throw badRequest('RESPONSABLE_NO_VALIDO', 'El responsable no existe o está desactivado.');
@@ -564,6 +601,7 @@ export async function actualizarGestion(id: string, d: z.infer<typeof gestionBod
     if (d.observacionesInternas !== undefined) cambios.observacionesInternas = d.observacionesInternas;
     if (d.asignadaSnec !== undefined) cambios.asignadaSnec = d.asignadaSnec;
     if (d.canal !== undefined) cambios.canal = d.canal;
+    if (d.cicloId !== undefined) cambios.cicloId = await cicloDeVia(tx, via, d.cicloId);
     const [act] = await tx.update(solicitudes).set(cambios).where(eq(solicitudes.id, id)).returning();
     const campos = Object.keys(cambios).filter((k) => k !== 'observacionesInternas');
     if (campos.length || cambios.observacionesInternas !== undefined) {
@@ -571,6 +609,7 @@ export async function actualizarGestion(id: string, d: z.infer<typeof gestionBod
         detalle: {
           campos: Object.keys(cambios),
           ...(cambios.responsableId !== undefined ? { responsableAnterior: s.responsableId, responsableNuevo: cambios.responsableId } : {}),
+          ...(cambios.cicloId !== undefined ? { cicloAnterior: s.cicloId, cicloNuevo: cambios.cicloId } : {}),
         },
       });
     }

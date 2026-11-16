@@ -14,10 +14,11 @@ import { and, eq, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { crearApp } from '../src/app';
 import { db, pool } from '../src/lib/db';
-import { correosSalientes, entrevistas, franjasAgenda, propuestasCita, reservas, solicitudes, usuarios, vias } from '../src/db/schema';
+import { ciclos, correosSalientes, entrevistas, franjasAgenda, plantillasCorreo, propuestasCita, reservas, solicitudes, usuarios, vias } from '../src/db/schema';
+import { EVENTOS } from '../src/correo/eventos';
 import { recordatoriosPago, vencerReservas } from '../src/modules/reservas/reservas.service';
 import { sembrarBase } from '../src/db/datos-base';
-import { procesarOutbox, setTransporter } from '../src/correo/outbox';
+import { encolarCorreo, procesarOutbox, setTransporter } from '../src/correo/outbox';
 import { recordatoriosEntrevista, recordatoriosPropuesta } from '../src/jobs/recordatorios';
 import { hashPassword } from '../src/modules/auth/auth.service';
 import { invalidarCachePermisos } from '../src/modules/permisos/permisos.service';
@@ -26,7 +27,7 @@ import { fechaLocal, horaLocalAUtc, sumarDias } from '../src/lib/fechas';
 const app = crearApp();
 const ORIGIN = 'http://localhost:4200';
 const PASS = 'Albaydar-2026';
-type Mail = { to: string; subject: string; text: string; html: string; attachments: { filename: string; content: Buffer }[] };
+type Mail = { to: string; replyTo: string; subject: string; text: string; html: string; attachments: { filename: string; content: Buffer }[] };
 const buzon: Mail[] = [];
 
 const enviarCorreos = () => procesarOutbox(100);
@@ -76,6 +77,7 @@ beforeAll(async () => {
     sendMail: async (m: Record<string, unknown>) => {
       buzon.push({
         to: String(m.to),
+        replyTo: String(m.replyTo),
         subject: String(m.subject),
         text: String(m.text),
         html: String(m.html),
@@ -123,6 +125,13 @@ describe('Autenticación', () => {
     expect(r2.body.error.code).toBe('SESION_REVOCADA');
   });
 
+  it('los inicios de sesión correctos no gastan el límite por IP (personal del centro tras la misma IP)', async () => {
+    for (let i = 0; i < 25; i++) {
+      const r = await request(app).post('/api/auth/login').send({ email: 'juan.diaz@albaydar.org', password: 'Albaydar-2026' });
+      expect(r.status).toBe(200);
+    }
+  });
+
   it('inicia sesión con los cinco perfiles', async () => {
     await login('secretaria', 'maria.reyes@albaydar.org');
     await login('secretaria2', 'juan.diaz@albaydar.org');
@@ -140,6 +149,13 @@ describe('Usuarios, roles y permisos', () => {
     expect((await request(app).get('/api/usuarios').set(auth('comercial'))).status).toBe(403);
   });
 
+  it('Administración (configuracion.ver) lee el horario de la agenda, pero no lo cambia', async () => {
+    const r = await request(app).get('/api/agenda/configuracion').set(auth('administracion'));
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ horaInicio: '08:00', permitirMismoDia: false });
+    expect((await request(app).put('/api/agenda/configuracion').set(auth('administracion')).send(r.body)).status).toBe(403);
+  });
+
   it('Dirección registra un usuario con rol y lo puede editar', async () => {
     const r = await request(app).post('/api/usuarios').set(auth('direccion')).send({ email: 'Nuevo@albaydar.org', nombre: 'Nueva Persona', roles: ['comercial'], password: 'OtraClave-2026' });
     expect(r.status).toBe(201);
@@ -155,6 +171,15 @@ describe('Usuarios, roles y permisos', () => {
     expect(r.body.error.code).toBe('ROL_DESCONOCIDO');
     const r2 = await request(app).post('/api/usuarios').set(auth('direccion')).send({ email: 'maria.reyes@albaydar.org', nombre: 'X', roles: ['SECRETARIA'], password: 'OtraClave-2026' });
     expect(r2.body.error.code).toBe('EMAIL_EN_USO');
+  });
+
+  it('el CORS deja al front usar PUT (agenda, reserva y permisos de un rol)', async () => {
+    const r = await request(app)
+      .options('/api/reservas/configuracion')
+      .set('Origin', 'http://localhost:4200')
+      .set('Access-Control-Request-Method', 'PUT');
+    expect(r.status).toBe(204);
+    expect(r.headers['access-control-allow-methods']).toContain('PUT');
   });
 
   it('no deja quitar el último superadministrador', async () => {
@@ -185,14 +210,14 @@ describe('Admisión y citación', () => {
   let codigoLucia = '';
 
   it('el formulario web exige todos los campos menos la modalidad', async () => {
-    const base = { viaId: viaBach, alumnaNombre: 'Paula', alumnaApellidos: 'Gil Romero', tutorNombre: 'Marta Romero Vela', email: 'mromero@correo.es', telefono: '+34 687 330 128', consentimientoPrivacidad: true };
+    const base = { viaId: viaBach, alumnaNombre: 'Paula', alumnaApellidos: 'Gil Romero', tutorNombre: 'Marta Romero Vela', email: 'mromero@example.com', telefono: '+34 687 330 128', consentimientoPrivacidad: true };
     const sinCentro = await request(app).post('/api/public/solicitudes').send(base);
     expect(sinCentro.status).toBe(400);
     expect(sinCentro.body.error.details.map((d: { campo: string }) => d.campo)).toContain('centroProcedencia');
     const ok = await request(app).post('/api/public/solicitudes').send({ ...base, centroProcedencia: 'Colegio Portaceli' });
     expect(ok.status).toBe(201);
     await enviarCorreos();
-    const acuse = ultimoPara('mromero@correo.es');
+    const acuse = ultimoPara('mromero@example.com');
     expect(acuse.subject).toContain(ok.body.codigo);
     expect(acuse.html).toContain('cropped-logo-final.png'); // diseño común
     paula = (await request(app).get('/api/solicitudes?q=Paula').set(auth())).body.items[0].id;
@@ -201,7 +226,7 @@ describe('Admisión y citación', () => {
   it('alta telefónica sin centro → incompleta → pedir que complete → la familia completa', async () => {
     const r = await request(app).post('/api/solicitudes').set(auth()).send({
       viaId: viaBach, alumnaNombre: 'Lucía', alumnaApellidos: 'Márquez Peña', tutorNombre: 'Elena Peña Ríos',
-      email: 'epena@correo.es', telefono: '+34 622 418 903', canal: 'TELEFONO', consentimientoPrivacidad: true,
+      email: 'epena@example.com', telefono: '+34 622 418 903', canal: 'TELEFONO', consentimientoPrivacidad: true,
     });
     expect(r.status).toBe(201);
     lucia = r.body.id;
@@ -212,7 +237,7 @@ describe('Admisión y citación', () => {
 
     await request(app).post(`/api/solicitudes/${lucia}/pedir-completar`).set(auth()).send({ mensaje: 'Indícanos el centro actual.' });
     await enviarCorreos();
-    const m = ultimoPara('epena@correo.es');
+    const m = ultimoPara('epena@example.com');
     expect(m.html).toContain('<li style="margin:5px 0">Centro de procedencia</li>');
     expect(m.html).toContain('Indícanos el centro actual.');
     const t = tokenDe(m.text, '/solicitud/completar');
@@ -220,13 +245,15 @@ describe('Admisión y citación', () => {
     expect(c.body.completa).toBe(true);
   });
 
-  it('la agenda va de lunes a viernes de 8:00 a 18:00, en tramos de 45 o 60 minutos', async () => {
+  it('la agenda va de lunes a viernes de 8:00 a 18:00, en tramos de 30, 45 o 60 minutos (A4)', async () => {
     const r = await request(app).get(`/api/agenda/disponibilidad?desde=${dia(0)}&hasta=${dia(6)}&duracion=60`).set(auth());
     expect(r.body.dias.map((d: { fecha: string }) => d.fecha)).toEqual([dia(0), dia(1), dia(2), dia(3), dia(4)]); // sin fin de semana
     const lun = r.body.dias[0];
     expect(lun.huecos[0].franja).toBe('08:00 – 09:00');
     expect(lun.huecos[lun.huecos.length - 1].franja).toBe('17:00 – 18:00');
-    expect((await request(app).get(`/api/agenda/disponibilidad?desde=${dia(0)}&hasta=${dia(0)}&duracion=30`).set(auth())).body.error.code).toBe('DURACION_NO_VALIDA');
+    const media = await request(app).get(`/api/agenda/disponibilidad?desde=${dia(0)}&hasta=${dia(0)}&duracion=30`).set(auth());
+    expect(media.body.dias[0].huecos[0].franja).toBe('08:00 – 08:30');
+    expect((await request(app).get(`/api/agenda/disponibilidad?desde=${dia(0)}&hasta=${dia(0)}&duracion=20`).set(auth())).body.error.code).toBe('DURACION_NO_VALIDA');
   });
 
   it('no deja citar fuera de la jornada', async () => {
@@ -255,15 +282,16 @@ describe('Admisión y citación', () => {
     expect(otra.body.error.code).toBe('FRANJA_OCUPADA');
 
     await enviarCorreos();
-    const m = ultimoPara('epena@correo.es');
-    expect(m.subject).toBe(`Elige la fecha de la entrevista de Lucía Márquez Peña · ${codigoLucia}`);
+    const m = ultimoPara('epena@example.com');
+    expect(m.subject).toBe(`Fechas para la entrevista de admisión de Lucía Márquez Peña · ${codigoLucia}`);
+    expect(m.html).toContain('Estimada familia:');
     expect(m.html).toContain('11:00 – 12:00');
     tokenCita = tokenDe(m.text, '/cita');
   });
 
   it('dos secretarias citan la misma hora a la vez: solo una lo consigue', async () => {
     const carmen = await request(app).post('/api/solicitudes').set(auth()).send({
-      viaId: viaBach, alumnaNombre: 'Carmen', alumnaApellidos: 'Vega Salas', tutorNombre: 'Rocío Salas', email: 'rsalas@correo.es',
+      viaId: viaBach, alumnaNombre: 'Carmen', alumnaApellidos: 'Vega Salas', tutorNombre: 'Rocío Salas', email: 'rsalas@example.com',
       telefono: '+34 600 111 222', centroProcedencia: 'IES Murillo', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
     });
     const [a, b] = await Promise.all([
@@ -302,10 +330,11 @@ describe('Admisión y citación', () => {
     expect(disp.body.dias[0].huecos.find((h: { hora: string }) => h.hora === '11:00').disponible).toBe(true);
 
     await enviarCorreos();
-    const m = ultimoPara('epena@correo.es');
+    const m = ultimoPara('epena@example.com');
     expect(m.subject).toMatch(/^Entrevista de admisión · Lucía Márquez Peña · /);
     expect(m.html).toContain('Rogamos traigan el DNI'); // texto de la plantilla del mockup
-    expect(m.html).toContain('Recuerda subir el boletín de notas');
+    expect(m.html).toContain('Recuerden subir el boletín de notas');
+    expect(m.html).not.toContain('y el último boletín'); // lo pide el aviso solo si falta
     expect(m.attachments[0]!.filename).toBe('entrevista-albaydar.ics');
 
     const det = await request(app).get(`/api/solicitudes/${lucia}`).set(auth());
@@ -324,7 +353,7 @@ describe('Admisión y citación', () => {
     const [e] = await db.select().from(entrevistas).where(eq(entrevistas.solicitudId, lucia));
     expect(e).toMatchObject({ estado: 'REPROGRAMADA', secuenciaIcs: 1 });
     await enviarCorreos();
-    expect(ultimoPara('epena@correo.es').subject).toMatch(/^Nueva fecha de entrevista/);
+    expect(ultimoPara('epena@example.com').subject).toMatch(/^Nueva fecha de entrevista/);
   });
 
   it('pasadas 24 h desde que aceptó, ya no puede cambiar ni pedir otra franja', async () => {
@@ -350,9 +379,9 @@ describe('Admisión y citación', () => {
     expect(await recordatoriosEntrevista(ahora)).toBe(1);
     expect(await recordatoriosEntrevista(ahora)).toBe(0);
     await enviarCorreos();
-    const m = ultimoPara('epena@correo.es');
+    const m = ultimoPara('epena@example.com');
     expect(m.subject).toBe('Mañana: entrevista de admisión de Lucía Márquez Peña a las 16:00');
-    expect(m.html).not.toContain('Recuerda subir el boletín');
+    expect(m.html).not.toContain('Recuerden subir el boletín');
   });
 
   it('"Ninguna me encaja": libera la fecha, anula en el calendario y avisa a secretaría', async () => {
@@ -362,7 +391,7 @@ describe('Admisión y citación', () => {
     expect(activas).toHaveLength(0);
     await enviarCorreos();
     expect(ultimoPara('secretaria@albaydar.org').html).toContain('Martes o jueves a partir de las 17:00');
-    expect(ultimoPara('epena@correo.es').attachments[0]!.content.toString()).toContain('METHOD:CANCEL');
+    expect(ultimoPara('epena@example.com').attachments[0]!.content.toString()).toContain('METHOD:CANCEL');
   });
 
   it('"Proponer nuevas fechas" invalida el enlace anterior', async () => {
@@ -370,7 +399,7 @@ describe('Admisión y citación', () => {
     expect(r.status).toBe(201);
     expect((await request(app).get(`/api/public/citas/${tokenCita}`)).body.error.code).toBe('PROPUESTA_SUSTITUIDA');
     await enviarCorreos();
-    tokenCita = tokenDe(ultimoPara('epena@correo.es').text, '/cita');
+    tokenCita = tokenDe(ultimoPara('epena@example.com').text, '/cita');
   });
 
   it('sin respuesta en 3 días: un único recordatorio con plantilla HTML', async () => {
@@ -378,9 +407,9 @@ describe('Admisión y citación', () => {
     expect(await recordatoriosPropuesta()).toBeGreaterThanOrEqual(1);
     expect(await recordatoriosPropuesta()).toBe(0);
     await enviarCorreos();
-    const m = ultimoPara('epena@correo.es');
-    expect(m.subject).toBe('Recordatorio: elige la fecha de la entrevista de Lucía Márquez Peña');
-    expect(m.html).toContain('Te las tenemos reservadas');
+    const m = ultimoPara('epena@example.com');
+    expect(m.subject).toBe('Recordatorio: falta elegir la fecha de la entrevista de Lucía Márquez Peña');
+    expect(m.html).toContain('Se las tenemos reservadas');
     expect((await request(app).get(`/api/public/citas/${tokenDe(m.text, '/cita')}`)).status).toBe(200);
   });
 
@@ -397,13 +426,13 @@ describe('Plantillas de correo (Comunicaciones)', () => {
   let idPropuesta = '';
   let idRecordatorio = '';
 
-  it('lista una plantilla por evento, con las de fases futuras en borrador', async () => {
+  it('lista una plantilla por evento: con la matrícula construida, ya no queda ninguna de una fase futura', async () => {
     const r = await request(app).get('/api/comunicaciones/plantillas').set(auth());
     const porEvento = Object.fromEntries(r.body.items.map((p: { evento: string; estado: string }) => [p.evento, p.estado]));
     expect(porEvento).toMatchObject({
       CITA_CONFIRMADA: 'ACTIVADA', CITACION_RECORDATORIO: 'ACTIVADA', ENTREVISTA_RECORDATORIO: 'ACTIVADA',
       ADMITIDA: 'ACTIVADA', EN_ESPERA: 'ACTIVADA', NO_ADMITIDA: 'ACTIVADA', RECORDATORIO_PAGO: 'ACTIVADA', RESERVA_VENCIDA: 'ACTIVADA',
-      MATRICULA_CONFIRMADA: 'BORRADOR',
+      MATRICULA_CONFIRMADA: 'ACTIVADA', MATRICULA_RECIBIDA: 'ACTIVADA', MATRICULA_DEVUELTA: 'ACTIVADA',
     });
     idPropuesta = r.body.items.find((p: { evento: string }) => p.evento === 'CITACION_PROPUESTA').id;
     idRecordatorio = r.body.items.find((p: { evento: string }) => p.evento === 'CITACION_RECORDATORIO').id;
@@ -437,7 +466,7 @@ describe('Plantillas de correo (Comunicaciones)', () => {
     const r = await request(app).post(`/api/solicitudes/${s.id}/citar`).set(auth()).send({ inicios: [iso(dia(4), '09:00')] });
     expect(r.status).toBe(201);
     await enviarCorreos();
-    const m = ultimoPara('rsalas@correo.es');
+    const m = ultimoPara('rsalas@example.com');
     expect(m.subject).toBe('Carmen Vega Salas: elige tu entrevista');
     expect(m.html).toMatch(/<a href="http:\/\/localhost:4200\/cita\/[A-Za-z0-9_-]+">Elegir<\/a>/);
   });
@@ -452,7 +481,7 @@ describe('Plantillas de correo (Comunicaciones)', () => {
     const s = (await request(app).get('/api/solicitudes?q=Carmen').set(auth())).body.items[0];
     await request(app).post(`/api/solicitudes/${s.id}/citar`).set(auth()).send({ inicios: [iso(dia(4), '13:00')] });
     await enviarCorreos();
-    expect(ultimoPara('rsalas@correo.es').subject).toMatch(/^Elige la fecha de la entrevista de Carmen/);
+    expect(ultimoPara('rsalas@example.com').subject).toMatch(/^Fechas para la entrevista de admisión de Carmen/);
   });
 
   it('crear una plantilla activada pasa la anterior del evento a borrador', async () => {
@@ -460,6 +489,18 @@ describe('Plantillas de correo (Comunicaciones)', () => {
     expect(r.body.estado).toBe('ACTIVADA');
     const lista = (await request(app).get('/api/comunicaciones/plantillas').set(auth())).body.items.filter((p: { evento: string }) => p.evento === 'SOLICITUD_RECIBIDA');
     expect(lista.map((p: { estado: string }) => p.estado).sort()).toEqual(['ACTIVADA', 'BORRADOR']);
+  });
+
+  it('al arrancar, las plantillas que nadie ha editado pasan a la predeterminada actual; las editadas no', async () => {
+    // Texto antiguo de la semilla (sin actualizadoPorId) frente a una editada desde Comunicaciones.
+    await db.update(plantillasCorreo).set({ asunto: 'Asunto antiguo {{alumna}}' }).where(eq(plantillasCorreo.evento, 'NO_ADMITIDA'));
+    await sembrarBase(db);
+    const porEvento = (evento: string) => db.select().from(plantillasCorreo).where(eq(plantillasCorreo.evento, evento));
+    const [noAdmitida] = await porEvento('NO_ADMITIDA');
+    expect(noAdmitida!.asunto).toBe(EVENTOS.find((e) => e.clave === 'NO_ADMITIDA')!.predeterminada.asunto);
+    expect(noAdmitida!.estado).toBe('ACTIVADA');
+    const [recordatorio] = await porEvento('CITACION_RECORDATORIO');
+    expect(recordatorio!.estado).toBe('BORRADOR'); // la pasó a borrador secretaría
   });
 
   it('"Enviar prueba" y el histórico de envíos', async () => {
@@ -493,7 +534,7 @@ describe('Contrato con el front: bandeja, kanban y avisos', () => {
   it('el formulario público acepta "Asignada por la Junta (SNEC)"', async () => {
     const r = await request(app).post('/api/public/solicitudes').send({
       viaId: viaBach, alumnaNombre: 'Ana', alumnaApellidos: 'Ruiz Campos', centroProcedencia: 'IES Bécquer', tutorNombre: 'Pilar Campos Ortega',
-      email: 'pcampos@correo.es', telefono: '+34 655 210 334', consentimientoPrivacidad: true, asignadaSnec: true, website: '',
+      email: 'pcampos@example.com', telefono: '+34 655 210 334', consentimientoPrivacidad: true, asignadaSnec: true, website: '',
     });
     expect(r.status).toBe(201);
     const [item] = (await request(app).get('/api/solicitudes?q=Ana Ruiz').set(auth())).body.items;
@@ -514,7 +555,7 @@ describe('Contrato con el front: bandeja, kanban y avisos', () => {
       ['10:00 – 10:45', 'RESERVADA'],
     ]);
     await enviarCorreos();
-    tokenAna = tokenDe(ultimoPara('pcampos@correo.es').text, '/cita');
+    tokenAna = tokenDe(ultimoPara('pcampos@example.com').text, '/cita');
   });
 
   it('elegir devuelve la cita completa, como GET /citas/:token', async () => {
@@ -615,7 +656,7 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
 
   /** Solicitud con la entrevista ya hecha, lista para decidir (alta interna: no gasta el límite del formulario público). */
   async function evaluada(nombre: string) {
-    const email = `${nombre.toLowerCase()}.f3@correo.es`;
+    const email = `${nombre.toLowerCase()}.f3@example.com`;
     const r = await request(app)
       .post('/api/solicitudes')
       .set(auth())
@@ -663,6 +704,12 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     expect(r.body.reserva).toMatchObject({ estado: 'PENDIENTE', pagado: 10000, pendiente: 20000 });
     primerCobro = r.body.cobro.id;
     expect((await ficha(sara.id)).estado).toBe('ADMITIDA');
+    // Justificante a la familia: el recibo y lo que falta.
+    expect(r.body.notificado).toBe(true);
+    await enviarCorreos();
+    const justificante = ultimoPara(sara.email);
+    expect(justificante.subject).toBe(`Pago recibido · Sara Fase Tres · recibo ${r.body.cobro.reciboNumero}`);
+    expect(justificante.html).toMatch(/Quedan 200,00.€ por pagar antes del/);
     const demasiado = await cobrar({ solicitudId: sara.id, importe: 25000, metodo: 'TRANSFERENCIA' });
     expect(demasiado.body.error).toMatchObject({ code: 'IMPORTE_SUPERIOR_AL_PENDIENTE', details: { pendiente: 20000 } });
   });
@@ -671,6 +718,8 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     const r = await cobrar({ solicitudId: sara.id, importe: 20000, metodo: 'TRANSFERENCIA', observaciones: 'Transferencia del 20/10' });
     expect(r.body.reserva).toMatchObject({ estado: 'PAGADA', pendiente: 0 });
     expect(r.body.cobro.reciboNumero).toMatch(/^R-\d{4}-0002$/);
+    await enviarCorreos();
+    expect(ultimoPara(sara.email).html).toContain('Con este pago, la plaza de Sara Fase Tres queda reservada.');
     expect((await ficha(sara.id)).estado).toBe('PLAZA_RESERVADA');
     const pagos = await request(app).get(`/api/cobros?solicitudId=${sara.id}`).set(auth('administracion'));
     expect(pagos.body).toMatchObject({ total: 2, suma: 30000 });
@@ -716,8 +765,12 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     const tarjeta = k.body.columnas.flatMap((c: { items: { id: string }[] }) => c.items).find((i: { id: string }) => i.id === lucas.id);
     expect(tarjeta.reserva).toMatchObject({ estado: 'VENCIDA', diasRestantes: -1 });
     // La plaza no se libera sola: si la familia paga tarde, se registra igual.
-    const r = await cobrar({ solicitudId: lucas.id, importe: 30000, metodo: 'TRANSFERENCIA' });
+    // Sin notificar: no sale el justificante.
+    const r = await cobrar({ solicitudId: lucas.id, importe: 30000, metodo: 'TRANSFERENCIA', notificar: false });
     expect(r.body.reserva.estado).toBe('PAGADA');
+    expect(r.body.notificado).toBe(false);
+    await enviarCorreos();
+    expect(ultimoPara(lucas.email).subject).not.toMatch(/^Pago recibido/);
     expect((await ficha(lucas.id)).estado).toBe('PLAZA_RESERVADA');
   });
 
@@ -777,11 +830,14 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     expect(r.body.html).toContain('250,00'); // importe de su vía (excepción configurada arriba)
     const espera = await previa({ decision: 'EN_ESPERA', motivo: 'Grupo completo.' }, 'secretaria'); // Secretaría ve Evaluación
     expect(espera.body.html).toContain('posición <strong>2</strong>'); // Berta ya está la 1.ª
-    expect((await previa({ decision: 'ADMITIDA' }, 'comercial')).status).toBe(403);
+    // Comercial ve Evaluación (ajuste A2) pero no decide.
+    expect((await previa({ decision: 'ADMITIDA' }, 'comercial')).status).toBe(200);
+    expect((await request(app).post(`/api/solicitudes/${nora.id}/decision`).set(auth('comercial')).send({ decision: 'ADMITIDA', notificar: false })).status).toBe(403);
+    expect((await previa({ decision: 'ADMITIDA' }, 'administracion')).status).toBe(403);
     // Nada ha cambiado.
     expect(await ficha(nora.id)).toMatchObject({ estado: 'ENTREVISTA_REALIZADA', reserva: null });
     const recibida = (await request(app).post('/api/solicitudes').set(auth()).send({
-      viaId: viaBach, alumnaNombre: 'Sin', alumnaApellidos: 'Entrevista', tutorNombre: 'Tutor', email: 'sin.entrevista@correo.es',
+      viaId: viaBach, alumnaNombre: 'Sin', alumnaApellidos: 'Entrevista', tutorNombre: 'Tutor', email: 'sin.entrevista@example.com',
       telefono: '+34 611 399 999', centroProcedencia: 'IES Bécquer', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
     })).body;
     expect((await request(app).post(`/api/solicitudes/${recibida.id}/decision/previsualizar`).set(auth('direccion')).send({ decision: 'ADMITIDA' })).body.error.code).toBe('TRANSICION_NO_PERMITIDA');
@@ -831,6 +887,7 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     const olga = await evaluada('Olga');
     await db.update(solicitudes).set({ estado: 'ADMITIDA' }).where(eq(solicitudes.id, olga.id)); // como con el PATCH antiguo
     expect((await ficha(olga.id)).siguientes.map((s: { estado: string }) => s.estado)).not.toContain('PLAZA_RESERVADA');
+    await enviarCorreos(); // lo que dejaron en cola los tests anteriores (p. ej. justificantes de pago)
     const correosAntes = buzon.length;
     await db.execute(sql.raw(await readFile('./drizzle/0004_reservas_admitidas_antiguas.sql', 'utf8')));
     const f = await ficha(olga.id);
@@ -842,5 +899,725 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     // Es idempotente: volver a ejecutarla no crea otra.
     await db.execute(sql.raw(await readFile('./drizzle/0004_reservas_admitidas_antiguas.sql', 'utf8')));
     expect((await db.select().from(reservas).where(eq(reservas.solicitudId, olga.id))).length).toBe(1);
+  });
+
+  it('admitir con un plazo más corto: entre mañana y el plazo general; el correo dice los días reales', async () => {
+    const pilar = await evaluada('Pilar');
+    const hoy = fechaLocal(new Date());
+    const en = (n: number) => fechaLocal(sumarDias(new Date(), n));
+    for (const fecha of [hoy, en(16)]) {
+      const r = await decidir(pilar.id, { decision: 'ADMITIDA', fechaLimite: fecha });
+      expect(r.body.error.code).toBe('FECHA_LIMITE_FUERA_DE_PLAZO');
+    }
+    expect((await ficha(pilar.id)).estado).toBe('ENTREVISTA_REALIZADA'); // nada a medias
+
+    const previa = await request(app).post(`/api/solicitudes/${pilar.id}/decision/previsualizar`).set(auth('direccion')).send({ decision: 'ADMITIDA', fechaLimite: en(5) });
+    expect(previa.body.html).toContain('(5 días naturales)');
+
+    const r = await decidir(pilar.id, { decision: 'ADMITIDA', fechaLimite: en(5) });
+    expect(r.status).toBe(200);
+    expect(r.body.reserva).toMatchObject({ fechaLimite: en(5), diasRestantes: 5 });
+    await enviarCorreos();
+    expect(ultimoPara(pilar.email).html).toContain('(5 días naturales)');
+  });
+
+  it('cambiar el plazo de una reserva: acortar, ampliar una vencida (vuelve a pendiente), límites y aviso', async () => {
+    const rocio = await evaluada('Rocio');
+    const reservaId = (await decidir(rocio.id, { decision: 'ADMITIDA', notificar: false })).body.reserva.id as string;
+    const plazo = (body: Record<string, unknown>, quien = 'direccion') => request(app).patch(`/api/reservas/${reservaId}/plazo`).set(auth(quien)).send(body);
+    const en = (n: number) => fechaLocal(sumarDias(new Date(), n));
+
+    expect((await plazo({ fechaLimite: en(-1) })).body.error.code).toBe('FECHA_LIMITE_PASADA');
+    expect((await plazo({ fechaLimite: en(91) })).body.error.code).toBe('FECHA_LIMITE_FUERA_DE_PLAZO');
+    expect((await plazo({ fechaLimite: en(15) })).body.error.code).toBe('MISMA_FECHA_LIMITE');
+    expect((await plazo({ fechaLimite: en(5) }, 'comercial')).status).toBe(403);
+
+    // Acortar (pocas plazas), sin avisar.
+    const corto = await plazo({ fechaLimite: en(7), motivo: 'Quedan pocas plazas', notificar: false });
+    expect(corto.body).toMatchObject({ estado: 'PENDIENTE', fechaLimite: en(7), diasRestantes: 7, notificada: false });
+
+    // Vence… y se amplía por fuerza mayor, avisando: vuelve a pendiente y la familia recibe la nueva fecha.
+    await db.update(reservas).set({ fechaLimite: en(-2) }).where(eq(reservas.id, reservaId));
+    await vencerReservas();
+    expect((await ficha(rocio.id)).reserva.estado).toBe('VENCIDA');
+    const largo = await plazo({ fechaLimite: en(2), motivo: 'Fuerza mayor: hospitalización' });
+    expect(largo.body).toMatchObject({ estado: 'PENDIENTE', fechaLimite: en(2), notificada: true });
+    await enviarCorreos();
+    expect(ultimoPara(rocio.email).subject).toMatch(/^Recordatorio: la reserva de plaza de Rocio/);
+    // A 2 días, el aviso hace de recordatorio: el automático no repite.
+    expect(await recordatoriosPago()).toBe(0);
+
+    const f = await ficha(rocio.id);
+    const cambios = f.eventos.filter((e: { tipo: string }) => e.tipo === 'PLAZO_RESERVA_CAMBIADO');
+    expect(cambios).toHaveLength(2);
+    expect(cambios.map((e: { detalle: { motivo: string } }) => e.detalle.motivo).sort()).toEqual(['Fuerza mayor: hospitalización', 'Quedan pocas plazas']);
+  });
+
+  it('liberar la plaza de una reserva sin pagar (A5): con cobros no; descarta, avisa y dice cuántas esperan', async () => {
+    const lidia = await evaluada('Lidia');
+    const reservaId = (await decidir(lidia.id, { decision: 'ADMITIDA', notificar: false })).body.reserva.id as string;
+    const espera = await evaluada('Esther');
+    await decidir(espera.id, { decision: 'EN_ESPERA', notificar: false });
+    const liberar = (body: Record<string, unknown>, quien = 'secretaria') => request(app).post(`/api/reservas/${reservaId}/liberar`).set(auth(quien)).send(body);
+
+    expect((await liberar({ motivo: 'No ha pagado' }, 'administracion')).status).toBe(403);
+    expect((await liberar({ motivo: '  ' })).body.error.code).toBe('DATOS_INVALIDOS');
+
+    // Con un cobro parcial no se libera: primero se anula el cobro.
+    const cobro = (await cobrar({ solicitudId: lidia.id, importe: 5000, metodo: 'EFECTIVO', notificar: false })).body.cobro.id as string;
+    expect((await liberar({ motivo: 'No ha pagado' })).body.error.code).toBe('RESERVA_CON_COBROS');
+    await request(app).post(`/api/cobros/${cobro}/anular`).set(auth('administracion')).send({ motivo: 'Cobro de prueba' });
+
+    // Vencida: secretaría la libera y avisa a la familia.
+    await db.update(reservas).set({ fechaLimite: fechaLocal(sumarDias(new Date(), -1)) }).where(eq(reservas.id, reservaId));
+    await vencerReservas();
+    const r = await liberar({ motivo: 'No ha pagado en plazo y no contesta' });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ estado: 'DESCARTADA', notificada: true });
+    expect(r.body.enEspera).toBeGreaterThanOrEqual(1);
+
+    const f = await ficha(lidia.id);
+    expect(f.estado).toBe('DESCARTADA');
+    expect(f.reserva).toBeNull();
+    const ev = f.eventos.find((e: { tipo: string }) => e.tipo === 'PLAZA_LIBERADA');
+    expect(ev).toMatchObject({ deEstado: 'ADMITIDA', aEstado: 'DESCARTADA', detalle: { motivo: 'No ha pagado en plazo y no contesta' } });
+    await enviarCorreos();
+    const aviso = ultimoPara(lidia.email);
+    expect(aviso.subject).toBe(`Reserva de plaza sin completar · Lidia Fase Tres · ${f.codigo}`);
+    expect(aviso.html).not.toContain('no contesta'); // el motivo es interno
+
+    // Ya no hay nada que liberar; la solicitud se puede reabrir.
+    expect((await liberar({ motivo: 'otra vez' })).body.error.code).toBe('RESERVA_NO_PENDIENTE');
+    const reabrir = await request(app).patch(`/api/solicitudes/${lidia.id}/estado`).set(auth()).send({ estado: 'EN_REVISION' });
+    expect(reabrir.status).toBe(200);
+  });
+});
+
+describe('Cola de correos', () => {
+  it('envía en el orden en que se encolaron, también dentro de una misma transacción', async () => {
+    await enviarCorreos();
+    const para = 'orden.cola@example.com';
+    const asuntos = Array.from({ length: 15 }, (_, i) => `Correo ${String(i + 1).padStart(2, '0')}`);
+    await db.transaction(async (tx) => {
+      for (const asunto of asuntos) {
+        await encolarCorreo(tx, { plantilla: 'PRUEBA', para, correo: { asunto, html: `<p>${asunto}</p>`, texto: asunto } });
+      }
+    });
+    await enviarCorreos();
+    expect(buzon.filter((m) => m.to === para).map((m) => m.subject)).toEqual(asuntos);
+  });
+
+  it('respeta la hora programada aunque se encolaran en otro orden', async () => {
+    await enviarCorreos();
+    const para = 'orden.programado@example.com';
+    const base = Date.now() - 60_000;
+    // Se encolan del último al primero: el orden físico de las filas es el inverso al de envío.
+    for (let i = 15; i >= 1; i--) {
+      const asunto = `Programado ${String(i).padStart(2, '0')}`;
+      await db.transaction((tx) =>
+        encolarCorreo(tx, { plantilla: 'PRUEBA', para, correo: { asunto, html: `<p>${asunto}</p>`, texto: asunto }, programadoPara: new Date(base + i * 1000) }),
+      );
+    }
+    await enviarCorreos();
+    expect(buzon.filter((m) => m.to === para).map((m) => m.subject)).toEqual(
+      Array.from({ length: 15 }, (_, i) => `Programado ${String(i + 1).padStart(2, '0')}`),
+    );
+  });
+});
+
+describe('Código de la solicitud por tipo (reunión del 21/10/2026)', () => {
+  const alta = async (viaId: string, nombre: string) => {
+    // Las vías de ciclos piden ciclo (A6): el primero de su familia.
+    const [via] = await db.select().from(vias).where(eq(vias.id, viaId));
+    const [ciclo] = await db.select().from(ciclos).where(eq(ciclos.familia, via!.familia)).limit(1);
+    return request(app).post('/api/solicitudes').set(auth()).send({
+      viaId, cicloId: ciclo?.id, alumnaNombre: nombre, alumnaApellidos: 'Código Prueba', tutorNombre: 'Tutora Prueba',
+      email: `${nombre.toLowerCase()}@example.com`, telefono: '+34 600 000 000', canal: 'TELEFONO', consentimientoPrivacidad: true,
+    });
+  };
+
+  it('series B, CC y CP con el año de inicio de los estudios, cada una con su contador (A1)', async () => {
+    const [gm] = await db.insert(vias).values({ familia: 'CICLOS_CONCERTADOS_GM', curso: 1, nombre: 'GM concertado 1º', cursoEscolar: '2027-2028', plazas: 20 }).returning();
+    const [gsp] = await db.insert(vias).values({ familia: 'CICLOS_PRIVADOS_GS', curso: 1, nombre: 'GS privado 1º', cursoEscolar: '2027-2028', plazas: 20 }).returning();
+
+    // El año es el de inicio de los estudios (curso 2027-2028), no el de la solicitud.
+    const ciclo = await alta(gm!.id, 'Ciclo');
+    expect(ciclo.status).toBe(201);
+    expect(ciclo.body.codigo).toBe('CC2027-0001');
+    expect((await alta(gm!.id, 'Ciclodos')).body.codigo).toBe('CC2027-0002');
+    expect((await alta(gsp!.id, 'Privada')).body.codigo).toBe('CP2027-0001');
+
+    // Bachillerato sigue su propia serie, con el año de su vía; sin guion entre serie y año.
+    const [vb] = await db.select({ cursoEscolar: vias.cursoEscolar }).from(vias).where(eq(vias.id, viaBach));
+    const bach = (await alta(viaBach, 'Bachi')).body.codigo as string;
+    expect(bach).toMatch(new RegExp(`^B${vb!.cursoEscolar.slice(0, 4)}-\\d{4}$`));
+  });
+});
+
+describe('Ciclo de la solicitud (A6, entrega 1)', () => {
+  const cicloDe = async (nombre: string) => (await db.select().from(ciclos).where(eq(ciclos.nombre, nombre)))[0]!;
+  const datos = (viaId: string, nombre: string, extra: Record<string, unknown> = {}) => ({
+    viaId, alumnaNombre: nombre, alumnaApellidos: 'Ciclo Prueba', tutorNombre: `Tutora de ${nombre}`, centroProcedencia: 'IES Ciclos',
+    email: `${nombre.toLowerCase()}.ciclo@example.com`, telefono: '+34 600 600 600', consentimientoPrivacidad: true, ...extra,
+  });
+
+  it('el formulario público ofrece los ciclos de cada familia y Bachillerato no lleva', async () => {
+    const r = await request(app).get('/api/public/vias');
+    const familias = Object.fromEntries((r.body.familias as { familia: string; ciclos: { nombre: string }[] }[]).map((f) => [f.familia, f.ciclos.map((c) => c.nombre)]));
+    expect(familias['BACHILLERATO']).toEqual([]);
+    const todos = (await request(app).get('/api/catalogo/ciclos').set(auth())).body.items as { nombre: string; familia: string }[];
+    expect(todos.map((c) => c.nombre).sort()).toEqual([
+      'Actividades Comerciales', 'Administración y Finanzas', 'Asistencia a la Dirección', 'Comercio Internacional',
+      'Educación Infantil', 'Gestión Administrativa', 'Integración Social', 'Marketing y Publicidad',
+    ]);
+    expect(todos.filter((c) => c.familia === 'CICLOS_PRIVADOS_GS').map((c) => c.nombre)).toEqual(['Integración Social', 'Marketing y Publicidad']);
+  });
+
+  it('obligatorio en las vías de ciclos y de su misma familia; se filtra, se exporta y se corrige desde la ficha', async () => {
+    await db.insert(vias).values({ familia: 'CICLOS_PRIVADOS_GS', curso: 1, nombre: 'GS privado 1º', cursoEscolar: '2027-2028', plazas: 20 }).onConflictDoNothing();
+    const [gsp] = await db.select().from(vias).where(and(eq(vias.familia, 'CICLOS_PRIVADOS_GS'), eq(vias.curso, 1), eq(vias.cursoEscolar, '2027-2028')));
+    const marketing = await cicloDe('Marketing y Publicidad');
+    const integracion = await cicloDe('Integración Social');
+    const infantil = await cicloDe('Educación Infantil'); // GS concertado: otra familia
+
+    const sin = await request(app).post('/api/solicitudes').set(auth()).send(datos(gsp!.id, 'Sinciclo'));
+    expect(sin.body.error.code).toBe('CICLO_OBLIGATORIO');
+    const otra = await request(app).post('/api/solicitudes').set(auth()).send(datos(gsp!.id, 'Otrafamilia', { cicloId: infantil.id }));
+    expect(otra.body.error.code).toBe('CICLO_NO_VALIDO');
+    const bach = await request(app).post('/api/solicitudes').set(auth()).send(datos(viaBach, 'Bachciclo', { cicloId: marketing.id }));
+    expect(bach.body.error.code).toBe('CICLO_NO_VALIDO');
+
+    const ok = await request(app).post('/api/solicitudes').set(auth()).send(datos(gsp!.id, 'Conciclo', { cicloId: marketing.id }));
+    expect(ok.status).toBe(201);
+    expect((await request(app).get(`/api/solicitudes/${ok.body.id}`).set(auth())).body.ciclo).toEqual({ id: marketing.id, nombre: 'Marketing y Publicidad' });
+
+    const filtrada = (await request(app).get(`/api/solicitudes?ciclo=${marketing.id}`).set(auth())).body.items as { id: string; ciclo: { nombre: string } }[];
+    expect(filtrada.map((s) => s.id)).toContain(ok.body.id);
+    expect(filtrada.every((s) => s.ciclo.nombre === 'Marketing y Publicidad')).toBe(true);
+    expect((await request(app).get(`/api/solicitudes?ciclo=${integracion.id}`).set(auth())).body.items.map((s: { id: string }) => s.id)).not.toContain(ok.body.id);
+
+    const csv = (await request(app).get(`/api/solicitudes/exportar?q=Conciclo`).set(auth())).text.replace(/^﻿/, '').trimEnd().split('\r\n');
+    const cab = csv[0]!.split(';');
+    expect(csv[1]!.split(';')[cab.indexOf('Ciclo')]).toBe('Marketing y Publicidad');
+
+    // Secretaría lo corrige (o lo pone en una solicitud antigua), siempre dentro de la familia,
+    // sin tocar lo demás de la gestión (las observaciones internas se quedan).
+    expect((await request(app).patch(`/api/solicitudes/${ok.body.id}`).set(auth()).send({ observacionesInternas: 'Llamó para preguntar por las prácticas.' })).status).toBe(200);
+    const [otro] = await db.select({ id: usuarios.id }).from(usuarios).where(eq(usuarios.activo, true)).limit(1);
+    expect((await request(app).patch(`/api/solicitudes/${ok.body.id}`).set(auth()).send({ responsableId: otro!.id })).status).toBe(200);
+    expect((await request(app).patch(`/api/solicitudes/${ok.body.id}`).set(auth()).send({ cicloId: infantil.id })).body.error.code).toBe('CICLO_NO_VALIDO');
+    expect((await request(app).patch(`/api/solicitudes/${ok.body.id}`).set(auth()).send({ cicloId: null })).body.error.code).toBe('CICLO_OBLIGATORIO');
+    expect((await request(app).patch(`/api/solicitudes/${ok.body.id}`).set(auth()).send({ cicloId: integracion.id })).status).toBe(200);
+    const det = (await request(app).get(`/api/solicitudes/${ok.body.id}`).set(auth())).body;
+    expect(det.ciclo.nombre).toBe('Integración Social');
+    expect(det.observacionesInternas).toBe('Llamó para preguntar por las prácticas.');
+    expect(det.eventos.find((e: { tipo: string }) => e.tipo === 'GESTION_ACTUALIZADA').detalle).toMatchObject({ campos: ['cicloId'], cicloAnterior: marketing.id, cicloNuevo: integracion.id });
+  });
+});
+
+describe('Plazas por ciclo (A6, entrega 2)', () => {
+  it('cada ciclo con sus plazas: la vía es la suma y la revisión, la lista de espera y «Liberar plaza» van por ciclo', async () => {
+    const cicloDe = async (nombre: string) => (await db.select().from(ciclos).where(eq(ciclos.nombre, nombre)))[0]!;
+    const marketing = await cicloDe('Marketing y Publicidad');
+    const integracion = await cicloDe('Integración Social');
+
+    // Una vía de ciclos nueva nace con una fila a 0 por ciclo: las plazas de la vía son su suma.
+    const nueva = await request(app).post('/api/catalogo/vias').set(auth('direccion')).send({
+      familia: 'CICLOS_PRIVADOS_GS', curso: 1, nombre: 'GS privado 1º (2030)', cursoEscolar: '2030-2031', plazas: 99,
+    });
+    expect(nueva.status).toBe(201);
+    expect(nueva.body.plazas).toBe(0);
+    const viaId = nueva.body.id as string;
+    const plazas = (cicloId: string, n: number) => request(app).patch(`/api/catalogo/vias/${viaId}/ciclos/${cicloId}`).set(auth('direccion')).send({ plazas: n });
+    expect((await request(app).patch(`/api/catalogo/vias/${viaId}`).set(auth('direccion')).send({ plazas: 5 })).body.error.code).toBe('PLAZAS_POR_CICLO');
+    expect((await plazas(marketing.id, 1)).body).toMatchObject({ plazas: 1, via: { plazas: 1 } });
+    expect((await plazas(integracion.id, 2)).body).toMatchObject({ plazas: 2, via: { plazas: 3 } });
+    expect((await request(app).patch(`/api/catalogo/vias/${viaId}/ciclos/${marketing.id}`).set(auth()).send({ plazas: 9 })).status).toBe(403);
+
+    let telefono = 0;
+    const alta = async (nombre: string, cicloId: string) =>
+      (await request(app).post('/api/solicitudes').set(auth()).send({
+        viaId, cicloId, alumnaNombre: nombre, alumnaApellidos: 'Plazas Ciclo', tutorNombre: `Tutora de ${nombre}`, centroProcedencia: 'IES Plazas',
+        email: `${nombre.toLowerCase()}.plazas@example.com`, telefono: `+34 622 700 ${String(++telefono).padStart(3, '0')}`, consentimientoPrivacidad: true,
+      })).body.id as string;
+    const decidir = async (id: string, decision: string) => {
+      await db.update(solicitudes).set({ estado: 'ENTREVISTA_REALIZADA' }).where(eq(solicitudes.id, id));
+      expect((await request(app).post(`/api/solicitudes/${id}/decision`).set(auth('direccion')).send({ decision, notificar: false })).status).toBe(200);
+    };
+    const ficha = async (id: string) => (await request(app).get(`/api/solicitudes/${id}`).set(auth())).body;
+    const plazasDe = (f: { revision: { checks: { id: string; texto: string }[] } }) => f.revision.checks.find((c) => c.id === 'plazas')!.texto;
+
+    const admitida = await alta('Plazauno', marketing.id);
+    await decidir(admitida, 'ADMITIDA');
+    const otraMarketing = await alta('Plazados', marketing.id);
+    const deIntegracion = await alta('Plazatres', integracion.id);
+    expect(plazasDe(await ficha(otraMarketing))).toBe('GS privado 1º (2030) · Marketing y Publicidad: sin plazas libres · la solicitud iría a lista de espera');
+    expect(plazasDe(await ficha(deIntegracion))).toBe('GS privado 1º (2030) · Integración Social: 2 plazas libres');
+
+    const item = ((await request(app).get('/api/catalogo/vias').set(auth())).body.items as { id: string }[]).find((x) => x.id === viaId);
+    expect(item).toMatchObject({
+      plazas: 3, ocupadas: 1, libres: 2, plazasPorCiclo: true,
+      ciclos: [
+        { nombre: 'Integración Social', plazas: 2, ocupadas: 0, libres: 2 },
+        { nombre: 'Marketing y Publicidad', plazas: 1, ocupadas: 1, libres: 0 },
+      ],
+    });
+
+    // Cada ciclo tiene su lista de espera.
+    await decidir(otraMarketing, 'EN_ESPERA');
+    await decidir(deIntegracion, 'EN_ESPERA');
+    expect((await ficha(otraMarketing)).posicionEspera).toBe(1);
+    expect((await ficha(deIntegracion)).posicionEspera).toBe(1);
+
+    // Al liberar la plaza de Marketing, el aviso cuenta solo la lista de Marketing.
+    const reservaId = (await ficha(admitida)).reserva.id as string;
+    const liberada = await request(app).post(`/api/reservas/${reservaId}/liberar`).set(auth()).send({ motivo: 'Prueba de plazas por ciclo.', notificar: false });
+    expect(liberada.body).toMatchObject({ estado: 'DESCARTADA', enEspera: 1, via: 'GS privado 1º (2030) · Marketing y Publicidad' });
+  });
+});
+
+describe('Entrevista previa: «¿Ya tuvo entrevista? Sí» (paso 6 del diagrama)', () => {
+  let telefono = 0;
+  const alta = async (nombre: string, extra: Record<string, unknown> = {}) =>
+    (
+      await request(app)
+        .post('/api/solicitudes')
+        .set(auth())
+        .send({
+          viaId: viaBach, alumnaNombre: nombre, alumnaApellidos: 'Entrevista Previa', tutorNombre: `Familia de ${nombre}`,
+          email: `${nombre.toLowerCase()}.previa@example.com`, telefono: `+34 611 400 ${String(++telefono).padStart(3, '0')}`,
+          centroProcedencia: 'IES Previa', canal: 'PRESENCIAL', consentimientoPrivacidad: true, ...extra,
+        })
+    ).body.id as string;
+  const previa = (id: string, body: Record<string, unknown>) =>
+    request(app).post(`/api/solicitudes/${id}/entrevista-previa`).set(auth()).send(body);
+  const ficha = async (id: string) => (await request(app).get(`/api/solicitudes/${id}`).set(auth('direccion'))).body;
+  const ayer = fechaLocal(sumarDias(new Date(), -1));
+
+  it('se registra sin cita y la solicitud pasa directa a decisión', async () => {
+    const id = await alta('Previa');
+    expect((await ficha(id)).siguientes).toContainEqual({ estado: 'ENTREVISTA_REALIZADA', columna: 'evaluada', accion: 'REGISTRAR_ENTREVISTA_PREVIA' });
+
+    const r = await previa(id, { fecha: ayer, notas: 'Entrevistada en las jornadas de puertas abiertas.' });
+    expect(r.status).toBe(201);
+    expect(r.body).toMatchObject({ estado: 'ENTREVISTA_REALIZADA', entrevista: { estado: 'REALIZADA', notas: 'Entrevistada en las jornadas de puertas abiertas.' } });
+
+    const f = await ficha(id);
+    expect(f.estado).toBe('ENTREVISTA_REALIZADA');
+    expect(f.eventos.map((e: { tipo: string }) => e.tipo)).toContain('ENTREVISTA_PREVIA');
+    expect(f.siguientes.map((s: { accion?: string }) => s.accion)).toContain('DECIDIR');
+
+    // En el calendario consta como realizada, sin ocupar la agenda.
+    const cal = (await request(app).get(`/api/entrevistas?desde=${ayer}&hasta=${ayer}`).set(auth())).body;
+    expect(cal.items.find((e: { solicitud: { id: string } }) => e.solicitud.id === id)).toMatchObject({
+      estado: 'REALIZADA',
+      lugar: 'Entrevista previa (registrada sin cita)',
+    });
+  });
+
+  it('anula las fechas que se le habían propuesto y las devuelve a la agenda', async () => {
+    const id = await alta('Propuesta');
+    expect((await request(app).post(`/api/solicitudes/${id}/citar`).set(auth()).send({ inicios: [iso(dia(9), '10:00')], duracion: 45 })).status).toBe(201);
+    expect((await previa(id, { fecha: ayer })).status).toBe(201);
+    const disp = (await request(app).get(`/api/agenda/disponibilidad?desde=${dia(9)}&hasta=${dia(9)}&duracion=45`).set(auth())).body;
+    expect(disp.dias[0].huecos.find((h: { hora: string }) => h.hora === '10:00')).toMatchObject({ disponible: true });
+  });
+
+  it('nunca con fecha futura, ni incompleta, ni con la entrevista ya programada', async () => {
+    const id = await alta('Futura');
+    expect((await previa(id, { fecha: fechaLocal(sumarDias(new Date(), 2)) })).body.error.code).toBe('FECHA_FUTURA');
+
+    const incompleta = await alta('Incompleta', { centroProcedencia: undefined });
+    expect((await previa(incompleta, { fecha: ayer })).body.error.code).toBe('SOLICITUD_INCOMPLETA');
+
+    await db.update(solicitudes).set({ estado: 'ENTREVISTA_PROGRAMADA' }).where(eq(solicitudes.id, id));
+    expect((await previa(id, { fecha: ayer })).body.error.code).toBe('ESTADO_NO_PERMITE');
+  });
+});
+
+describe('La familia cancela su cita desde el enlace (reunión del 21/10/2026)', () => {
+  let telefono = 0;
+  const email = (nombre: string) => `${nombre.toLowerCase()}.cancela@example.com`;
+  /** Solicitud con la cita ya elegida por la familia: devuelve su id y el token del enlace. */
+  async function conCita(nombre: string, dias: number) {
+    const id = (
+      await request(app)
+        .post('/api/solicitudes')
+        .set(auth())
+        .send({
+          viaId: viaBach, alumnaNombre: nombre, alumnaApellidos: 'Cancela Cita', tutorNombre: `Familia de ${nombre}`, email: email(nombre),
+          telefono: `+34 611 500 ${String(++telefono).padStart(3, '0')}`, centroProcedencia: 'IES Cancela', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
+        })
+    ).body.id as string;
+    const cita = await request(app).post(`/api/solicitudes/${id}/citar`).set(auth()).send({ inicios: [iso(dia(dias), '09:00')], duracion: 45 });
+    expect(cita.status).toBe(201);
+    await enviarCorreos();
+    const token = tokenDe(ultimoPara(email(nombre)).text, '/cita');
+    const pagina = await request(app).get(`/api/public/citas/${token}`);
+    expect((await request(app).post(`/api/public/citas/${token}/elegir`).send({ huecoId: pagina.body.slots[0].id })).status).toBe(200);
+    return { id, token };
+  }
+
+  it('tras la entrevista, la página de la cita dice «realizada» o «no presentada» y ya no deja cancelar', async () => {
+    for (const [nombre, estado, pagina, dias] of [['Ines', 'REALIZADA', 'realizada', 16], ['Olivia', 'NO_PRESENTADA', 'no_presentada', 17]] as const) {
+      const { id, token } = await conCita(nombre, dias);
+      const [e] = await db.select().from(entrevistas).where(eq(entrevistas.solicitudId, id));
+      await db.update(entrevistas).set({ inicio: sumarDias(new Date(), -1), fin: sumarDias(new Date(), -0.9) }).where(eq(entrevistas.id, e!.id));
+      const ficha = { valoracion: 'FAVORABLE', entrevistados: ['MADRE', 'ALUMNA'] };
+      expect((await request(app).patch(`/api/entrevistas/${e!.id}`).set(auth()).send({ estado, ...(estado === 'REALIZADA' ? { ficha } : {}) })).status).toBe(200);
+      const r = await request(app).get(`/api/public/citas/${token}`);
+      expect(r.body).toMatchObject({ estado: pagina, puedeCancelar: false, puedeCambiar: false });
+    }
+  });
+
+  it('ficha de la entrevista: realizada exige valoración y entrevistados; se combina y se devuelve con la entrevista', async () => {
+    const { id } = await conCita('Paloma', 18);
+    const [e] = await db.select().from(entrevistas).where(eq(entrevistas.solicitudId, id));
+    await db.update(entrevistas).set({ inicio: sumarDias(new Date(), -1), fin: sumarDias(new Date(), -0.9) }).where(eq(entrevistas.id, e!.id));
+    const patch = (body: object) => request(app).patch(`/api/entrevistas/${e!.id}`).set(auth()).send(body);
+
+    // Sin ficha (o incompleta), no se da por realizada y la solicitud no cambia.
+    const sin = await patch({ estado: 'REALIZADA', notas: 'Muy motivada.' });
+    expect(sin.status).toBe(400);
+    expect(sin.body.error).toMatchObject({ code: 'FICHA_INCOMPLETA', details: { faltan: ['valoracion', 'entrevistados'] } });
+    expect((await request(app).get(`/api/solicitudes/${id}`).set(auth())).body.estado).toBe('ENTREVISTA_PROGRAMADA');
+
+    // Antes de la entrevista se puede ir rellenando; lo que no llega se conserva.
+    expect((await patch({ ficha: { otroCentro: true, otroCentroNombre: 'IES Murillo', notaMedia: 8.456, modalidad: 'CIENCIAS_TECNOLOGIA', optativa: 'BIOLOGIA' } })).status).toBe(200);
+    const mala = await patch({ ficha: { optativa: 'LATIN' } });
+    expect(mala.body.error).toMatchObject({ code: 'DATOS_INVALIDOS', message: 'Esa optativa no corresponde a la modalidad elegida.' });
+
+    const ok = await patch({ estado: 'REALIZADA', ficha: { valoracion: 'CON_RESERVAS', entrevistados: ['ALUMNA', 'MADRE', 'MADRE'], realizadaPor: 'Rosa Jurado' } });
+    expect(ok.status).toBe(200);
+    expect(ok.body.ficha).toMatchObject({
+      otroCentro: true, otroCentroNombre: 'IES Murillo', notaMedia: 8.46, modalidad: 'CIENCIAS_TECNOLOGIA', optativa: 'BIOLOGIA',
+      valoracion: 'CON_RESERVAS', entrevistados: ['MADRE', 'ALUMNA'], realizadaPor: 'Rosa Jurado', motivoEleccion: null,
+    });
+    // Ya realizada, no se puede vaciar lo mínimo.
+    expect((await patch({ ficha: { entrevistados: [] } })).body.error.code).toBe('FICHA_INCOMPLETA');
+
+    const sol = (await request(app).get(`/api/solicitudes/${id}`).set(auth())).body;
+    expect(sol.estado).toBe('ENTREVISTA_REALIZADA');
+    expect(sol.entrevista.ficha).toMatchObject({ valoracion: 'CON_RESERVAS', notaMedia: 8.46 });
+    const ayer = fechaLocal(sumarDias(new Date(), -1));
+    const cal = (await request(app).get(`/api/entrevistas?desde=${ayer}&hasta=${ayer}`).set(auth())).body;
+    expect(cal.items.find((i: { id: string }) => i.id === e!.id)).toMatchObject({ familiaVia: 'BACHILLERATO', cursoNumero: 1, ficha: { valoracion: 'CON_RESERVAS' } });
+  });
+
+  it('libera la hora, vuelve a revisión y avisa a secretaría', async () => {
+    const { id, token } = await conCita('Irene', 11);
+    expect((await request(app).get(`/api/public/citas/${token}`)).body).toMatchObject({ estado: 'elegida', puedeCancelar: true });
+    await enviarCorreos();
+
+    const r = await request(app).post(`/api/public/citas/${token}/cancelar`).send({ motivo: 'Coincide con un viaje familiar.' });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ estado: 'cancelada', puedeCancelar: false, puedeCambiar: false });
+    expect(r.body.slots.every((s: { disponible: boolean }) => !s.disponible)).toBe(true);
+
+    // La solicitud vuelve a la bandeja para proponer otras fechas y la hora queda libre.
+    const ficha = (await request(app).get(`/api/solicitudes/${id}`).set(auth())).body;
+    expect(ficha.estado).toBe('EN_REVISION');
+    expect(ficha.eventos.map((e: { tipo: string }) => e.tipo)).toContain('CITA_CANCELADA_FAMILIA');
+    const disp = (await request(app).get(`/api/agenda/disponibilidad?desde=${dia(11)}&hasta=${dia(11)}&duracion=45`).set(auth())).body;
+    expect(disp.dias[0].huecos.find((h: { hora: string }) => h.hora === '09:00')).toMatchObject({ disponible: true });
+
+    // Aviso en la bandeja, con la cita que era.
+    const avisos = (await request(app).get('/api/solicitudes/respuestas-familia').set(auth())).body.items;
+    expect(avisos.find((a: { solicitud: { id: string } }) => a.solicitud.id === id)).toMatchObject({
+      tipo: 'CITA_CANCELADA_FAMILIA',
+      solicitud: { estado: 'EN_REVISION' },
+      cita: { franja: '09:00 – 09:45' },
+    });
+
+    // Correo a secretaría con el motivo, y a la familia con la anulación para su calendario.
+    await enviarCorreos();
+    const aviso = ultimoPara('secretaria@albaydar.org');
+    expect(aviso.subject).toMatch(/^La familia de Irene Cancela Cita cancela la entrevista · /);
+    expect(aviso.text).toContain('Coincide con un viaje familiar.');
+    const familia = ultimoPara(email('Irene'));
+    expect(familia.subject).toMatch(/^Entrevista anulada: /);
+    expect(familia.attachments.some((a) => a.filename.endsWith('.ics'))).toBe(true);
+    // Si la familia responde a cualquier correo, le llega a secretaría.
+    expect(familia.replyTo).toBe('secretaria@albaydar.org');
+  });
+
+  it('después de cancelar no se puede volver a elegir ni a cancelar', async () => {
+    const { token } = await conCita('Julia', 14); // lunes
+    expect((await request(app).post(`/api/public/citas/${token}/cancelar`).send({})).status).toBe(200);
+    const pagina = await request(app).get(`/api/public/citas/${token}`);
+    expect(pagina.status).toBe(200);
+    expect((await request(app).post(`/api/public/citas/${token}/elegir`).send({ huecoId: pagina.body.slots[0].id })).body.error.code).toBe('CITA_CANCELADA');
+    expect((await request(app).post(`/api/public/citas/${token}/otra-franja`).send({ franja: 'Por la tarde' })).body.error.code).toBe('CITA_CANCELADA');
+    expect((await request(app).post(`/api/public/citas/${token}/cancelar`).send({})).body.error.code).toBe('CITA_CANCELADA');
+  });
+
+  it('sin fecha elegida no hay nada que cancelar', async () => {
+    const id = (
+      await request(app)
+        .post('/api/solicitudes')
+        .set(auth())
+        .send({
+          viaId: viaBach, alumnaNombre: 'Karen', alumnaApellidos: 'Cancela Cita', tutorNombre: 'Familia de Karen', email: email('Karen'),
+          telefono: '+34 611 500 900', centroProcedencia: 'IES Cancela', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
+        })
+    ).body.id as string;
+    await request(app).post(`/api/solicitudes/${id}/citar`).set(auth()).send({ inicios: [iso(dia(15), '09:00')], duracion: 45 }); // martes
+    await enviarCorreos();
+    const token = tokenDe(ultimoPara(email('Karen')).text, '/cita');
+    expect((await request(app).get(`/api/public/citas/${token}`)).body.puedeCancelar).toBe(false);
+    expect((await request(app).post(`/api/public/citas/${token}/cancelar`).send({})).body.error.code).toBe('SIN_CITA_CONFIRMADA');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Exportaciones CSV', () => {
+  const csv = (r: { text: string }) => r.text.replace(/^\uFEFF/, '').trimEnd().split('\r\n');
+
+  it('solicitudes: mismos filtros que la lista, sin paginar, como descarga para Excel', async () => {
+    const r = await request(app).get('/api/solicitudes/exportar?vista=todas&pageSize=1').set(auth());
+    expect(r.status).toBe(200);
+    expect(r.headers['content-type']).toMatch(/^text\/csv; charset=utf-8/);
+    expect(r.headers['content-disposition']).toMatch(/^attachment; filename="solicitudes-\d{4}-\d{2}-\d{2}\.csv"$/);
+    expect(r.text.startsWith('\uFEFF')).toBe(true);
+    const lineas = csv(r);
+    expect(lineas[0]!.split(';').slice(0, 4)).toEqual(['Código', 'Fecha de solicitud', 'Estado', 'Alumna']);
+    const total = (await request(app).get('/api/solicitudes?vista=todas&pageSize=1').set(auth())).body.total;
+    expect(lineas.length - 1).toBe(total); // pageSize no limita la exportación
+    // La ficha de la entrevista viaja en la fila (Paloma, del bloque anterior).
+    expect(lineas.find((l) => l.includes('Paloma'))).toMatch(/;Con reservas;.*;Madre, Alumna;Rosa Jurado;8,46;Ciencias y Tecnología;Biología;Sí · IES Murillo;/);
+
+    const filtrada = csv(await request(app).get('/api/solicitudes/exportar?q=Paloma').set(auth()));
+    expect(filtrada).toHaveLength(2);
+  });
+
+  it('entrevistas, reservas y cobros', async () => {
+    const ent = csv(await request(app).get(`/api/entrevistas/exportar?desde=${dia(-30)}&hasta=${dia(30)}`).set(auth()));
+    expect(ent[0]).toMatch(/^Fecha;Hora;Estado;Código;Alumna;/);
+    expect(ent.some((l) => l.includes('Paloma') && l.includes('Con reservas'))).toBe(true);
+
+    const res = csv(await request(app).get('/api/reservas/exportar').set(auth('administracion')));
+    expect(res[0]).toMatch(/^Código;Alumna;Etapa;Tutor\/a;Correo;Teléfono;Estado;/);
+    expect(res.length).toBeGreaterThan(1);
+
+    const cob = await request(app).get('/api/cobros/exportar').set(auth('administracion'));
+    const filas = csv(cob);
+    expect(filas[0]).toMatch(/^Recibo;Fecha;Código;Alumna;Etapa;Concepto;Forma de pago;Importe \(€\);Importe anulado \(€\);Estado;/);
+    expect(filas.slice(1).every((l) => /^R-\d{4}-\d{4};\d{2}\/\d{2}\/\d{4};/.test(l))).toBe(true);
+  });
+
+  it('con los permisos de su listado', async () => {
+    // Comercial ve Cobros (ajuste A2), así que también lo exporta; no registra cobros.
+    expect((await request(app).get('/api/cobros/exportar').set(auth('comercial'))).status).toBe(200);
+    expect((await request(app).post('/api/cobros').set(auth('comercial')).send({})).status).toBe(403);
+    expect((await request(app).get('/api/cobros/exportar').set(auth('secretaria'))).status).toBe(403);
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Alumnado: expedientes, familias e historial', () => {
+  let tel = 0;
+  const telefono = () => `+34 611 700 ${String(++tel).padStart(3, '0')}`;
+  const alumnado = (query = '', quien = 'secretaria') => request(app).get(`/api/alumnado${query}`).set(auth(quien));
+  const fichaAlumna = async (id: string) => (await request(app).get(`/api/alumnado/${id}`).set(auth())).body;
+
+  /** Solicitud admitida con su reserva pendiente. */
+  async function admitida(nombre: string, tutorTelefono = telefono()) {
+    const email = `${nombre.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')}.alumnado@example.com`;
+    const r = await request(app).post('/api/solicitudes').set(auth()).send({
+      viaId: viaBach, alumnaNombre: nombre, alumnaApellidos: 'Expediente Prueba', tutorNombre: `Tutora de ${nombre}`, email: email.toUpperCase(),
+      telefono: tutorTelefono, centroProcedencia: 'IES Bécquer', modalidadInteres: 'Ciencias', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
+    });
+    await db.update(solicitudes).set({ estado: 'ENTREVISTA_REALIZADA' }).where(eq(solicitudes.id, r.body.id));
+    expect((await request(app).post(`/api/solicitudes/${r.body.id}/decision`).set(auth('direccion')).send({ decision: 'ADMITIDA' })).status).toBe(200);
+    return { id: r.body.id as string, codigo: r.body.codigo as string, email };
+  }
+  /** Paga lo que falte (otro bloque cambió el importe de la reserva de esta vía). */
+  const pagar = async (solicitudId: string) => {
+    const { pendiente } = (await request(app).get(`/api/solicitudes/${solicitudId}`).set(auth('direccion'))).body.reserva;
+    return request(app).post('/api/cobros').set(auth('administracion')).send({ solicitudId, importe: pendiente, metodo: 'TRANSFERENCIA', notificar: false });
+  };
+
+  const valida = {
+    nombre: 'Julia', apellidos: 'Herrera Cifuentes', documento: '49.218.735-t', fechaNacimiento: '2010-06-02',
+    familia: 'BACHILLERATO', curso: 1, cursoEscolar: '2026-2027', estado: 'MATRICULADA',
+    contactos: [
+      { parentesco: 'Madre', nombre: 'Lucía Cifuentes Mora', telefono: '+34 699 100 200', email: ' LCifuentes@Example.com ' },
+      { parentesco: 'Padre', nombre: 'Andrés Herrera Gil', telefono: '+34 699 100 201', email: '' },
+    ],
+  };
+  let julia = '';
+
+  it('pagar la reserva crea el expediente en «Reserva confirmada», con la tutora como contacto principal', async () => {
+    const s = await admitida('Carmen');
+    expect((await alumnado('?q=carmen expediente')).body.total).toBe(0); // admitida, aún sin pagar
+    expect((await pagar(s.id)).body.reserva.estado).toBe('PAGADA');
+
+    const l = await alumnado('?q=Carmen Expediente');
+    expect(l.body.total).toBe(1);
+    const a = l.body.items[0];
+    expect(a.expediente).toMatch(/^EXP-\d{4}-\d{4}$/);
+    expect(a).toMatchObject({
+      nombreCompleto: 'Carmen Expediente Prueba', estado: 'RESERVA', estadoEtiqueta: 'Reserva confirmada', estadoTono: 'blue',
+      origen: 'ADMISION', familia: 'BACHILLERATO', curso: 1, cursoEtiqueta: 'Bachillerato 1º', cursoEscolar: '2027-2028',
+      estudios: 'Ciencias', documento: null, baja: null, solicitud: { id: s.id, codigo: s.codigo },
+    });
+    expect(a.contactos).toEqual([expect.objectContaining({ parentesco: 'Madre, padre o tutor', nombre: 'Tutora de Carmen', email: s.email, principal: true })]);
+
+    // El historial junta la solicitud, los correos a la familia, el cobro y el alta.
+    const f = await fichaAlumna(a.id);
+    const tipos = f.historial.map((h: { tipo: string }) => h.tipo);
+    expect(tipos).toEqual(expect.arrayContaining(['REGISTRO', 'CORREO', 'COBRO']));
+    expect(f.historial.find((h: { tipo: string }) => h.tipo === 'COBRO').titulo).toMatch(/^Reserva de plaza · \d+,00.€$/);
+    expect(f.historial.at(-1).titulo).toBe('Solicitud recibida');
+    expect(f.historial.find((h: { titulo: string }) => h.titulo === 'Alta del expediente').descripcion).toBe(`Plaza reservada · solicitud ${s.codigo}`);
+  });
+
+  it('anular el cobro retira el expediente: se borra si nadie lo tocó; con una nota, pasa a baja y vuelve al pagar', async () => {
+    const anularUltimo = async (solicitudId: string) => {
+      const c = (await request(app).get(`/api/cobros?solicitudId=${solicitudId}&incluirAnulados=false`).set(auth('administracion'))).body.items[0];
+      return request(app).post(`/api/cobros/${c.id}/anular`).set(auth('administracion')).send({ motivo: 'Transferencia devuelta' });
+    };
+
+    const sin = await admitida('Rocío');
+    await pagar(sin.id);
+    expect((await alumnado('?q=rocio expediente')).body.total).toBe(1); // sin tilde también la encuentra
+    await anularUltimo(sin.id);
+    expect((await alumnado('?q=rocio expediente')).body.total).toBe(0);
+
+    const con = await admitida('Inés');
+    await pagar(con.id);
+    const id = (await alumnado('?q=Inés Expediente')).body.items[0].id;
+    expect((await request(app).post(`/api/alumnado/${id}/notas`).set(auth()).send({ texto: 'La familia llamó para preguntar por el uniforme.' })).status).toBe(201);
+    await anularUltimo(con.id);
+    let f = await fichaAlumna(id);
+    expect(f).toMatchObject({ estado: 'BAJA', baja: { motivo: 'Reserva anulada: se anuló el cobro que la confirmaba' } });
+
+    await pagar(con.id);
+    f = await fichaAlumna(id);
+    expect(f).toMatchObject({ estado: 'RESERVA', baja: null });
+    expect(f.historial[0].titulo).toBe('Expediente reactivado');
+    expect((await alumnado('?q=Inés Expediente')).body.total).toBe(1); // el mismo expediente, no otro
+  });
+
+  it('alta manual: valida DNI/NIE, fecha y contactos; normaliza el documento y los correos', async () => {
+    const alta = (body: Record<string, unknown>, quien = 'secretaria') => request(app).post('/api/alumnado').set(auth(quien)).send(body);
+    const mal = await alta({ ...valida, documento: '49218735A' });
+    expect(mal.status).toBe(400);
+    expect(mal.body.error.code).toBe('DATOS_INVALIDOS');
+    expect((await alta({ ...valida, fechaNacimiento: '2099-01-01' })).status).toBe(400);
+    expect((await alta({ ...valida, cursoEscolar: '2026-2028' })).status).toBe(400);
+    expect((await alta({ ...valida, contactos: valida.contactos.map((c) => ({ ...c, principal: true })) })).body.error.code).toBe('VARIOS_CONTACTOS_PRINCIPALES');
+    expect((await alta(valida, 'administracion')).status).toBe(403); // Administración solo ve
+
+    const r = await alta(valida);
+    expect(r.status).toBe(201);
+    julia = r.body.id;
+    expect(r.body).toMatchObject({ documento: '49218735T', origen: 'MANUAL', estadoEtiqueta: 'Matriculada', fechaAlta: fechaLocal(new Date()) });
+    expect(r.body.contactos.map((c: { email: string | null; principal: boolean }) => [c.email, c.principal])).toEqual([
+      ['lcifuentes@example.com', true],
+      [null, false],
+    ]);
+    expect(r.body.historial[0]).toMatchObject({ tipo: 'REGISTRO', titulo: 'Alta del expediente', descripcion: 'Alta manual · Matriculada', autor: 'María Reyes' });
+
+    const dup = await alta({ ...valida, nombre: 'Otra', documento: '49218735T' });
+    expect(dup.status).toBe(409);
+    expect(dup.body.error).toMatchObject({ code: 'DOCUMENTO_DUPLICADO', details: { expediente: r.body.expediente } });
+  });
+
+  it('editar: datos, contactos y estado quedan en el historial sin copiar los datos personales', async () => {
+    const editar = (body: Record<string, unknown>) => request(app).patch(`/api/alumnado/${julia}`).set(auth()).send(body);
+    expect((await editar({ expediente: 'EXP-9999-0001' })).status).toBe(400); // el expediente no se edita
+    const r = await editar({
+      domicilio: 'C/ Feria 12, 41003 Sevilla', estado: 'EN_PROCESO', resultadoCurso: 'PROMOCIONA',
+      contactos: [{ parentesco: 'Padre', nombre: 'Andrés Herrera Gil', telefono: '+34 699 100 201' }],
+    });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ domicilio: 'C/ Feria 12, 41003 Sevilla', estado: 'EN_PROCESO', resultadoCurso: 'PROMOCIONA', resultadoCursoEtiqueta: 'Promociona' });
+    // En 1º no se titula (A7).
+    expect((await editar({ resultadoCurso: 'TITULA' })).body.error.code).toBe('RESULTADO_NO_VALIDO');
+    expect(r.body.contactos).toEqual([expect.objectContaining({ nombre: 'Andrés Herrera Gil', principal: true })]);
+    const titulos = r.body.historial.slice(0, 2).map((h: { descripcion: string }) => h.descripcion);
+    expect(titulos).toEqual(expect.arrayContaining(['De «Matriculada» a «En proceso»', 'Cambia: domicilio, resultado del curso, contactos de la familia']));
+    expect(JSON.stringify(r.body.historial)).not.toContain('Feria');
+    // Sin cambios reales, no se apunta nada.
+    const n = r.body.historial.length;
+    expect((await editar({ domicilio: 'C/ Feria 12, 41003 Sevilla' })).body.historial).toHaveLength(n);
+  });
+
+  it('baja con motivo y reactivación', async () => {
+    const baja = (body: Record<string, unknown>) => request(app).post(`/api/alumnado/${julia}/baja`).set(auth()).send(body);
+    expect((await baja({})).status).toBe(400);
+    expect((await baja({ motivo: 'Traslado', fecha: fechaLocal(sumarDias(new Date(), 2)) })).body.error.code).toBe('FECHA_FUTURA');
+    const r = await baja({ motivo: 'Traslado a otro centro' });
+    expect(r.body).toMatchObject({ estado: 'BAJA', estadoEtiqueta: 'Baja', baja: { fecha: fechaLocal(new Date()), motivo: 'Traslado a otro centro' } });
+    expect((await baja({ motivo: 'Otra vez' })).body.error.code).toBe('YA_DE_BAJA');
+    const vuelta = await request(app).patch(`/api/alumnado/${julia}`).set(auth()).send({ estado: 'MATRICULADA' });
+    expect(vuelta.body).toMatchObject({ estado: 'MATRICULADA', baja: null });
+    expect(vuelta.body.historial[0]).toMatchObject({ titulo: 'Expediente reactivado', descripcion: 'Vuelve a «Matriculada»' });
+  });
+
+  it('listado: búsqueda sin tildes por nombre, DNI o expediente, filtros y permisos', async () => {
+    const porDni = await alumnado('?q=49218735t');
+    expect(porDni.body.items.map((a: { id: string }) => a.id)).toEqual([julia]);
+    const exp = porDni.body.items[0].expediente as string;
+    expect((await alumnado(`?q=${exp.toLowerCase()}`)).body.total).toBe(1);
+    expect((await alumnado('?q=herrera cifuentes')).body.total).toBe(1);
+    expect((await alumnado('?q=Julia, Herrera')).body.total).toBe(0);
+    expect((await alumnado('?q=Herrera Cifuentes, Julia')).body.total).toBe(1);
+
+    const filtrado = await alumnado('?cursoEscolar=2026-2027&familia=BACHILLERATO&curso=1&resultadoCurso=PROMOCIONA&estado=MATRICULADA');
+    expect(filtrado.body.items.map((a: { id: string }) => a.id)).toEqual([julia]);
+    const reservas = await alumnado('?estado=RESERVA&pageSize=200');
+    expect(reservas.body.items.every((a: { estado: string }) => a.estado === 'RESERVA')).toBe(true);
+
+    expect((await alumnado('', 'comercial')).status).toBe(200); // Comercial ve el alumnado…
+    expect((await request(app).post(`/api/alumnado/${julia}/notas`).set(auth('comercial')).send({ texto: 'x' })).status).toBe(403); // …pero no lo edita
+    expect((await request(app).get('/api/alumnado/00000000-0000-0000-0000-000000000000').set(auth())).body.error.code).toBe('ALUMNA_NO_ENCONTRADA');
+  });
+
+  it('exportación CSV con los mismos filtros', async () => {
+    const r = await request(app).get('/api/alumnado/exportar?q=Herrera Cifuentes').set(auth());
+    expect(r.headers['content-disposition']).toMatch(/^attachment; filename="alumnado-\d{4}-\d{2}-\d{2}\.csv"$/);
+    const lineas = r.text.replace(/^﻿/, '').trim().split('\r\n');
+    expect(lineas[0]).toMatch(/^Expediente;Apellidos;Nombre;DNI\/NIE;Fecha de nacimiento;Etapa;Curso;Curso escolar;/);
+    expect(lineas).toHaveLength(2);
+    expect(lineas[1]).toMatch(/^EXP-\d{4}-\d{4};Herrera Cifuentes;Julia;49218735T;02\/06\/2010;Bachillerato;1º;2026-2027;/);
+  });
+
+  it('migración 0008: las plazas reservadas antes del módulo reciben su expediente, numerado tras los existentes', async () => {
+    const s = await admitida('Olvido');
+    // Como antes del módulo: plaza reservada sin expediente.
+    await db.update(solicitudes).set({ estado: 'PLAZA_RESERVADA' }).where(eq(solicitudes.id, s.id));
+    const ultimo = (await alumnado('?pageSize=200')).body.items.map((a: { expediente: string }) => a.expediente).sort().at(-1) as string;
+    await db.execute(sql.raw(await readFile('./drizzle/0008_alumnas_reservas_antiguas.sql', 'utf8')));
+    const l = await alumnado('?q=Olvido Expediente');
+    expect(l.body.total).toBe(1);
+    const a = l.body.items[0];
+    expect(a).toMatchObject({ estado: 'RESERVA', origen: 'ADMISION', solicitud: { id: s.id }, contactos: [expect.objectContaining({ email: s.email, principal: true })] });
+    expect(Number(a.expediente.slice(-4))).toBe(Number(ultimo.slice(-4)) + 1);
+    // Idempotente, y la secuencia sigue: el siguiente alta no repite número.
+    await db.execute(sql.raw(await readFile('./drizzle/0008_alumnas_reservas_antiguas.sql', 'utf8')));
+    expect((await alumnado('?q=Olvido Expediente')).body.total).toBe(1);
+    const otra = await request(app).post('/api/alumnado').set(auth()).send({ ...valida, documento: '12345678Z', nombre: 'Siguiente' });
+    expect(Number(otra.body.expediente.slice(-4))).toBe(Number(a.expediente.slice(-4)) + 1);
+  });
+
+  it('«Familia ya vinculada» avisa si un contacto de una alumna del centro presenta otra solicitud', async () => {
+    const r = await request(app).post('/api/solicitudes').set(auth()).send({
+      viaId: viaBach, alumnaNombre: 'Sofía', alumnaApellidos: 'Herrera Gil', tutorNombre: 'Andrés Herrera Gil', email: 'aherrera@example.com',
+      telefono: '+34 699 100 201', centroProcedencia: 'IES Murillo', canal: 'TELEFONO', consentimientoPrivacidad: true,
+    });
+    const f = (await request(app).get(`/api/solicitudes/${r.body.id}`).set(auth())).body;
+    const familia = f.revision.checks.find((c: { id: string }) => c.id === 'familia');
+    expect(familia.resultado).toBe('aviso');
+    expect(familia.texto).toMatch(/alumna del centro Julia Herrera Cifuentes \(EXP-\d{4}-\d{4}\)/);
+    const k = await request(app).get('/api/solicitudes/pipeline?familiaVinculada=true').set(auth());
+    expect(k.body.columnas.flatMap((c: { items: { id: string }[] }) => c.items).map((i: { id: string }) => i.id)).toContain(r.body.id);
+
+    // La alumna que nació de una solicitud no la marca a ella misma.
+    const carmen = (await alumnado('?q=Carmen Expediente')).body.items[0];
+    const fc = (await request(app).get(`/api/solicitudes/${carmen.solicitud.id}`).set(auth())).body;
+    expect(fc.revision.checks.find((c: { id: string }) => c.id === 'familia').texto).not.toContain('alumna del centro');
   });
 });

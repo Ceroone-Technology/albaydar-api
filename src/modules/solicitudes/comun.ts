@@ -1,19 +1,23 @@
 import { and, asc, count, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { env } from '../../config/env';
 import {
+  ciclos,
   familias,
+  plazasCiclo,
   secuencias,
   solicitudEventos,
   solicitudes,
   tokensPublicos,
   vias,
   type EstadoSolicitud,
+  type FamiliaVia,
   type Solicitud,
   type Via,
 } from '../../db/schema';
 import type { Tx } from '../../lib/db';
 import { conflict, notFound } from '../../lib/errors';
 import { hashToken, nuevoToken } from '../../lib/crypto';
+import { alumnasPorContacto } from '../alumnado/alumnado.service';
 import { nombrePila, nombreVia } from './dominio';
 import { revisar, type EntradaRevision, type ResultadoRevision } from './revision';
 
@@ -72,25 +76,45 @@ export async function siguienteValor(tx: Tx, clave: string): Promise<number> {
   return r!.valor;
 }
 
-/** SOL-2026-0001 — contador por año, atómico. */
-export async function siguienteCodigo(tx: Tx, fecha = new Date()): Promise<string> {
-  const anio = fecha.getFullYear();
-  return `SOL-${anio}-${String(await siguienteValor(tx, `solicitud-${anio}`)).padStart(4, '0')}`;
+/**
+ * Serie del código según la vía (ajuste A1; respuesta del centro, 11/11/2026):
+ * B Bachillerato, CC Ciclos Concertados (GM y GS) y CP Ciclos Privados. El formato vive solo aquí.
+ */
+export const SERIE_CODIGO: Record<FamiliaVia, string> = {
+  BACHILLERATO: 'B',
+  CICLOS_CONCERTADOS_GM: 'CC',
+  CICLOS_CONCERTADOS_GS: 'CC',
+  CICLOS_PRIVADOS_GS: 'CP',
+};
+
+/**
+ * B2027-0001 / CC2027-0001 / CP2027-0001 (ajuste A1): la serie, el año de inicio de los estudios
+ * (el del curso escolar de la vía: 2027-2028 → 2027) y un contador de cuatro cifras por serie y
+ * año, atómico. Las solicitudes anteriores conservan su código (B-2026-0001, C-2026-0001, SOL-…).
+ */
+export async function siguienteCodigo(tx: Tx, via: Pick<Via, 'familia' | 'cursoEscolar'>): Promise<string> {
+  const serie = SERIE_CODIGO[via.familia];
+  const anio = via.cursoEscolar.slice(0, 4);
+  return `${serie}${anio}-${String(await siguienteValor(tx, `solicitud-${serie}${anio}`)).padStart(4, '0')}`;
 }
 
-/** Posición de cada solicitud EN_ESPERA dentro de su vía, por orden de entrada en la lista. */
+/**
+ * Posición de cada solicitud EN_ESPERA dentro de su lista, por orden de entrada: la de su vía
+ * o, si tiene ciclo, la de su ciclo en esa vía (A6).
+ */
 export async function posicionesEnEspera(tx: Tx, viaIds: string[]): Promise<Map<string, number>> {
   if (!viaIds.length) return new Map();
   const filas = await tx
-    .select({ id: solicitudes.id, viaId: solicitudes.viaId })
+    .select({ id: solicitudes.id, viaId: solicitudes.viaId, cicloId: solicitudes.cicloId })
     .from(solicitudes)
     .where(and(eq(solicitudes.estado, 'EN_ESPERA'), inArray(solicitudes.viaId, [...new Set(viaIds)])))
     .orderBy(sql`${solicitudes.enEsperaDesde} asc nulls last`, asc(solicitudes.createdAt));
   const contador = new Map<string, number>();
   return new Map(
     filas.map((f) => {
-      const n = (contador.get(f.viaId) ?? 0) + 1;
-      contador.set(f.viaId, n);
+      const lista = claveCiclo(f.viaId, f.cicloId);
+      const n = (contador.get(lista) ?? 0) + 1;
+      contador.set(lista, n);
       return [f.id, n];
     }),
   );
@@ -144,6 +168,62 @@ export async function plazasOcupadas(tx: Tx, viaId: string) {
   return r?.n ?? 0;
 }
 
+// ── Plazas por ciclo (A6, entrega 2) ────────────────────────────────────────
+
+/** Clave de las cuentas por ciclo: vía y ciclo (sin ciclo, la cadena vacía). */
+export const claveCiclo = (viaId: string, cicloId: string | null | undefined) => `${viaId}|${cicloId ?? ''}`;
+
+/** Plazas de serie del centro (correo del 11/11/2026): 30 por ciclo y curso, 60 en Administración y Finanzas. */
+export const plazasCicloDelCentro = (nombre: string) => (nombre === 'Administración y Finanzas' ? 60 : 30);
+
+/** Ocupadas (admitidas, reservadas y matriculadas) por vía y ciclo, con `claveCiclo`. */
+export async function ocupadasPorCiclo(tx: Tx, viaIds: string[]): Promise<Map<string, number>> {
+  if (!viaIds.length) return new Map();
+  const filas = await tx
+    .select({ viaId: solicitudes.viaId, cicloId: solicitudes.cicloId, n: count() })
+    .from(solicitudes)
+    .where(and(inArray(solicitudes.viaId, [...new Set(viaIds)]), inArray(solicitudes.estado, ESTADOS_OCUPAN_PLAZA)))
+    .groupBy(solicitudes.viaId, solicitudes.cicloId);
+  return new Map(filas.map((f) => [claveCiclo(f.viaId, f.cicloId), f.n]));
+}
+
+/** Plazas de cada ciclo en esas vías, con el nombre y en el orden del catálogo. */
+export async function plazasDeCiclos(tx: Tx, viaIds: string[]) {
+  if (!viaIds.length) return [];
+  return tx
+    .select({ viaId: plazasCiclo.viaId, cicloId: plazasCiclo.cicloId, plazas: plazasCiclo.plazas, nombre: ciclos.nombre })
+    .from(plazasCiclo)
+    .innerJoin(ciclos, eq(ciclos.id, plazasCiclo.cicloId))
+    .where(inArray(plazasCiclo.viaId, [...new Set(viaIds)]))
+    .orderBy(asc(ciclos.orden), asc(ciclos.nombre));
+}
+
+/** Las plazas de una vía de ciclos son la suma de las de sus ciclos. */
+export async function sumarPlazasVia(tx: Tx, viaId: string): Promise<Via> {
+  const [s] = await tx
+    .select({ total: sql<number>`coalesce(sum(${plazasCiclo.plazas}), 0)::int` })
+    .from(plazasCiclo)
+    .where(eq(plazasCiclo.viaId, viaId));
+  const [via] = await tx.update(vias).set({ plazas: Number(s?.total ?? 0) }).where(eq(vias.id, viaId)).returning();
+  return via!;
+}
+
+/**
+ * Crea las filas de plazas que falten para los ciclos activos de una vía de ciclos
+ * (`plazas(nombre)` las de cada una nueva) y recalcula la suma de la vía.
+ */
+export async function asegurarPlazasCiclo(tx: Tx, via: Via, plazas: (nombre: string) => number) {
+  if (via.familia === 'BACHILLERATO') return via;
+  const catalogo = await tx.select().from(ciclos).where(and(eq(ciclos.familia, via.familia), eq(ciclos.activo, true)));
+  if (catalogo.length) {
+    await tx
+      .insert(plazasCiclo)
+      .values(catalogo.map((c) => ({ viaId: via.id, cicloId: c.id, plazas: plazas(c.nombre) })))
+      .onConflictDoNothing();
+  }
+  return sumarPlazasVia(tx, via.id);
+}
+
 export async function calcularRevision(tx: Tx, s: Solicitud, via: Via): Promise<ResultadoRevision> {
   return (await calcularRevisiones(tx, [{ ...s, via }])).get(s.id)!;
 }
@@ -151,6 +231,8 @@ export async function calcularRevision(tx: Tx, s: Solicitud, via: Via): Promise<
 export type EntradaLote = Omit<EntradaRevision, 'via' | 'familia' | 'otrasSolicitudes'> & {
   id: string;
   via: Pick<Via, 'id' | 'nombre' | 'plazas' | 'plazasAsignadasPorJunta'>;
+  /** Con ciclo y plazas para él, la comprobación de plazas es la del ciclo (A6). */
+  cicloId?: string | null;
 };
 
 /**
@@ -181,8 +263,21 @@ export async function calcularRevisiones(tx: Tx, filas: EntradaLote[]): Promise<
           .where(or(...(emails.length ? [inArray(solicitudes.email, emails)] : []), ...(telefonos.length ? [inArray(solicitudes.telefono, telefonos)] : [])))
           .orderBy(asc(solicitudes.createdAt))
       : [];
+  const delCentro = await alumnasPorContacto(tx, emails, telefonos);
+  // Plazas por ciclo (A6): solo si alguna fila lleva ciclo.
+  const conCiclo = filas.some((f) => f.cicloId);
+  const plazasCiclos = conCiclo ? await plazasDeCiclos(tx, viaIds) : [];
+  const ocupadasCiclo = conCiclo ? await ocupadasPorCiclo(tx, viaIds) : new Map<string, number>();
+  const plazaCiclo = new Map(plazasCiclos.map((p) => [claveCiclo(p.viaId, p.cicloId), p]));
 
   const ocupadasPorVia = new Map(ocupadas.map((o) => [o.viaId, o.n]));
+  // Con ciclo y plazas para él, las del ciclo («GS privado 1º · Marketing y Publicidad»); si no, las de la vía.
+  const cupo = (f: EntradaLote) => {
+    const p = f.cicloId ? plazaCiclo.get(claveCiclo(f.via.id, f.cicloId)) : undefined;
+    return p
+      ? { nombre: `${f.via.nombre} · ${p.nombre}`, plazas: p.plazas, plazasAsignadasPorJunta: false, ocupadas: ocupadasCiclo.get(claveCiclo(f.via.id, f.cicloId)) ?? 0 }
+      : { nombre: f.via.nombre, plazas: f.via.plazas, plazasAsignadasPorJunta: f.via.plazasAsignadasPorJunta, ocupadas: ocupadasPorVia.get(f.via.id) ?? 0 };
+  };
   const ahora = new Date();
   return new Map(
     filas.map((f) => {
@@ -191,12 +286,19 @@ export async function calcularRevisiones(tx: Tx, filas: EntradaLote[]): Promise<
         .filter((o) => o.id !== f.id && ((!!email && o.email === email) || o.telefono === f.telefono))
         .slice(0, 5);
       const familia = email ? conocidas.find((c) => c.email === email) : undefined;
+      // La alumna que nació de esta misma solicitud no cuenta como vínculo.
+      const alumnasVinculadas = new Map(
+        delCentro
+          .filter((a) => a.solicitudId !== f.id && ((!!email && a.email === email.toLowerCase()) || a.telefono === f.telefono?.trim()))
+          .map((a) => [a.id, { expediente: a.expediente, alumna: `${a.nombre} ${a.apellidos}`.trim() }]),
+      );
       const r = revisar(
         {
           ...f,
-          via: { nombre: f.via.nombre, plazas: f.via.plazas, plazasAsignadasPorJunta: f.via.plazasAsignadasPorJunta, ocupadas: ocupadasPorVia.get(f.via.id) ?? 0 },
+          via: cupo(f),
           familia: familia ? { vinculo: familia.vinculo } : null,
           otrasSolicitudes: otras.map((o) => ({ codigo: o.codigo, alumna: `${o.n} ${o.a}` })),
+          alumnas: [...alumnasVinculadas.values()].slice(0, 3),
         },
         ahora,
       );

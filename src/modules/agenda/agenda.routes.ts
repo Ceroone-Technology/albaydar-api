@@ -35,8 +35,8 @@ agendaRouter.delete('/bloqueos/:id', editar, validate({ params: idParam }), asyn
   res.status(204).end();
 });
 
-/** Horario de entrevistas (jornada, duraciones, días no lectivos). */
-agendaRouter.get('/configuracion', ver, async (_req, res) => {
+/** Horario de entrevistas (jornada, duraciones, días no lectivos). También lo lee Configuración. */
+agendaRouter.get('/configuracion', requirePermiso('entrevistas.ver', 'solicitudes.editar', 'configuracion.ver'), async (_req, res) => {
   res.json(await agendaConfig());
 });
 

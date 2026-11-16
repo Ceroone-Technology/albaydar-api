@@ -10,9 +10,11 @@ import { logger } from './lib/logger';
 import { requireAuth } from './middleware/auth';
 import { errorHandler, notFoundHandler } from './middleware/error-handler';
 import { agendaRouter } from './modules/agenda/agenda.routes';
+import { alumnadoRouter } from './modules/alumnado/alumnado.routes';
 import { authRouter } from './modules/auth/auth.routes';
 import { catalogoRouter } from './modules/catalogo/catalogo.routes';
 import { cobrosRouter } from './modules/cobros/cobros.routes';
+import { esRutaDeFirma, matriculasRouter } from './modules/matricula/matricula.routes';
 import { reservasRouter } from './modules/reservas/reservas.routes';
 import { comunicacionesRouter } from './modules/comunicaciones/comunicaciones.routes';
 import { rolesRouter } from './modules/permisos/permisos.routes';
@@ -31,11 +33,16 @@ export function crearApp() {
     cors({
       origin: env.CORS_ORIGINS,
       credentials: true, // para la cookie del refresh token
-      methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+      // PUT: configuración de la agenda y de la reserva, y permisos de un rol.
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
       allowedHeaders: ['Content-Type', 'Authorization'],
+      // El front lee el nombre de las descargas (exportaciones CSV).
+      exposedHeaders: ['Content-Disposition'],
     }),
   );
-  app.use(express.json({ limit: '200kb' }));
+  // Límite general de 200 KB; las firmas de la matrícula llevan el suyo (matricula.routes.ts).
+  const json = express.json({ limit: '200kb' });
+  app.use((req, res, next) => (req.method === 'POST' && esRutaDeFirma(req.path) ? next() : json(req, res, next)));
   app.use(cookieParser());
   if (env.NODE_ENV !== 'test') app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === '/health' } }));
 
@@ -60,6 +67,8 @@ export function crearApp() {
     ['/catalogo', catalogoRouter],
     ['/reservas', reservasRouter],
     ['/cobros', cobrosRouter],
+    ['/alumnado', alumnadoRouter],
+    ['/matriculas', matriculasRouter],
   ];
   for (const [ruta, router] of privados) api.use(ruta, requireAuth, router);
 

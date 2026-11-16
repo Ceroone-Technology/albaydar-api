@@ -1,0 +1,1 @@
+ALTER TABLE "alumnas" DROP COLUMN "promociona";

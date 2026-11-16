@@ -1,0 +1,1 @@
+ALTER TABLE "entrevistas" ADD COLUMN "ficha" jsonb;

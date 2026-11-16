@@ -10,6 +10,9 @@ import * as documentosSrv from '../documentos/documentos.service';
 import { decidir, decisionBody, previaDecisionBody, previsualizar } from '../evaluacion/evaluacion.service';
 import { DECISIONES_ADMISION } from './dominio';
 import * as srv from './solicitudes.service';
+import { todasLasPaginas } from '../../lib/csv';
+import { COLUMNAS_SOLICITUDES } from '../exportaciones/columnas';
+import { responderCsv } from '../exportaciones/exportar';
 import {
   cambiarEstadoBody,
   gestionBody,
@@ -24,7 +27,7 @@ import {
 const citarBody = z.object({
   /** Horas de inicio elegidas en la disponibilidad (ISO 8601). */
   inicios: z.array(z.iso.datetime({ offset: true, error: 'Fecha y hora no válidas.' })).min(1, 'Selecciona al menos una fecha.').max(3, 'Máximo 3 fechas.'),
-  /** 45 o 60 minutos (según la configuración de la agenda). */
+  /** Una de las duraciones de la agenda (30, 45 o 60 minutos de serie). */
   duracion: z.number().int().optional(),
   mensaje: z.string().trim().max(1000).optional().nullable(),
 });
@@ -46,6 +49,13 @@ solicitudesRouter.get('/', ver, validate({ query: listarQuery }), async (req, re
 });
 
 /** Kanban: totales y primeras tarjetas por columna. */
+/** CSV con los mismos filtros que la lista (sin paginar): GET /solicitudes/exportar?vista=bandeja… */
+solicitudesRouter.get('/exportar', ver, validate({ query: listarQuery }), async (req, res) => {
+  const p = await permisos(req);
+  const filas = await todasLasPaginas((q) => srv.listar(q, p), v<typeof listarQuery>(req, 'query'));
+  responderCsv(req, res, 'solicitudes', COLUMNAS_SOLICITUDES, filas);
+});
+
 solicitudesRouter.get('/pipeline', ver, validate({ query: pipelineQuery }), async (req, res) => {
   res.json(await srv.pipeline(v<typeof pipelineQuery>(req, 'query'), await permisos(req)));
 });
@@ -92,6 +102,11 @@ solicitudesRouter.post('/:id/pedir-completar', gestion, validate({ params: idPar
 solicitudesRouter.post('/:id/citar', gestion, validate({ params: idParam, body: citarBody }), async (req, res) => {
   const b = v<typeof citarBody>(req, 'body');
   res.status(201).json(await citacion.proponer(v<typeof idParam>(req, 'params').id, { inicios: b.inicios, duracion: b.duracion, mensaje: b.mensaje }, req.user!.id));
+});
+
+/** «¿Ya tuvo entrevista? Sí»: registra la entrevista hecha fuera de la plataforma y pasa a decisión. */
+solicitudesRouter.post('/:id/entrevista-previa', gestion, validate({ params: idParam, body: citacion.entrevistaPreviaBody }), async (req, res) => {
+  res.status(201).json(await citacion.registrarEntrevistaPrevia(v<typeof idParam>(req, 'params').id, v<typeof citacion.entrevistaPreviaBody>(req, 'body'), req.user!.id));
 });
 
 /** Vista previa del correo de la decisión con los datos reales de la familia. No cambia nada. */

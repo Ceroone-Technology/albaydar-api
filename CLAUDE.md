@@ -11,10 +11,11 @@ Este archivo es el punto de partida para cualquier sesión: qué hay, cómo se t
 | 01 · Captación (formulario web, alta interna) | ✅ Hecha |
 | 02 · Revisión y entrevista (bandeja, kanban, citación, agenda, entrevistas) | ✅ Hecha |
 | 03 · Evaluación y reserva de plaza (decisión, reserva, cobros manuales) | ✅ Hecha |
-| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | ⏸️ **En pausa** por decisión del equipo. No empezar sin cerrar sus bloqueos (ver «Lo que falta») |
-| Cobros completos (remesas SEPA, conciliación, facturación), Alumnado | ❌ Sin empezar |
+| 04 · Matrícula digital (asistente, firmas, documentos, Séneca) | ✅ **Hecha** (pendiente de las respuestas del centro, preguntas 23–37). Las cuatro entregas: apertura, renovación, borrador con versión, páginas leídas y enlaces (`feat/matricula-borrador`, 08/11); documentos con huella, firmas y mandatos SEPA (`feat/matricula-firmas`, 08/11); archivos, envío con PDF, devolución y Séneca (`feat/matricula-envio`, 10/11). Front conectado el 11/11 (`feature/matricula-api`). Plan en `docs/matricula.md` → «Entregas» |
+| Alumnado (expedientes, familias, historial) | ✅ Hecho el 08/11/2026 (API `feat/alumnado`, front `feature/alumnado-api`) |
+| Cobros completos (remesas SEPA, conciliación, facturación) | ❌ Sin empezar |
 
-En el front, a 24/10/2026 (`develop` = `main`, PR #12): conectados la sesión, los permisos, el formulario público, la bandeja, la citación, la página `/cita/:token` y el kanban. Evaluación y reserva, conectada (PR #13: decisión con vista previa, control de reservas y «Recordar»); el kanban ya no decide sin notificar, abre esa pantalla. Cobros, conectada (PR #14: KPI, reservas por vencer, registro manual, recibo y anulación); el kanban abre Cobros para «Plaza reservada». Entrevistas, conectada en la rama `feature/entrevistas-api` (calendario, resultado, no presentada, cancelación y nota; sin «Confirmar cita», que es de la familia). Configuración y Comunicaciones son placeholders por construir contra esta API. Matrícula y Alumnado siguen con su API simulada.
+En el front (11/11/2026), todo está conectado a esta API, sin mocks: admisión completa (bandeja, citación, kanban, `/cita/:token`, completar la solicitud), Entrevistas, Evaluación y reserva, Cobros (solo la reserva; remesas, conciliación y facturación atenuadas), Comunicaciones, Configuración, Dashboard, Alumnado y Matrícula digital (`/enrollments` y `/matricula/:token`). Todo está en `develop`; falta pasar `develop` → `main` en los dos repos.
 
 ## Stack y comandos
 
@@ -29,7 +30,7 @@ docker compose up -d --build api # tras cambiar código
 docker compose down -v           # empezar de cero (borra la BD; necesario si cambia la migración 0000)
 npm run dev                      # sin Docker, con recarga (necesita db y mailpit levantados)
 npm run typecheck                # tsc --noEmit
-npm test                         # 85 tests; usa la BD albaydar_test (la crea el contenedor de PostgreSQL)
+npm test                         # usa la BD albaydar_test (la crea el contenedor de PostgreSQL)
 npm run db:generate -- --name x  # tras editar src/db/schema.ts → SQL nuevo en drizzle/
 DATABASE_URL=postgresql://albaydar:albaydar@localhost:5432/albaydar npm run db:migrate
 ```
@@ -48,7 +49,7 @@ DATABASE_URL=postgresql://albaydar:albaydar@localhost:5432/albaydar npm run db:m
   Superadministrador: `admin@albaydar.org` / `CambiaEsto-2026!`.
 - **Configuración de Docker:** `.env` junto a `docker-compose.yml` (plantilla: `.env.docker.example`). **Nunca se sube a git.** Las variables SMTP de Docker llevan el prefijo `DOCKER_`.
 - **Correo real.** En el equipo del desarrollador, el `.env` apunta a Gmail con contraseña de aplicación, sin `MAIL_DESVIO`: los correos llegan de verdad a la dirección de cada solicitud. `MAIL_SECRETARIA` y `MAIL_ADMINISTRACION` apuntan al buzón del desarrollador, no a `@albaydar.org`, que es un dominio real del centro. Sin `.env`, todo va a Mailpit (http://localhost:8025).
-  - ⚠️ Las 3 solicitudes de ejemplo de la semilla usan correos `@correo.es`, un dominio real. No las cites ni les envíes nada. Está pendiente pasarlas a `@example.com`.
+  - Las solicitudes de ejemplo de la semilla usan `@example.com` (dominio reservado, nunca entrega). Hasta el 05/11/2026 usaban `@correo.es`, un dominio real: la semilla corrige esas filas en una BD de demo ya creada. Las de prueba, con `@example.com` o alias propios.
   - Para probar, usa alias propios (`buzon+prueba1@gmail.com`).
 - **Ficheros subidos:** carpeta `storage/uploads` del equipo (ignorada por git; puede contener boletines reales de prueba).
 
@@ -59,7 +60,7 @@ src/
   app.ts                 Express: helmet, CORS con credenciales, rutas públicas (/auth, /public) y privadas (requireAuth por prefijo → una ruta inexistente da 404, nunca 401)
   config/env.ts          variables validadas con Zod + CENTRO (nombre, dirección, teléfono, logo, datos de la entrevista)
   db/schema.ts           esquema (fuente de verdad) · migrate.ts · seed.ts (demo) · datos-base.ts (roles, plantillas, ajustes; también en producción)
-  lib/                   db, fechas (única conversión UTC ↔ Europe/Madrid), dinero (euros, IBAN), errores, crypto, storage, logger
+  lib/                   db, fechas (única conversión UTC ↔ Europe/Madrid), dinero (euros, IBAN), documento-identidad (DNI/NIE), errores, crypto, storage, logger
   middleware/            auth (requireAuth, requirePermiso), validate (Zod), error-handler
   correo/                eventos.ts (catálogo), plantillas.ts (motor), enviar.ts (prepararEvento / enviarEvento), outbox.ts (cola + SMTP), ics.ts
   jobs/                  scheduler.ts (node-cron + advisory locks) y recordatorios.ts
@@ -75,11 +76,13 @@ src/
     evaluacion/          decisión de admisión con notificación y su vista previa
     reservas/            reserva de plaza, control de reservas, recordar, recordatorio y vencimiento
     cobros/              cobros manuales, anulación, resumen (KPIs) y recibo imprimible
+    alumnado/            expedientes (alta desde la reserva pagada, manual), contactos, historial, baja, notas
+    matricula/           borrador.ts (Zod del EnrollmentDraft del front), reglas.ts (copia de enrollment.rules.ts), dominio.ts, service (apertura, renovación, borrador con versión, páginas, enlaces), firmas.service (validez por huella, firmar, anular, mandatos), archivos.service (foto y checklist), envio.service (enviar, devolver, PDF, Séneca), seneca.ts (columnas del fichero), documentos/ (textos.ts legales versionados, generar.ts con la huella, pdf.ts con pdfkit y la hoja de evidencias), routes (privadas y /public/matricula)
     comunicaciones/      plantillas (CRUD, vista previa, prueba), histórico de envíos, estado SMTP
     documentos/ publico/ catalogo/
-drizzle/                 migraciones SQL (0000–0004) y meta/ (journal + snapshots: no se editan a mano)
-docs/                    api.md · flujo-y-datos.md · preguntas-abiertas.md · gmail.md
-tests/                   reglas.test.ts (funciones puras) · flujo-admision.test.ts (HTTP contra PostgreSQL real, SMTP falso)
+drizzle/                 migraciones SQL (0000–0011) y meta/ (journal + snapshots: no se editan a mano)
+docs/                    api.md · flujo-y-datos.md · preguntas-abiertas.md · gmail.md · matricula.md (diseño de la fase 04)
+tests/                   reglas.test.ts (funciones puras) · flujo-admision.test.ts y matricula.test.ts (HTTP contra PostgreSQL real, SMTP falso)
 ```
 
 ## Qué está implementado
@@ -102,12 +105,13 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 - Aviso "la familia ya eligió fecha": `GET /solicitudes/respuestas-familia` y `POST …/visto`, con el "visto" guardado por usuario (tabla `eventos_vistos`).
 
 **Citación, agenda y entrevistas**
-- La agenda es la jornada (L–V 8–18, configurable) menos lo ocupado. Entrevistas de 45 o 60 min, siempre presenciales con el equipo directivo.
+- La agenda es la jornada (L–V 8–18, configurable) menos lo ocupado. Entrevistas de 30, 45 o 60 min (A4; de serie, 45), siempre presenciales con el equipo directivo.
 - Secretaría propone 1–3 fechas, que quedan `RESERVADA`. La restricción `EXCLUDE` de la BD impide dobles reservas.
 - La familia elige desde `/cita/:token`. `elegir` y `otra-franja` devuelven la cita completa.
 - La familia puede cambiar durante 24 h desde la primera aceptación. Tiene "Ninguna me encaja" y subida del boletín de notas (se valida el tipo real del fichero).
 - Recordatorios a los 3 días sin elegir y el día antes de la entrevista. Las propuestas caducan solas.
 - Calendario con `items` (confirmadas, con `notas`) y `pendientes`. Resultado de la entrevista y cancelación con `.ics`.
+- **Ficha de la entrevista** (`entrevistas/ficha.ts`, 05/11/2026): la de la solicitud en papel (otro centro, por qué Albaydar, repetición, nota media, modalidad y optativa de Bachillerato, boletín entregado, valoración Favorable / Con reservas / Desfavorable con comentario, entrevistados y quién entrevistó; observaciones = `notas`). JSON en `entrevistas.ficha`, parcial en `PATCH /entrevistas/:id`. Dar por realizada exige valoración y entrevistados (`FICHA_INCOMPLETA`).
 
 **Fase 03: evaluación, reserva y cobros** (detalle en `docs/api.md`)
 - `POST /solicitudes/:id/decision` (`evaluacion.editar`):
@@ -117,8 +121,9 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 
   Arrastrar a una decisión responde 409 `ACCION_REQUERIDA` con `accion: "DECIDIR"`.
 - `POST /solicitudes/:id/decision/previsualizar`: el correo que recibiría la familia, con sus datos reales, sin cambiar nada.
+- **Plazo de la reserva por solicitud** (05/11/2026): al admitir, `fechaLimite` opcional para acortarlo (de mañana al plazo general); después, `PATCH /reservas/:id/plazo` para acortarlo o ampliarlo (hasta 90 días; una vencida vuelve a pendiente), con motivo en el historial y aviso opcional a la familia.
 - **Reserva:** 300 € por defecto, con excepciones por vía; 15 días naturales; transferencia o efectivo. IBAN provisional y ficticio, validado. Todo en `ajustes.reserva`, vía `GET/PUT /reservas/configuracion`.
-- **Control de reservas:** `GET /reservas?porVencer=true`, con días restantes. "Recordar" (`POST /reservas/:id/recordar`), con un mínimo de 1 h entre envíos.
+- **Control de reservas:** `GET /reservas?porVencer=true`, con días restantes. "Recordar" (`POST /reservas/:id/recordar`), con un mínimo de 1 h entre envíos. «Liberar plaza» (`POST /reservas/:id/liberar`, ajuste A5, 15/11/2026): una reserva pendiente o vencida se anula, la solicitud pasa a `DESCARTADA` y deja de ocupar plaza; motivo obligatorio (interno), aviso `PLAZA_LIBERADA` opcional y `enEspera` en la respuesta. Con cobros, 409.
 - **Recordatorio automático** a 3 días del plazo, uno solo, que no sale si ya se usó "Recordar". Vencida: aviso a secretaría y administración; la plaza no se libera sola y el pago tardío se acepta.
 - **Cobros manuales** (`POST /cobros`):
   - recibo `R-AAAA-NNNN` correlativo por año; pagos parciales; nunca más de lo pendiente;
@@ -127,12 +132,45 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 - `GET /cobros` (pestaña Pagos), `GET /cobros/resumen` (KPIs: cobrado, pendiente, parcial) y `GET /cobros/:id/recibo` (HTML imprimible, con mención de exención de IVA, art. 20.Uno.9.º LIVA).
 - La migración `0004` creó la reserva de las solicitudes admitidas antes de la fase 03, sin enviar correo.
 
+**Exportaciones** (05/11/2026)
+- `GET /solicitudes|entrevistas|reservas|cobros|alumnado/exportar`: CSV para Excel con los mismos filtros y permisos que su listado, sin paginar (`todasLasPaginas` en `lib/csv.ts`; columnas en `modules/exportaciones/columnas.ts`). Separador `;`, BOM, coma decimal, protección contra inyección de fórmulas y registro en el log de cada exportación.
+
+**Alumnado** (08/11/2026, detalle en `docs/api.md`)
+- Expediente `EXP-AAAA-NNNN` (formato del mockup) con estados del mockup: «Reserva confirmada» (`RESERVA`), «En proceso» (`EN_PROCESO`), «Matriculada» (`MATRICULADA`) y «Baja».
+- Nace solo cuando el cobro completa la reserva (`altaDesdeReserva`, en su transacción), con el tutor como contacto principal. Si se anula ese cobro, `retirarAltaDeReserva` lo borra (sin cambios) o lo da de baja (con notas o cambios); al volver a pagar, se reactiva el mismo.
+- Alta manual con DNI/NIE validado y único, edición (los contactos se sustituyen enteros), baja con motivo y reactivación por `PATCH { estado }`, notas internas y CSV.
+- Historial: eventos propios (`alumna_eventos`, solo qué campos cambian, nunca los valores) más la solicitud, sus correos, entrevistas y cobros.
+- «Familia ya vinculada» (revisión y filtro del kanban) mira también los contactos de las alumnas que no están de baja.
+- La matrícula mueve el estado: abrirla → «En proceso»; exportarla a Séneca → «Matriculada» con el curso nuevo. Secretaría también lo cambia a mano.
+
+**Matrícula digital, entrega 1** (08/11/2026, detalle en `docs/api.md` y `docs/matricula.md`)
+- `POST /matriculas { alumnaId }`: alumnado nuevo (expediente en reserva o en proceso → «En proceso») o renovación (expediente matriculado, a partir de su matrícula anterior: a 2º si promociona, el mismo curso si repite; ajuste A7). `POST /matriculas/renovacion { curso }` cierra el curso en bloque según `resultadoCurso` (quien titula, baja «Titula»). Código `M-AAAA-NNNN`, una por alumna y curso escolar.
+- El borrador es el `EnrollmentDraft` del front tal cual (nombres en inglés) y las reglas son una copia de `enrollment.rules.ts`: la ficha trae `pendientes` por paso y `puedeEnviar`.
+- `PUT { borrador, version }` desde secretaría o desde el enlace: 409 `VERSION_ANTIGUA` con quién guardó; sin cambios no sube la versión. La familia no cambia la vía, el curso, «alumna nueva» ni `manualChecks`.
+- Páginas leídas con hora del servidor, que nunca se quitan; `POST …/paginas-leidas` no sube la versión.
+- Enlaces `FAMILIA` y `PROGENITOR` (solo lectura y, más adelante, sus firmas), caducan el 30/09 del curso; límites por enlace en `/public/matricula/:token`.
+
+**Matrícula digital, entrega 2** (08/11/2026)
+- Los cinco documentos los da la API (`GET …/documentos/:doc`), rellenados y con su huella SHA-256. Los textos legales, versionados, en `documentos/textos.ts`; cambiar uno = subir su versión.
+- Firmar (`POST …/firmas/:hueco { imagen, huella }`) comprueba documento aplicable, páginas leídas, DOP o modalidad, cuenta domiciliable (IBAN SEPA, DNI del titular, BIC) y huella actual (409 `DOCUMENTO_CAMBIADO`). Guarda hora del servidor, IP, navegador, enlace o usuario y el documento tal como se firmó.
+- Una firma vale mientras su huella coincida: en borrador se evalúa al leer (`DESACTUALIZADA`) y se anula al guardar (`ANULADA`, con motivo y su mandato). La fecha de los documentos es la de la firma y no entra en la huella.
+- Mandatos `M-2027-0001-SEPA1` / `…-PLUS1` (RCUR/OOFF, CORE), nunca reutilizados. Acreedores por vía en `ajustes.matricula` (`GET/PUT /matriculas/configuracion`), validados con la norma AT-02.
+
+**Matrícula digital, entrega 3** (10/11/2026)
+- Archivos (`POST/DELETE …/archivos/:destino`, multipart `archivo`): foto (`photo`) y copias del checklist (`m4`, `c2`, `b1`, `b2`), solo los que pide la matrícula, con tipo real comprobado; uno por destino, el sustituido sale del almacén.
+- Enviar (`POST …/enviar { version }`): exige `canSubmit` con firmas y archivos; genera el PDF final de cada documento firmado (`pdfkit`, desde lo guardado al firmar, con los trazos y la hoja de evidencias) y lo manda a la familia en `MATRICULA_RECIBIDA`; aviso a secretaría.
+- Devolver (`POST /matriculas/:id/devolver { motivo }`): vuelve a borrador, anula los PDF, avisa a la familia; las firmas siguen.
+- Séneca (`POST /matriculas/:id/exportar-seneca` y en lote): CSV provisional (`seneca.ts`), todo o nada; la primera vez, `EXPORTADA`, alumna «Matriculada» con el curso nuevo, solicitud `MATRICULADA` y `MATRICULA_CONFIRMADA`.
+- Front conectado el 11/11/2026 (entrega 4). Falta, con el despliegue, el almacén en Google Cloud Storage.
+
 **Comunicaciones**
 - Todos los correos salen de plantillas HTML editables, una activada por evento. Saneado al guardar y variables validadas. Vista previa, prueba e histórico.
 - Eventos:
   - `SOLICITUD_RECIBIDA`, `COMPLETAR_SOLICITUD`*, `CITACION_PROPUESTA`*, `CITACION_RECORDATORIO`, `CITA_CONFIRMADA`*, `CITA_CAMBIADA`*, `ENTREVISTA_RECORDATORIO`, `CITA_CANCELADA`, `AVISO_OTRA_FRANJA`;
   - de la fase 03: `ADMITIDA`, `EN_ESPERA`, `NO_ADMITIDA`, `RECORDATORIO_PAGO`, `RESERVA_VENCIDA`;
-  - en borrador: `MATRICULA_CONFIRMADA`.
+  - de la fase 04: `MATRICULA_ENLACE`*, `MATRICULA_ENLACE_PROGENITOR`*, `MATRICULA_RECIBIDA` (con los PDF), `AVISO_MATRICULA_ENVIADA` (a secretaría), `MATRICULA_DEVUELTA` y `MATRICULA_CONFIRMADA`.
+
+  Ya no queda ningún evento de una fase futura en borrador.
 
   (*) Obligatorios: llevan el enlace de la familia y se envían aunque la plantilla esté en borrador.
 - Correo con outbox: se guarda en la misma transacción y un worker lo envía cada 15 s, con reintentos.
@@ -140,10 +178,12 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 ## Modelo de datos y migraciones
 
 Tablas:
-- `usuarios`, `refresh_tokens`, `roles`, `ajustes`, `vias`, `familias`;
+- `usuarios`, `refresh_tokens`, `roles`, `ajustes`, `vias`, `ciclos`, `plazas_ciclo`, `familias`;
 - `solicitudes`, `solicitud_eventos` (historial auditable), `eventos_vistos`;
 - `propuestas_cita`, `franjas_agenda`, `entrevistas`, `tokens_publicos`, `documentos`;
-- `plantillas_correo`, `correos_salientes`, `reservas`, `cobros`, `secuencias`.
+- `plantillas_correo`, `correos_salientes`, `reservas`, `cobros`, `secuencias`;
+- `alumnas`, `alumna_contactos`, `alumna_eventos`;
+- `matriculas`, `enlaces_matricula`, `matricula_eventos`, `documentos_matricula`, `firmas_matricula`, `mandatos_sepa`, `archivos_matricula`, `pdfs_matricula`.
 
 | Migración | Contenido |
 |---|---|
@@ -152,6 +192,17 @@ Tablas:
 | `0002_avisos_familia` | `eventos_vistos` |
 | `0003_reserva_y_cobros` | `reservas`, `cobros`, enumerados y `solicitudes.en_espera_desde` |
 | `0004_reservas_admitidas_antiguas` | A mano, solo datos |
+| `0005_propuesta_cancelada_familia` | Valor `CANCELADA` en `estado_propuesta` (la familia cancela su cita) |
+| `0006_ficha_entrevista` | `entrevistas.ficha` (jsonb): ficha de la entrevista de la solicitud en papel |
+| `0007_alumnado` | `alumnas`, `alumna_contactos`, `alumna_eventos` y sus enumerados |
+| `0008_alumnas_reservas_antiguas` | A mano, solo datos: expediente para las solicitudes con la plaza ya reservada o matriculadas |
+| `0009_matricula` | `matriculas`, `enlaces_matricula`, `matricula_eventos` y los enumerados `estado_matricula` y `alcance_enlace` |
+| `0010_firmas_matricula` | `documentos_matricula`, `firmas_matricula` (imagen en `bytea`), `mandatos_sepa` y sus enumerados |
+| `0011_archivos_pdfs_matricula` | `archivos_matricula` (foto y copias del checklist, con categoría de conservación) y `pdfs_matricula` (PDF finales) |
+| `0012_resultado_curso` / `0013_quitar_promociona` | `alumnas.resultado_curso` (A7) y retirada de la marca `promociona` |
+| `0014_comercial_hasta_matricula` | Solo datos: permisos de serie del perfil Comercial (A2) |
+| `0015_catalogo_ciclos` | `ciclos` con los 8 del centro y `solicitudes.ciclo_id`; rellena el ciclo de las antiguas cuya «modalidad que le interesa» coincide (A6) |
+| `0016_plazas_por_ciclo` | `plazas_ciclo` (plazas de cada ciclo en cada vía: 30, y 60 en Administración y Finanzas); la vía pasa a la suma y GS concertado deja el cupo de la Junta (A6, entrega 2) |
 
 ## Convenciones
 
@@ -177,17 +228,20 @@ Tablas:
 7. **`euros()`** usa un espacio de no separación (U+00A0) antes de «€». En los tests, `'300,00 €'`.
 8. **Límite del formulario público:** 10 envíos por hora y por IP, y cuentan también los rechazados. En los tests crea solicitudes con el alta interna (`POST /solicitudes`), no con el formulario público.
 9. **El `.env` local se cuela en los tests** (dotenv). Toda variable que afecte a un test hay que fijarla en `vitest.config.mts › test.env`.
-10. **Plantillas al arrancar:** `sembrarBase` crea las que faltan. Si una plantilla de un evento ya construido sigue en borrador **sin haberse editado nunca**, la sustituye por la predeterminada y la activa. Si el centro la tocó, no la cambia.
+10. **Plantillas al arrancar:** `sembrarBase` crea las que faltan. Una plantilla que **nadie ha editado** (`actualizado_por_id` nulo y única de su evento) se pone al día con la predeterminada actual, así que los cambios de texto de `eventos.ts` llegan también a las BD existentes; si es de un evento ya construido y estaba en borrador, además se activa. Si el centro la tocó (guardar, activar o pasar a borrador desde Comunicaciones), no se cambia.
 11. **Roles al arrancar:** `sembrarBase` no pisa roles existentes. Un permiso nuevo en una BD ya creada se añade desde la matriz o con una migración.
 12. **Contenedor:** la API arranca como root solo para ajustar los permisos de `storage/uploads` y luego pasa a `node`.
 13. **Una entrevista futura no se puede marcar como realizada** (409 `ENTREVISTA_FUTURA`). En pruebas manuales, la solicitud se pasa a `ENTREVISTA_REALIZADA` con `PATCH /estado` (transición manual permitida).
+14. **`UPDATE … RETURNING` no devuelve las filas en ningún orden.** Si importa el orden (la cola de correos), se recorre el de la `SELECT … ORDER BY`. Y `now()` es el mismo durante toda la transacción: para desempatar filas creadas en la misma, `clock_timestamp()` (ver `encolarCorreo`). Sin esto, dos correos a la misma familia podían salir al revés y 6 tests fallaban de vez en cuando.
+15. **`jsonb` no conserva el orden de las claves.** Comparar un JSON leído de la BD con el que llega en la petición usando `JSON.stringify` da «distintos» aunque sean iguales. Usa `jsonCanonico` (`matricula.service.ts`), que ordena las claves. Sin esto, el autoguardado de la matrícula subía la versión en cada guardado sin cambios.
+16. **Adjuntos binarios en el outbox:** `encolarCorreo` codifica en base64 el `content` de cada adjunto como texto (un `.ics`). Un binario (un PDF) se pasa ya en base64 y con `base64: true`; si no, llega corrupto (ver `envio.service.ts`).
 
 ## Reglas de negocio validadas con el cliente
 
 - **Perfiles:** Dirección (superadministrador, todos los permisos, no se le pueden quitar), Administración, Secretaría y Comercial/Promoción. Matriz editable por Dirección. Siempre debe quedar un usuario activo de Dirección. Solo Dirección registra la decisión de admisión (`evaluacion.editar`).
 - **Solicitud web:** obligatorios alumna (nombre y apellidos), vía, centro de procedencia, tutor, correo y teléfono; la modalidad es opcional. Entra como `RECIBIDA` y se envía un acuse.
 - **Revisión:** cinco comprobaciones (datos completos, correo válido, plazas libres por vía, familia ya vinculada, cupo SNEC). No se puede citar si está incompleta: se usa "Pedir que complete".
-- **Agenda:** jornada de lunes a viernes de 8:00 a 18:00. Entrevistas de 45 o 60 min, siempre **presenciales con el equipo directivo** en la sala de reuniones de Dirección.
+- **Agenda:** jornada de lunes a viernes de 8:00 a 18:00. Entrevistas de 30 a 60 min (A4: 30, 45 o 60; de serie, 45), siempre **presenciales con el equipo directivo** en la sala de reuniones de Dirección. **Nunca el mismo día** (21/10/2026): la disponibilidad marca las horas de hoy como `Mismo día` y `citar` responde 400 `FECHA_MISMO_DIA`; se controla con `permitirMismoDia` (por defecto `false`) en `ajustes.agenda`.
 - **Citación:** 1 a 3 fechas reservadas hasta que la familia elige. Al elegir, la elegida se confirma, las demás se liberan y la entrevista aparece en el calendario (.ics por correo).
 - **Cambio de cita:** solo durante las **24 h siguientes a la primera aceptación**. Después, 409 `CAMBIO_FUERA_DE_PLAZO`.
 - **Recordatorios:** uno si la familia no elige en 3 días, y otro el día antes de la entrevista.
@@ -207,17 +261,21 @@ Tablas:
 
 Detalle, flujo de referencia paso a paso y prioridad en `../RESUMEN-PROYECTO-ALBAYDAR.md` y `../docs/diagrama-flujo-admision.png` (fuera del repo, en `albaydar-project/`). Lo que toca a la API:
 
-- **Código con letra de tipo:** **B** Bachillerato, **C** Ciclos. Se deriva de `vias.familia` en `siguienteCodigo()` (`solicitudes/comun.ts`), con secuencia por letra y año. Series exactas pendientes del cliente.
+- ~~**Código con letra de tipo:** B Bachillerato, C Ciclos~~ ✅ hecho en `feat/codigo-solicitud-por-tipo` y ajustado a las series del centro (ajuste A1, 15/11/2026, `feat/series-solicitud`): `B2027-0001`, `CC2027-0001` (concertados) y `CP2027-0001` (privados), con el año de inicio de los estudios (el del curso escolar de la vía) y contador por serie y año (`siguienteCodigo` y `SERIE_CODIGO` en `solicitudes/comun.ts`). Las anteriores conservan su código (`B-2026-…`, `C-2026-…`, `SOL-…`).
+- **Catálogo de ciclos** (ajuste A6). ✅ **Entrega 1** (16/11/2026, `feat/catalogo-ciclos`): tabla `ciclos` (migración 0015), `cicloId` obligatorio en las vías de ciclos al dar de alta (`cicloDeVia` en `solicitudes.service.ts`: `CICLO_OBLIGATORIO` / `CICLO_NO_VALIDO`), ciclos en `/public/vias` y `GET /catalogo/ciclos`, `ciclo` en lista, kanban, ficha y CSV, filtro `ciclo`, asignarlo o corregirlo con `PATCH /solicitudes/:id`, el expediente toma el ciclo como `estudios` y el anexo de la matrícula arranca con el ciclo y su grado (`CYCLES`, 8 ciclos, igual en el front). ✅ **Entrega 2** (16/11/2026, `feat/plazas-ciclo`): `plazas_ciclo` (migración 0016) con las del centro; las plazas de la vía son la suma (`sumarPlazasVia`; `PATCH /catalogo/vias/:id` con `plazas` en una vía de ciclos → `PLAZAS_POR_CICLO`) y se editan con `PATCH /catalogo/vias/:id/ciclos/:cicloId`; revisión, lista de espera y «Liberar plaza» por ciclo (`claveCiclo`, `ocupadasPorCiclo`, `plazasDeCiclos` en `solicitudes/comun.ts`). GS concertado ya no es «cupo de la Junta» (decisión del 16/11/2026).
 - **Varios entrevistadores (~7, según el tipo de solicitud)** y calendario de todos para secretaría, con Google Calendar como opción. **Revierte la decisión D2** (agenda única del equipo directivo, `CHECK entrevistas_presencial_chk`, `EXCLUDE` global): entrevistador por entrevista y agenda por persona. Esperar la lista de entrevistadores antes de migrar.
-- **Cancelar desde el recordatorio del día antes** y desde `/cita/:token`, con aviso a secretaría. Si la familia responde al correo para cancelar o cambiar, debe llegar a secretaría: en v1, `Reply-To` al buzón de secretaría; leer el buzón entrante, más adelante.
-- **Entrevista previa ya realizada:** validarla sin repetirla (hoy solo el atajo `PATCH /estado`).
-- **Duración y antelación:** 45–60 min (se mantiene) y **nunca el mismo día**: hoy la disponibilidad solo exige 2 h de antelación.
+- ~~**Cancelar desde el recordatorio del día antes** y desde `/cita/:token`, con aviso a secretaría; respuestas por correo a secretaría~~ ✅ hecho en `feat/cancelar-cita-familia`: `POST /public/citas/:token/cancelar` (`cancelarPorFamilia`), propuesta `CANCELADA` (migración `0005`), aviso `CITA_CANCELADA_FAMILIA` en `respuestas-familia`, correo `AVISO_CANCELACION_FAMILIA` y `Reply-To` (`MAIL_REPLY_TO` o `MAIL_SECRETARIA`). El front lo tiene desde el 29/10.
+- ~~**Entrevista previa ya realizada:** validarla sin repetirla~~ ✅ hecho en `feat/entrevista-previa`: `POST /solicitudes/:id/entrevista-previa` (`registrarEntrevistaPrevia` en `citacion.service.ts`) y acción `REGISTRAR_ENTREVISTA_PREVIA` en `siguientes`. El front lo tiene desde el 29/10.
+- ~~**Duración y antelación:** 45–60 min y nunca el mismo día~~ ✅ hecho en `fix/agenda-sin-mismo-dia` (`primerInicioPermitido` en `agenda.service.ts`).
 - **Reserva no reembolsable** salvo fuerza mayor caso por caso (cierra la pregunta 15); se puede pagar desde diciembre.
 - **Captación / CRM:** primer contacto con nombre, correo, teléfono y área de interés, y correo automático de información en menos de 5 min. El flujo completo y el perfil Comercial los define el cliente (Luis Fdo.).
-- **Matrícula (sigue en pausa), dos bloqueos nuevos:** alumnado de la Junta de Andalucía directo a matrícula con **importación desde Séneca** (API o fichero), y renovación 1º→2º filtrando a quien promociona según calificaciones (requiere Alumnado y notas).
+- **Matrícula, lo que queda de la reunión:** alumnado de la Junta de Andalucía directo a matrícula con **importación desde Séneca** (falta el importador, pregunta 27). La renovación 1º→2º existe (`POST /matriculas/renovacion`, por la marca `promociona`; las notas no se gestionan), pero el front aún no tiene la apertura en bloque.
 - **Untis:** sesión aparte para decidir si se integra o se sustituye.
+- Los dos bloqueos de matrícula de esta reunión (alumnado de la Junta y renovación según promoción) quedan recogidos en el punto 8 de `docs/matricula.md`.
 
-### Fase 04 · Matrícula digital (en pausa)
+### Fase 04 · Matrícula digital (en curso)
+
+**Entrega 1 hecha el 08/11/2026** (ver «Qué está implementado»). **Entrega 2 hecha el mismo día; la 3, el 10/11/2026; la 4 (front), el 11/11/2026.** Las cuatro entregas están hechas, en `docs/matricula.md` → «Entregas».
 
 El front ya tiene el asistente completo contra una API simulada (`mock-enrollments.interceptor.ts`). Las reglas están en `src/app/domain/rules/enrollment.rules.ts` del front (unas 770 líneas: `stepMissing`, `canSignDoc`, `voidedMandateSignatures`, `economicLines`, `checklist`, `canSubmit`) y son la especificación que la API tendrá que validar.
 
@@ -232,20 +290,32 @@ Lo que propuso el front:
 - **Portal de la familia:** `/matricula/:token`, con secretaría como respaldo.
 - **Estados:** `BORRADOR` → `ENVIADA` → `EXPORTADA` (la solicitud pasa a `MATRICULADA` y se envía `MATRICULA_CONFIRMADA`), con vuelta a borrador si secretaría la devuelve.
 
-**Bloqueos que hay que resolver antes de empezar** (si se hacen después, obligan a rehacer el modelo):
-1. **Documentos que se firman generados en el servidor** (impreso, ideario, LOPD, SEPA, AlbaydarPLUS) en PDF. Con cada firma se guarda la huella (hash) del documento exacto, la fecha y hora del servidor, la IP y el token. Sin esto, la firma es un PNG suelto.
-2. **"Páginas leídas":** el servidor no puede comprobarlo, solo registrar lo que dice el front (firma electrónica simple).
-3. **Firmas de padre y madre por un único enlace:** no se sabe quién firma cada una. Hay que decidir si basta o si se da un enlace a cada progenitor.
-4. **SEPA:** identificador de acreedor del centro (en ajustes), referencia única de mandato, fecha de firma, tipo de mandato (recurrente o único) y validación del IBAN.
-5. **Edición simultánea** de familia y secretaría: número de versión con 409 si se guarda sobre una versión antigua (no "la última escritura gana").
-6. **Límite de peticiones propio** para el autoguardado del portal de la familia: el actual de las rutas públicas (10 por hora) lo bloquearía.
-7. **Documentos sensibles** de menores (DNI, Libro de Familia, tarjeta sanitaria): almacenamiento en la nube en la UE y plazo de conservación (RGPD).
-8. **Alumnado de 2º que continúa:** necesita el módulo de Alumnado. La matrícula debe poder existir sin solicitud.
-9. **Formato oficial del fichero de Séneca.**
+**Bloqueos decididos el 08/11/2026.** El diseño completo, con el porqué de cada punto, está en `docs/matricula.md`: léelo antes de tocar Matrícula o Alumnado. Las respuestas del centro van a las preguntas 23–28 de `preguntas-abiertas.md`, y el diseño ya admite cualquiera de ellas.
+
+1. **Documentos firmados**
+   - El texto de los documentos lo da la API: textos legales versionados en código, no plantillas editables. El lector del front pinta lo que recibe.
+   - Cada firma guarda la huella SHA-256 del contenido canónico (versión del texto + datos), la hora del servidor, la IP, el navegador y el enlace. Si la huella ya no coincide, 409 `DOCUMENTO_CAMBIADO`.
+   - Una firma vale mientras su huella coincida: si cambian los datos, se anula y hay que volver a firmar.
+   - Al enviar, se genera el PDF final con `pdfkit`, con los trazos y una hoja de evidencias.
+2. **«Páginas leídas»:** firma electrónica simple. Se registra con la hora del servidor y se declara, nunca se afirma que se haya leído. Firmar exige `canSignDoc`.
+3. **Padre y madre:** varios enlaces por matrícula, cada uno con su alcance (`FAMILIA` o `PROGENITOR`). Por defecto, uno solo; cada firma registra su enlace. Lo decide el centro (pregunta 23).
+4. **SEPA**
+   - Tabla `mandatos_sepa`; referencia `M-2027-0001-SEPA1`, que nunca se reutiliza; `RCUR` / `OOFF`, esquema `CORE`.
+   - IBAN validado con módulo 97 y enmascarado fuera de la ficha.
+   - Acreedores por vía en `ajustes.matricula`. `ES09000G41829037` es correcto; el de GS concertado está por confirmar (pregunta 24).
+5. **Edición simultánea:** `matriculas.version`, y 409 `VERSION_ANTIGUA` si se guarda sobre una versión antigua. Firmas y archivos no suben la versión.
+6. **Límites del portal**, por enlace (no por IP): autoguardado 900 cada 15 min, firmas 60/h, archivos 30/h. En el front, autoguardado a 1 s.
+7. **Ficheros de menores**
+   - Google Cloud Storage en `europe-southwest1`, detrás de `Almacen`.
+   - `conservarHasta` por tipo de fichero y tarea diaria de borrado. Plazos propuestos en la pregunta 25; no se borra nada hasta que se confirmen.
+8. **Alumnado primero**
+   - La matrícula lleva `alumnaId` obligatorio y `solicitudId` opcional, una por alumna y curso escolar.
+   - Orígenes: reserva pagada, renovación según `resultadoCurso` (promociona → 2º, repite → mismo curso, titula → baja; A7), alumnado de la Junta importado de Séneca y alta manual.
+9. **Séneca:** adaptador `exportarSeneca` con CSV provisional hasta que llegue el formato oficial (pregunta 28).
 
 ### Otros módulos sin empezar
 
-- **Alumnado:** alumnas matriculadas. La comprobación "familia ya vinculada" también tendrá que mirar contra ellas, y es la base del alumnado que continúa.
+- **Alumnado:** falta la importación de Séneca (alumnado de la Junta y carga inicial de 1º, pregunta 27).
 - **Cobros completos:**
   - conceptos más allá de la reserva (matrícula, mensualidad, AMPA, uniforme, cuota reglada, AlbaydarPLUS) — cada uno con su tratamiento de IVA;
   - remesas SEPA;
@@ -254,7 +324,6 @@ Lo que propuso el front:
   - devoluciones.
 
   En el front están simulados y marcados «Propuesta a validar con el centro».
-- **Configuración y Comunicaciones en el front:** la API ya tiene usuarios, matriz de permisos, horario de agenda, configuración de la reserva y plantillas; faltan esas pantallas en el front.
 
 ### Pendiente del cliente (`docs/preguntas-abiertas.md`)
 
@@ -270,7 +339,7 @@ Lo que propuso el front:
 - regla de "familia ya vinculada";
 - curso escolar de destino de las solicitudes.
 
-**Permisos:** perfil Comercial.
+**Permisos:** ~~perfil Comercial~~ hecho el 15/11/2026 (ajuste A2): ve todo hasta la matrícula, cobros incluidos; solo edita solicitudes (`ROLES_INICIALES` y migración `0014`).
 
 **RGPD**
 - plazo de conservación de los datos de no admitidas;
@@ -278,9 +347,19 @@ Lo que propuso el front:
 
 **Kanban:** título de la primera columna (el mockup dice "Solicitud revisada"; el front propone "Nuevas y en revisión").
 
+**Matrícula**
+- uno o dos enlaces para las firmas de padre y madre;
+- identificador de acreedor SEPA de GS concertado;
+- plazos de conservación de los documentos;
+- volver a firmar si cambian los datos de un documento firmado;
+- listado de alumnas de 1º desde Séneca;
+- formato del fichero de Séneca.
+- lo que la familia no cambia desde su enlace, el contenido de los documentos y los correos de la matrícula (31–33).
+
+**Desvíos frente al diagrama (34–37):** cuándo queda «Matriculada» (al exportar o tras validar en Séneca), quién decide la admisión (Dirección o Secretaría), si el enlace de matrícula sale solo al pagar, y la duración de la entrevista (30–60 o 45–60).
+
 **Reserva y cobros**
 - qué hacer con una reserva vencida;
-- devolución de la reserva;
 - numeración de recibos por año o por curso escolar, y si el centro ya usa otra herramienta para emitirlos;
 - textos de los correos de lista de espera y no admitida (hoy provisionales);
 - IBAN real;
@@ -295,11 +374,13 @@ Lo que propuso el front:
   - `NODE_ENV=production`, `COOKIE_SECURE=true`, `TRUST_PROXY=true`;
   - `JWT_ACCESS_SECRET` aleatorio;
   - `SEED_DEMO=false`.
-- **Semilla de demo:** pasar los correos `@correo.es` a `@example.com`, y opcionalmente ampliarla (~40 solicitudes en todos los estados) para demos.
+- **Semilla de demo:** opcionalmente, ampliarla (~40 solicitudes en todos los estados) para demos.
 - **Posible mejora:** que secretaría pueda adjuntar el boletín de notas ella misma (hoy solo la familia, desde su enlace).
 - **Deuda menor:** `z.string().uuid()` y `.email()` están obsoletos en Zod 4 (se usan en todo el código, migrar de una vez a `z.uuid()` y `z.email()`); avisos de estilo de Sonar (`await` en bucles intencionado en las tareas, ternarios anidados).
 
 ## Cómo trabajar en este repo
+
+- **Ramas** (desde el 27/10/2026, igual que el front): `develop` es la rama de trabajo y la de por defecto en GitHub. Todo sale de `develop` en una rama `feat/…`, `fix/…`, `chore/…` o `docs/…` y vuelve a `develop` mediante PR. Cuando se completan varias iteraciones, `develop` → `main` con un PR. No se abren PR de funcionalidades contra `main`. Commits y PR, solo cuando el usuario lo pida.
 
 - **Cambio de contrato:**
   1. Actualiza `docs/api.md` en el mismo cambio.

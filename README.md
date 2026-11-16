@@ -106,7 +106,7 @@ Detalle en [`docs/gmail.md`](docs/gmail.md).
 
 ⚠️ **Con SMTP real, los correos llegan de verdad a la dirección de cada solicitud.**
 - Usa solo correos propios. Con alias de Gmail (`tucorreo+prueba1@gmail.com`) tienes muchas "familias" con un solo buzón.
-- Las solicitudes de ejemplo de la semilla llevan correos `@correo.es`, un dominio real: no las cites ni les envíes nada.
+- Las solicitudes de ejemplo de la semilla llevan correos `@example.com`, un dominio reservado que nunca entrega.
 - Pon `MAIL_SECRETARIA` y `MAIL_ADMINISTRACION` en tu buzón: `@albaydar.org` es el dominio real del centro.
 - Si quieres que **todo** vaya a un único buzón, usa `MAIL_DESVIO=tucorreo@gmail.com`.
 

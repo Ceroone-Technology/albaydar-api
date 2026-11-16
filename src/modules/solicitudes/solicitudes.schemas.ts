@@ -25,10 +25,12 @@ export const telefono = z
   .regex(/^\+?[\d\s().-]{9,20}$/, 'Teléfono no válido.');
 
 /**
- * Campos de la solicitud (los del mockup). Todos obligatorios salvo la modalidad.
+ * Campos de la solicitud (los del mockup). Todos obligatorios salvo la modalidad. El ciclo
+ * (A6) es obligatorio en las vías de ciclos: lo comprueba el servicio, que conoce la vía.
  */
 export const camposFamilia = {
   viaId: z.string().uuid('Elige la etapa y el curso.'),
+  cicloId: z.string().uuid('Elige el ciclo.').optional().nullable(),
   alumnaNombre: texto(),
   alumnaApellidos: texto(),
   centroProcedencia: texto(200),
@@ -65,16 +67,20 @@ export const solicitudInternaBody = z.object({
 /** Completar desde el enlace: solo los campos de la familia, todos opcionales. */
 export const completarBody = z
   .object(camposFamilia)
-  .omit({ viaId: true })
+  .omit({ viaId: true, cicloId: true })
   .partial()
   .refine((o) => Object.keys(o).length > 0, 'No has enviado ningún dato.');
 
 export const gestionBody = z
   .object({
     responsableId: z.string().uuid().nullable().optional(),
-    observacionesInternas: textoOpc(4000),
+    // .optional() fuera de la transformación: si no viene, no se toca (antes quedaba en null
+    // y cambiar el responsable borraba las observaciones).
+    observacionesInternas: textoOpc(4000).optional(),
     asignadaSnec: z.boolean().optional(),
     canal: z.enum(canalSolicitudEnum.enumValues).optional(),
+    /** Ciclo (A6): secretaría lo asigna o lo corrige, siempre de la familia de la vía. */
+    cicloId: z.string().uuid().nullable().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, 'Nada que actualizar.');
 
@@ -109,6 +115,11 @@ export const listarQuery = z.object({
   estado: lista(estadoSolicitudEnum.enumValues as unknown as [string, ...string[]]),
   familiaVia: lista(familiaViaEnum.enumValues as unknown as [string, ...string[]]),
   curso: z.coerce.number().int().min(1).max(2).optional(),
+  /** Ciclo del catálogo (A6); uno o varios. */
+  ciclo: z
+    .union([z.string().uuid(), z.array(z.string().uuid())])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : Array.isArray(v) ? v : [v])),
   canal: lista(canalSolicitudEnum.enumValues as unknown as [string, ...string[]]),
   asignadaSnec: booleano,
   /** "Entrevista sin notas": entrevista programada sin boletín. */

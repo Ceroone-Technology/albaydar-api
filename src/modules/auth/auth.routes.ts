@@ -47,9 +47,14 @@ function origenPermitido(req: Request) {
   return env.CORS_ORIGINS.includes(origin);
 }
 
+// Por IP, y sólo cuentan los intentos fallidos: en el centro todo el personal
+// sale a internet por la misma IP y los accesos correctos no deben bloquearlo
+// (detrás de un proxy, TRUST_PROXY=true para ver la IP real). El bloqueo por
+// cuenta tras 5 fallos sigue aparte.
 const limiteLogin = rateLimit({
   windowMs: 15 * 60_000,
   limit: 20,
+  skipSuccessfulRequests: true,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   message: { error: { code: 'DEMASIADAS_PETICIONES', message: 'Demasiados intentos. Espera unos minutos.' } },

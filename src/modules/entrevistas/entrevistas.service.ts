@@ -12,12 +12,13 @@ import {
   vias,
 } from '../../db/schema';
 import { db } from '../../lib/db';
-import { conflict, notFound } from '../../lib/errors';
-import { diaLargo, franja, hora, horaLocalAUtc } from '../../lib/fechas';
+import { badRequest, conflict, notFound } from '../../lib/errors';
+import { diaLargo, fechaLocal, franja, hora, horaLocalAUtc } from '../../lib/fechas';
 import { enviarEvento } from '../../correo/enviar';
 import { cambiarEstado, datosCorreo, obtenerSolicitud, registrarEvento } from '../solicitudes/comun';
 import { ETIQUETA_ESTADO_ENTREVISTA, ETIQUETA_FAMILIA_VIA } from '../solicitudes/dominio';
 import { adjuntoIcs, cancelarEntrevista, liberarFranjas } from '../citacion/citacion.service';
+import { combinarFicha, erroresFicha, faltanParaRealizada, fichaEntrada } from './ficha';
 
 const fecha = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const lista = <T extends readonly [string, ...string[]]>(v: T) =>
@@ -44,6 +45,8 @@ export const actualizarEntrevistaBody = z
   .object({
     estado: z.enum(['REALIZADA', 'NO_PRESENTADA']).optional(),
     notas: z.string().trim().max(4000).nullable().optional(),
+    /** Ficha de la entrevista (parcial: lo que no llega se conserva). */
+    ficha: fichaEntrada.optional(),
   })
   .refine((o) => Object.keys(o).length > 0, 'Nada que actualizar.');
 
@@ -105,6 +108,10 @@ export async function listar(q: z.infer<typeof listarEntrevistasQuery>) {
     modalidad: e.modalidad,
     notasRecibidas: conNotas.has(s.id),
     notas: e.notas,
+    ficha: e.ficha ?? null,
+    // Para la ficha: la modalidad y la optativa solo se piden en Bachillerato.
+    familiaVia: via.familia,
+    cursoNumero: via.curso,
     solicitud: { id: s.id, codigo: s.codigo, estado: s.estado },
   }));
 
@@ -146,14 +153,34 @@ export async function actualizar(id: string, d: z.infer<typeof actualizarEntrevi
     if (!e) throw notFound('Entrevista no encontrada.');
     if (e.estado === 'CANCELADA') throw conflict('ENTREVISTA_CANCELADA', 'La entrevista está cancelada.');
     if (d.estado && e.inicio > new Date()) throw conflict('ENTREVISTA_FUTURA', 'No se puede marcar como celebrada una entrevista que aún no ha tenido lugar.');
+    const { s, via } = await obtenerSolicitud(tx, e.solicitudId, true);
+
+    const ficha = d.ficha ? combinarFicha(e.ficha, d.ficha) : e.ficha;
+    if (d.ficha) {
+      const errores = erroresFicha(ficha!, via.familia, fechaLocal(new Date()));
+      if (errores.length) throw badRequest('DATOS_INVALIDOS', errores[0]!.mensaje, errores);
+    }
+    // Realizada (ahora, o ya lo era y se edita la ficha): valoración y entrevistados (05/11/2026).
+    // Una realizada de antes de la ficha puede seguir editando solo la nota.
+    const realizada = (d.estado ?? e.estado) === 'REALIZADA';
+    if (realizada && (d.estado === 'REALIZADA' || d.ficha)) {
+      const faltan = faltanParaRealizada(ficha);
+      if (faltan.length) {
+        throw badRequest('FICHA_INCOMPLETA', 'Para registrar la entrevista como realizada, indica en la ficha la valoración y a quién se entrevistó.', { faltan });
+      }
+    }
+
     const [act] = await tx
       .update(entrevistas)
-      .set({ ...(d.estado ? { estado: d.estado } : {}), ...(d.notas !== undefined ? { notas: d.notas } : {}) })
+      .set({
+        ...(d.estado ? { estado: d.estado } : {}),
+        ...(d.notas !== undefined ? { notas: d.notas } : {}),
+        ...(d.ficha ? { ficha } : {}),
+      })
       .where(eq(entrevistas.id, id))
       .returning();
     const actor = { tipo: 'usuario' as const, usuarioId };
     if (d.estado) {
-      const { s } = await obtenerSolicitud(tx, e.solicitudId, true);
       if (d.estado === 'REALIZADA' && s.estado === 'ENTREVISTA_PROGRAMADA') {
         await cambiarEstado(tx, s, 'ENTREVISTA_REALIZADA', actor, 'ENTREVISTA_REALIZADA', { entrevistaId: id });
       } else {
