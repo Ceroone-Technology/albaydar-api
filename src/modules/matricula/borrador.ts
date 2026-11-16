@@ -26,11 +26,15 @@ export type CourseLevel = (typeof CURSOS)[number];
 
 export const PREVIOUS_STAGES = ['ESO', 'Bachillerato', 'FP Básica', 'Grado Medio'] as const;
 export const STREET_TYPES = ['Calle', 'Avenida', 'Plaza', 'Camino', 'Paseo', 'Carretera', 'Otros'] as const;
+/** Los 8 ciclos del centro (A6, catálogo `ciclos`). Copia en el front: enrollment.interface.ts. */
 export const CYCLES = [
+  'Actividades Comerciales',
   'Administración y Finanzas',
-  'Desarrollo de Aplicaciones Multiplataforma',
+  'Asistencia a la Dirección',
+  'Comercio Internacional',
+  'Educación Infantil',
   'Gestión Administrativa',
-  'Sistemas Microinformáticos y Redes',
+  'Integración Social',
   'Marketing y Publicidad',
 ] as const;
 export const ANNEX_OBJECTIONS = ['o1', 'o2', 'o3', 'o4', 'o5'] as const;

@@ -243,6 +243,25 @@ export const vias = pgTable(
   ],
 );
 
+// ── Catálogo de ciclos de FP (A6) ───────────────────────────────────────────
+
+/**
+ * Los ciclos que imparte el centro, cada uno de una familia de vías de ciclos (GM concertado,
+ * GS concertado o GS privado). La solicitud de una vía de ciclos lleva el suyo. El catálogo
+ * se carga por migración; las plazas por ciclo llegan en una segunda entrega.
+ */
+export const ciclos = pgTable(
+  'ciclos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    familia: familiaViaEnum('familia').notNull(),
+    nombre: text('nombre').notNull(),
+    orden: integer('orden').notNull().default(0),
+    activo: boolean('activo').notNull().default(true),
+  },
+  (t) => [unique('ciclos_familia_nombre_uq').on(t.familia, t.nombre), check('ciclos_familia_chk', sql`${t.familia} <> 'BACHILLERATO'`)],
+);
+
 // ── Familias conocidas (para "familia ya vinculada") ────────────────────────
 
 export const familias = pgTable('familias', {
@@ -272,6 +291,8 @@ export const solicitudes = pgTable(
       .notNull()
       .references(() => vias.id),
     familiaId: uuid('familia_id').references(() => familias.id),
+    /** Ciclo que pide (A6): obligatorio en las vías de ciclos al dar de alta; null en Bachillerato y en las antiguas. */
+    cicloId: uuid('ciclo_id').references(() => ciclos.id),
 
     // Alumna
     alumnaNombre: text('alumna_nombre').notNull(),
@@ -980,6 +1001,7 @@ export const pdfsMatricula = pgTable(
 // ── Tipos inferidos ─────────────────────────────────────────────────────────
 export type Usuario = typeof usuarios.$inferSelect;
 export type Via = typeof vias.$inferSelect;
+export type Ciclo = typeof ciclos.$inferSelect;
 export type Solicitud = typeof solicitudes.$inferSelect;
 export type NuevaSolicitud = typeof solicitudes.$inferInsert;
 export type FranjaAgenda = typeof franjasAgenda.$inferSelect;

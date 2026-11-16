@@ -14,7 +14,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { crearApp } from '../src/app';
 import { db, pool } from '../src/lib/db';
-import { correosSalientes, entrevistas, franjasAgenda, plantillasCorreo, propuestasCita, reservas, solicitudes, usuarios, vias } from '../src/db/schema';
+import { ciclos, correosSalientes, entrevistas, franjasAgenda, plantillasCorreo, propuestasCita, reservas, solicitudes, usuarios, vias } from '../src/db/schema';
 import { EVENTOS } from '../src/correo/eventos';
 import { recordatoriosPago, vencerReservas } from '../src/modules/reservas/reservas.service';
 import { sembrarBase } from '../src/db/datos-base';
@@ -1024,11 +1024,15 @@ describe('Cola de correos', () => {
 });
 
 describe('Código de la solicitud por tipo (reunión del 21/10/2026)', () => {
-  const alta = (viaId: string, nombre: string) =>
-    request(app).post('/api/solicitudes').set(auth()).send({
-      viaId, alumnaNombre: nombre, alumnaApellidos: 'Código Prueba', tutorNombre: 'Tutora Prueba',
+  const alta = async (viaId: string, nombre: string) => {
+    // Las vías de ciclos piden ciclo (A6): el primero de su familia.
+    const [via] = await db.select().from(vias).where(eq(vias.id, viaId));
+    const [ciclo] = await db.select().from(ciclos).where(eq(ciclos.familia, via!.familia)).limit(1);
+    return request(app).post('/api/solicitudes').set(auth()).send({
+      viaId, cicloId: ciclo?.id, alumnaNombre: nombre, alumnaApellidos: 'Código Prueba', tutorNombre: 'Tutora Prueba',
       email: `${nombre.toLowerCase()}@example.com`, telefono: '+34 600 000 000', canal: 'TELEFONO', consentimientoPrivacidad: true,
     });
+  };
 
   it('series B, CC y CP con el año de inicio de los estudios, cada una con su contador (A1)', async () => {
     const [gm] = await db.insert(vias).values({ familia: 'CICLOS_CONCERTADOS_GM', curso: 1, nombre: 'GM concertado 1º', cursoEscolar: '2027-2028', plazas: 20 }).returning();
@@ -1045,6 +1049,67 @@ describe('Código de la solicitud por tipo (reunión del 21/10/2026)', () => {
     const [vb] = await db.select({ cursoEscolar: vias.cursoEscolar }).from(vias).where(eq(vias.id, viaBach));
     const bach = (await alta(viaBach, 'Bachi')).body.codigo as string;
     expect(bach).toMatch(new RegExp(`^B${vb!.cursoEscolar.slice(0, 4)}-\\d{4}$`));
+  });
+});
+
+describe('Ciclo de la solicitud (A6, entrega 1)', () => {
+  const cicloDe = async (nombre: string) => (await db.select().from(ciclos).where(eq(ciclos.nombre, nombre)))[0]!;
+  const datos = (viaId: string, nombre: string, extra: Record<string, unknown> = {}) => ({
+    viaId, alumnaNombre: nombre, alumnaApellidos: 'Ciclo Prueba', tutorNombre: `Tutora de ${nombre}`, centroProcedencia: 'IES Ciclos',
+    email: `${nombre.toLowerCase()}.ciclo@example.com`, telefono: '+34 600 600 600', consentimientoPrivacidad: true, ...extra,
+  });
+
+  it('el formulario público ofrece los ciclos de cada familia y Bachillerato no lleva', async () => {
+    const r = await request(app).get('/api/public/vias');
+    const familias = Object.fromEntries((r.body.familias as { familia: string; ciclos: { nombre: string }[] }[]).map((f) => [f.familia, f.ciclos.map((c) => c.nombre)]));
+    expect(familias['BACHILLERATO']).toEqual([]);
+    const todos = (await request(app).get('/api/catalogo/ciclos').set(auth())).body.items as { nombre: string; familia: string }[];
+    expect(todos.map((c) => c.nombre).sort()).toEqual([
+      'Actividades Comerciales', 'Administración y Finanzas', 'Asistencia a la Dirección', 'Comercio Internacional',
+      'Educación Infantil', 'Gestión Administrativa', 'Integración Social', 'Marketing y Publicidad',
+    ]);
+    expect(todos.filter((c) => c.familia === 'CICLOS_PRIVADOS_GS').map((c) => c.nombre)).toEqual(['Integración Social', 'Marketing y Publicidad']);
+  });
+
+  it('obligatorio en las vías de ciclos y de su misma familia; se filtra, se exporta y se corrige desde la ficha', async () => {
+    await db.insert(vias).values({ familia: 'CICLOS_PRIVADOS_GS', curso: 1, nombre: 'GS privado 1º', cursoEscolar: '2027-2028', plazas: 20 }).onConflictDoNothing();
+    const [gsp] = await db.select().from(vias).where(and(eq(vias.familia, 'CICLOS_PRIVADOS_GS'), eq(vias.curso, 1), eq(vias.cursoEscolar, '2027-2028')));
+    const marketing = await cicloDe('Marketing y Publicidad');
+    const integracion = await cicloDe('Integración Social');
+    const infantil = await cicloDe('Educación Infantil'); // GS concertado: otra familia
+
+    const sin = await request(app).post('/api/solicitudes').set(auth()).send(datos(gsp!.id, 'Sinciclo'));
+    expect(sin.body.error.code).toBe('CICLO_OBLIGATORIO');
+    const otra = await request(app).post('/api/solicitudes').set(auth()).send(datos(gsp!.id, 'Otrafamilia', { cicloId: infantil.id }));
+    expect(otra.body.error.code).toBe('CICLO_NO_VALIDO');
+    const bach = await request(app).post('/api/solicitudes').set(auth()).send(datos(viaBach, 'Bachciclo', { cicloId: marketing.id }));
+    expect(bach.body.error.code).toBe('CICLO_NO_VALIDO');
+
+    const ok = await request(app).post('/api/solicitudes').set(auth()).send(datos(gsp!.id, 'Conciclo', { cicloId: marketing.id }));
+    expect(ok.status).toBe(201);
+    expect((await request(app).get(`/api/solicitudes/${ok.body.id}`).set(auth())).body.ciclo).toEqual({ id: marketing.id, nombre: 'Marketing y Publicidad' });
+
+    const filtrada = (await request(app).get(`/api/solicitudes?ciclo=${marketing.id}`).set(auth())).body.items as { id: string; ciclo: { nombre: string } }[];
+    expect(filtrada.map((s) => s.id)).toContain(ok.body.id);
+    expect(filtrada.every((s) => s.ciclo.nombre === 'Marketing y Publicidad')).toBe(true);
+    expect((await request(app).get(`/api/solicitudes?ciclo=${integracion.id}`).set(auth())).body.items.map((s: { id: string }) => s.id)).not.toContain(ok.body.id);
+
+    const csv = (await request(app).get(`/api/solicitudes/exportar?q=Conciclo`).set(auth())).text.replace(/^﻿/, '').trimEnd().split('\r\n');
+    const cab = csv[0]!.split(';');
+    expect(csv[1]!.split(';')[cab.indexOf('Ciclo')]).toBe('Marketing y Publicidad');
+
+    // Secretaría lo corrige (o lo pone en una solicitud antigua), siempre dentro de la familia,
+    // sin tocar lo demás de la gestión (las observaciones internas se quedan).
+    expect((await request(app).patch(`/api/solicitudes/${ok.body.id}`).set(auth()).send({ observacionesInternas: 'Llamó para preguntar por las prácticas.' })).status).toBe(200);
+    const [otro] = await db.select({ id: usuarios.id }).from(usuarios).where(eq(usuarios.activo, true)).limit(1);
+    expect((await request(app).patch(`/api/solicitudes/${ok.body.id}`).set(auth()).send({ responsableId: otro!.id })).status).toBe(200);
+    expect((await request(app).patch(`/api/solicitudes/${ok.body.id}`).set(auth()).send({ cicloId: infantil.id })).body.error.code).toBe('CICLO_NO_VALIDO');
+    expect((await request(app).patch(`/api/solicitudes/${ok.body.id}`).set(auth()).send({ cicloId: null })).body.error.code).toBe('CICLO_OBLIGATORIO');
+    expect((await request(app).patch(`/api/solicitudes/${ok.body.id}`).set(auth()).send({ cicloId: integracion.id })).status).toBe(200);
+    const det = (await request(app).get(`/api/solicitudes/${ok.body.id}`).set(auth())).body;
+    expect(det.ciclo.nombre).toBe('Integración Social');
+    expect(det.observacionesInternas).toBe('Llamó para preguntar por las prácticas.');
+    expect(det.eventos.find((e: { tipo: string }) => e.tipo === 'GESTION_ACTUALIZADA').detalle).toMatchObject({ campos: ['cicloId'], cicloAnterior: marketing.id, cicloNuevo: integracion.id });
   });
 });
 

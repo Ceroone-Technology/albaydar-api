@@ -4,6 +4,7 @@ import {
   alumnaContactos,
   alumnaEventos,
   alumnas,
+  ciclos,
   cobros,
   correosSalientes,
   entrevistas,
@@ -568,6 +569,8 @@ export async function altaDesdeReserva(tx: Tx, s: Solicitud, via: Via, usuarioId
     return actual.id;
   }
   const hoy = fechaLocal(new Date());
+  // Estudios: el ciclo que pidió (A6) o, en Bachillerato, la modalidad que le interesa.
+  const [ciclo] = s.cicloId ? await tx.select({ nombre: ciclos.nombre }).from(ciclos).where(eq(ciclos.id, s.cicloId)) : [];
   const [a] = await tx
     .insert(alumnas)
     .values({
@@ -577,7 +580,7 @@ export async function altaDesdeReserva(tx: Tx, s: Solicitud, via: Via, usuarioId
       familia: via.familia,
       curso: via.curso,
       cursoEscolar: via.cursoEscolar,
-      estudios: s.modalidadInteres,
+      estudios: ciclo?.nombre ?? s.modalidadInteres,
       estado: 'RESERVA',
       origen: 'ADMISION',
       solicitudId: s.id,

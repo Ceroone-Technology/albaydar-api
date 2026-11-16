@@ -11,7 +11,7 @@ import { eq, sql } from 'drizzle-orm';
 import { env } from '../config/env';
 import { db, pool } from '../lib/db';
 import { hashPassword } from '../modules/auth/auth.service';
-import { alumnaContactos, alumnaEventos, alumnas, familias, solicitudes, usuarios, vias } from './schema';
+import { alumnaContactos, alumnaEventos, alumnas, ciclos, familias, solicitudes, usuarios, vias } from './schema';
 import { sembrarBase } from './datos-base';
 import { siguienteCodigo, siguienteValor, registrarEvento } from '../modules/solicitudes/comun';
 import { formatoExpediente } from '../modules/alumnado/dominio';
@@ -46,7 +46,7 @@ async function alumnadoDemo(usuarioId: string) {
       contactos: [{ parentesco: 'Madre', nombre: 'Rosa Pineda Gil', telefono: '+34 677 118 402', email: 'rpineda@example.com' }] },
     { nombre: 'Adriana', apellidos: 'Quesada Ferrer', documento: '47920318W', fechaNacimiento: '2008-05-03', familia: 'CICLOS_PRIVADOS_GS', curso: 1, estudios: 'Marketing y Publicidad', estado: 'MATRICULADA', resultadoCurso: 'PROMOCIONA', email: 'adriana.quesada@example.com',
       contactos: [{ parentesco: 'Madre', nombre: 'Pilar Ferrer Ariza', telefono: '+34 690 118 774', email: 'pferrer@example.com' }] },
-    { nombre: 'Nerea', apellidos: 'Domínguez Salas', documento: '49611042L', fechaNacimiento: '2008-09-19', familia: 'CICLOS_CONCERTADOS_GM', curso: 2, estudios: 'Sistemas Microinformáticos y Redes', estado: 'MATRICULADA',
+    { nombre: 'Nerea', apellidos: 'Domínguez Salas', documento: '49611042L', fechaNacimiento: '2008-09-19', familia: 'CICLOS_CONCERTADOS_GM', curso: 2, estudios: 'Gestión Administrativa', estado: 'MATRICULADA',
       contactos: [{ parentesco: 'Padre', nombre: 'Manuel Domínguez Vera', telefono: '+34 611 447 208', email: 'mdominguez@example.com' }] },
     { nombre: 'Nadia', apellidos: 'Bouhouch El Amrani', documento: 'Y4821533B', fechaNacimiento: '2009-03-14', familia: 'CICLOS_CONCERTADOS_GS', curso: 1, estudios: 'Administración y Finanzas', estado: 'EN_PROCESO',
       contactos: [{ parentesco: 'Madre', nombre: 'Samira El Amrani', telefono: '+34 634 902 118', email: 'selamrani@example.com' }, { parentesco: 'Padre', nombre: 'Rachid Bouhouch', telefono: '+34 634 902 119' }] },
@@ -110,6 +110,9 @@ async function main() {
   }
   const todas = await db.select().from(vias).where(eq(vias.cursoEscolar, CURSO_ESCOLAR));
   const via = (f: string, c: number) => todas.find((x) => x.familia === f && x.curso === c)!.id;
+  // Catálogo de ciclos (A6): lo carga la migración 0015.
+  const catalogo = await db.select().from(ciclos);
+  const ciclo = (nombre: string) => catalogo.find((c) => c.nombre === nombre)?.id ?? null;
 
   // Hasta el 05/11/2026 la semilla usaba @correo.es, un dominio real: en una BD de demo ya
   // creada se pasan a @example.com (reservado, nunca entrega). Solo las filas de la semilla,
@@ -128,8 +131,8 @@ async function main() {
     const ejemplos = [
       { viaId: via('BACHILLERATO', 1), alumnaNombre: 'Lucía', alumnaApellidos: 'Márquez Peña', tutorNombre: 'Elena Peña Ríos', email: 'epena@example.com', telefono: '+34 622 418 903', centroProcedencia: 'IES Martínez Montañés', modalidadInteres: 'Ciencias', canal: 'SOLICITUD_WEB' as const, asignadaSnec: false },
       // Correo incompleto a propósito, como en el mockup: la revisión lo marca y no deja citar.
-      { viaId: via('CICLOS_CONCERTADOS_GS', 1), alumnaNombre: 'Daniel', alumnaApellidos: 'Ortiz Cano', tutorNombre: 'Andrés Ortiz Luque', email: 'aortiz@correo', telefono: '+34 611 902 447', centroProcedencia: 'IES Velázquez', modalidadInteres: null, canal: 'SOLICITUD_WEB' as const, asignadaSnec: true },
-      { viaId: via('CICLOS_PRIVADOS_GS', 1), alumnaNombre: 'Paula', alumnaApellidos: 'Gil Romero', tutorNombre: 'Marta Romero Vela', email: 'mromero@example.com', telefono: '+34 687 330 128', centroProcedencia: 'Colegio Portaceli', modalidadInteres: 'Marketing y publicidad', canal: 'SOLICITUD_WEB' as const, asignadaSnec: false },
+      { viaId: via('CICLOS_CONCERTADOS_GS', 1), cicloId: ciclo('Comercio Internacional'), alumnaNombre: 'Daniel', alumnaApellidos: 'Ortiz Cano', tutorNombre: 'Andrés Ortiz Luque', email: 'aortiz@correo', telefono: '+34 611 902 447', centroProcedencia: 'IES Velázquez', modalidadInteres: null, canal: 'SOLICITUD_WEB' as const, asignadaSnec: true },
+      { viaId: via('CICLOS_PRIVADOS_GS', 1), cicloId: ciclo('Marketing y Publicidad'), alumnaNombre: 'Paula', alumnaApellidos: 'Gil Romero', tutorNombre: 'Marta Romero Vela', email: 'mromero@example.com', telefono: '+34 687 330 128', centroProcedencia: 'Colegio Portaceli', modalidadInteres: 'Marketing y publicidad', canal: 'SOLICITUD_WEB' as const, asignadaSnec: false },
     ];
     for (const e of ejemplos) {
       await db.transaction(async (tx) => {

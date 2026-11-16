@@ -33,7 +33,7 @@ import * as archivosSrv from './archivos.service';
 import { aBorrador, cargarArchivos, type Destino } from './archivos.service';
 import * as firmasSrv from './firmas.service';
 import { anularDesactualizadas, cargarFirmas, evaluarFirmas, firmasDe, vistaMandato, type Evidencias, type Firmante } from './firmas.service';
-import { borradorEntrada, borradorVacio, CURSOS, type Borrador, type Expediente } from './borrador';
+import { borradorEntrada, borradorVacio, CURSOS, CYCLES, type Borrador, type Expediente } from './borrador';
 import {
   ETIQUETA_ESTADO_MATRICULA,
   FAMILIA_DE_VIA,
@@ -157,6 +157,11 @@ function borradorDesdeExpediente(a: Alumna, contactos: AlumnaContacto[], centroP
     return { fullName: c?.nombre ?? '', profession: '', document: '', email: c?.email ?? '', phone: c?.telefono ?? '' };
   }) as Borrador['family']['guardians'];
   d.previousStudies.school = centroProcedencia ?? '';
+  // Ciclos (A6): el anexo arranca con el ciclo del expediente y su grado.
+  if (a.familia !== 'BACHILLERATO') {
+    d.annex.cycle = CYCLES.find((c) => c === a.estudios) ?? null;
+    d.annex.cycleType = a.familia === 'CICLOS_CONCERTADOS_GM' ? 'intermediate' : 'higher';
+  }
   const anios = edad(a.fechaNacimiento);
   if (anios !== null) d.annex.minor = anios < 18;
   return d;

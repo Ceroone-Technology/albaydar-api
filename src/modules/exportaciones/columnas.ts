@@ -43,6 +43,7 @@ export const COLUMNAS_SOLICITUDES: Columna<ItemSolicitud>[] = [
   { titulo: 'Alumna', valor: (s) => s.alumna },
   { titulo: 'Etapa', valor: (s) => s.via.etiqueta },
   { titulo: 'Curso', valor: (s) => `${s.via.curso}º` },
+  { titulo: 'Ciclo', valor: (s) => s.ciclo?.nombre },
   { titulo: 'Centro de procedencia', valor: (s) => s.centroProcedencia },
   { titulo: 'Modalidad de interés', valor: (s) => s.modalidadInteres },
   { titulo: 'Tutor/a', valor: (s) => s.tutor },

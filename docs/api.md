@@ -95,7 +95,7 @@ Contraseña: mínimo 10 caracteres, con letras y números. Siempre debe quedar u
 
 | Método | Ruta | Uso |
 |---|---|---|
-| GET | `/public/vias` | Vía en dos niveles: `{ cursoEscolar, familias: [{ familia, etiqueta, etapa, cursos: [{ viaId, curso, nombre }] }] }` |
+| GET | `/public/vias` | Vía en dos niveles: `{ cursoEscolar, familias: [{ familia, etiqueta, etapa, cursos: [{ viaId, curso, nombre }], ciclos: [{ id, nombre }] }] }`. `ciclos`: los activos de esa familia (vacío en Bachillerato; A6) |
 | POST | `/public/solicitudes` | Formulario "Albaydar Solicitud" → `201 { codigo }`. Envía el acuse. |
 | GET / PATCH | `/public/solicitudes/completar/:token` | Ver y completar datos pendientes. Enlace de un solo uso. |
 | GET | `/public/citas/:token` | Página "Albaydar Cita" |
@@ -105,11 +105,12 @@ Contraseña: mínimo 10 caracteres, con letras y números. Siempre debe quedar u
 | GET | `/public/citas/:token/ics` | "Añadir a mi calendario" |
 | POST / DELETE | `/public/citas/:token/notas` | Boletín de notas: `multipart/form-data`, campo `archivo` (PDF, JPG, PNG o HEIC, máx. 10 MB) |
 
-Cuerpo de `POST /public/solicitudes` (todos obligatorios salvo `modalidadInteres` y `asignadaSnec`):
+Cuerpo de `POST /public/solicitudes` (todos obligatorios salvo `modalidadInteres` y `asignadaSnec`; `cicloId`, obligatorio en las vías de ciclos):
 
 ```json
 {
   "viaId": "uuid",
+  "cicloId": null,
   "alumnaNombre": "Lucía", "alumnaApellidos": "Márquez Peña",
   "centroProcedencia": "IES Martínez Montañés",
   "modalidadInteres": "Ciencias",
@@ -120,6 +121,7 @@ Cuerpo de `POST /public/solicitudes` (todos obligatorios salvo `modalidadInteres
 }
 ```
 
+- `cicloId` (A6): uno de los `ciclos` de la familia de la vía. Sin él en una vía de ciclos, 400 `CICLO_OBLIGATORIO`; de otra familia, inactivo o en Bachillerato, 400 `CICLO_NO_VALIDO`. Lo mismo en el alta interna (`POST /solicitudes`).
 - `asignadaSnec`: selector "Vía propia" (`false`, por defecto) / "Asignada por la Junta (SNEC)" (`true`).
 - `website` es un campo trampa para bots: el formulario lo tiene oculto y vacío.
 
@@ -164,14 +166,14 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
 | GET | `/solicitudes?vista=bandeja` | solicitudes.ver | Bandeja de admisión |
-| GET | `/solicitudes?q=&familiaVia=&curso=&canal=&asignadaSnec=&responsableId=&estado=&columna=&notasPendientes=&familiaVinculada=&page=&pageSize=` | solicitudes.ver | Lista con filtros |
+| GET | `/solicitudes?q=&familiaVia=&curso=&ciclo=&canal=&asignadaSnec=&responsableId=&estado=&columna=&notasPendientes=&familiaVinculada=&page=&pageSize=` | solicitudes.ver | Lista con filtros |
 | GET | `/solicitudes/pipeline?porColumna=30&…` (mismos filtros) | solicitudes.ver | Kanban: `{ total, coinciden, columnas: [{ id, titulo, estados, total, items[] }] }` |
 | GET | `/solicitudes/contadores` | solicitudes.ver | `{ bandeja, porEstado }` |
 | GET | `/solicitudes/respuestas-familia` | solicitudes.ver | Aviso "la familia ya eligió fecha" (ver abajo) |
 | POST | `/solicitudes/respuestas-familia/visto` | solicitudes.ver | `{ eventoIds: [...] }` → 204. No se vuelve a avisar a este usuario |
 | POST | `/solicitudes` | solicitudes.editar | Alta interna (teléfono, presencial…): puede faltar el correo o el centro; la revisión lo marca |
 | GET | `/solicitudes/:id` | solicitudes.ver | Ficha: `revision`, `siguientes`, `propuesta` vigente con sus franjas, `entrevista`, `documentos`, `correos`, `eventos`. La revisión se recalcula en cada lectura (las plazas libres cambian con otras solicitudes) |
-| PATCH | `/solicitudes/:id` | solicitudes.editar | `{ responsableId?, observacionesInternas?, asignadaSnec?, canal? }` |
+| PATCH | `/solicitudes/:id` | solicitudes.editar | `{ responsableId?, observacionesInternas?, asignadaSnec?, canal?, cicloId? }`. Solo cambia lo que llega (lo que no viene se queda como estaba). `cicloId`: asigna o corrige el ciclo, de la familia de la vía (mismos errores que el alta; en una vía de ciclos no se puede quitar). Queda en `GESTION_ACTUALIZADA` con `cicloAnterior` y `cicloNuevo` |
 | POST | `/solicitudes/:id/revisar` | solicitudes.editar | Las cinco comprobaciones |
 | POST | `/solicitudes/:id/pedir-completar` | solicitudes.editar | `{ campos?, mensaje? }` |
 | POST | `/solicitudes/:id/citar` | solicitudes.editar | Ver abajo |
@@ -189,6 +191,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
   "alumna": "Lucía Márquez Peña", "tutor": "Elena Peña Ríos", "email": "…", "telefono": "…",
   "centroProcedencia": "…", "modalidadInteres": "Ciencias",
   "via": { "familia": "BACHILLERATO", "curso": 1, "nombre": "1º Bachillerato", "etiqueta": "Bachillerato", "etapa": "Bachillerato" },
+  "ciclo": null,
   "origen": "Solicitud web", "canal": "SOLICITUD_WEB", "asignadaSnec": false,
   "responsable": { "id": "uuid", "nombre": "María Reyes" },
   "revision": { "checks": [{ "id": "datos", "resultado": "ok", "texto": "Datos básicos completos" }], "completa": true, "faltan": [], "puedeCitar": true, "calculadaEn": "…" },
@@ -932,7 +935,7 @@ Cada listado tiene su descarga con **los mismos filtros y permisos**, sin pagina
 
 | Ruta | Permiso | Filtros | Columnas |
 |---|---|---|---|
-| `GET /solicitudes/exportar` | solicitudes.ver | los de `GET /solicitudes` (`vista`, `columna`, `estado`, `familiaVia`, `q`…) | datos de la solicitud y del tutor, comprobaciones pendientes, entrevista con su ficha, lista de espera y reserva |
+| `GET /solicitudes/exportar` | solicitudes.ver | los de `GET /solicitudes` (`vista`, `columna`, `estado`, `familiaVia`, `q`…) | datos de la solicitud (con el ciclo, A6) y del tutor, comprobaciones pendientes, entrevista con su ficha, lista de espera y reserva |
 | `GET /entrevistas/exportar` | entrevistas.ver | los de `GET /entrevistas` (`desde` y `hasta` obligatorios); sin las fechas sin confirmar | cita, familia, boletín y la ficha completa con observaciones |
 | `GET /reservas/exportar` | cobros.ver o evaluacion.ver | los de `GET /reservas` (`porVencer`, `estado`, `q`) | alumna, familia, estado, fechas, importe, pagado y pendiente |
 | `GET /cobros/exportar` | cobros.ver | los de `GET /cobros` (`desde`, `hasta`, `metodo`, `incluirAnulados`…) | recibo, fecha, alumna, concepto, forma de pago, importe (los anulados en su propia columna), anulación y quién lo registró |
@@ -945,6 +948,7 @@ Formato pensado para abrir con doble clic en Excel en español: separador `;`, c
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
 | GET | `/catalogo/vias` | sesión | Vías con `ocupadas` y `libres` |
+| GET | `/catalogo/ciclos` | sesión | Catálogo de ciclos (A6): `{ items: [{ id, familia, etiquetaFamilia, nombre, orden, activo }] }`, también los retirados (filtros de lo antiguo). Se carga por migración (0015); las plazas por ciclo llegan en la entrega 2 |
 | POST / PATCH | `/catalogo/vias`, `/catalogo/vias/:id` | configuracion.editar | Alta y edición de vías y plazas |
 
 ## Rutas del front que enlazan los correos
