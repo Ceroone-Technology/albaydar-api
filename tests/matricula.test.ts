@@ -12,7 +12,7 @@ import { eq, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { crearApp } from '../src/app';
 import { db, pool } from '../src/lib/db';
-import { matriculas, solicitudes, usuarios, vias } from '../src/db/schema';
+import { ciclos, matriculas, solicitudes, usuarios, vias } from '../src/db/schema';
 import { sembrarBase } from '../src/db/datos-base';
 import { procesarOutbox, setTransporter } from '../src/correo/outbox';
 import { hashPassword } from '../src/modules/auth/auth.service';
@@ -76,10 +76,10 @@ afterAll(async () => {
 });
 
 /** Solicitud admitida y pagada: el expediente queda en «Reserva confirmada». */
-async function reservaPagada(nombre: string, viaId = viaBach) {
+async function reservaPagada(nombre: string, viaId = viaBach, cicloId?: string) {
   const email = `${nombre.toLowerCase()}.matricula@example.com`;
   const r = await request(app).post('/api/solicitudes').set(auth()).send({
-    viaId, alumnaNombre: nombre, alumnaApellidos: 'Matrícula Prueba', tutorNombre: `Elena Tutora de ${nombre}`, email,
+    viaId, cicloId, alumnaNombre: nombre, alumnaApellidos: 'Matrícula Prueba', tutorNombre: `Elena Tutora de ${nombre}`, email,
     telefono: `+34 622 100 ${String(buzon.length).padStart(3, '0')}`, centroProcedencia: 'IES Bécquer', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
   });
   await db.update(solicitudes).set({ estado: 'ENTREVISTA_REALIZADA' }).where(eq(solicitudes.id, r.body.id));
@@ -635,11 +635,14 @@ describe('Matrícula digital: archivos, envío, PDF, devolución y Séneca', () 
 
   it('archivos: tipo real, solo los que pide la matrícula, uno por destino y el progenitor no sube', async () => {
     const [gm] = await db.insert(vias).values({ familia: 'CICLOS_CONCERTADOS_GM', curso: 1, nombre: '1º GM Gestión Administrativa', cursoEscolar: '2027-2028', plazas: 20 }).returning();
-    s = await reservaPagada('Gema', gm!.id);
+    const [gestion] = await db.select().from(ciclos).where(eq(ciclos.nombre, 'Gestión Administrativa'));
+    s = await reservaPagada('Gema', gm!.id, gestion!.id);
     const r = await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: s.alumnaId, enviarEnlace: false });
     id = r.body.matricula.id;
     token = r.body.enlace.url.split('/').at(-1);
     expect(r.body.matricula.borrador).toMatchObject({ via: 'gm', course: '1', photo: null, documents: {} });
+    // A6: el anexo arranca con el ciclo de la solicitud (que pasó al expediente) y su grado.
+    expect(r.body.matricula.borrador.annex).toMatchObject({ cycle: 'Gestión Administrativa', cycleType: 'intermediate' });
 
     expect((await subir('photo', PDF, 'foto.pdf')).body.error.code).toBe('TIPO_NO_PERMITIDO');
     expect((await subir('m4', Buffer.from('hola, no soy un pdf'), 'dni.pdf')).body.error.code).toBe('TIPO_NO_PERMITIDO');
@@ -767,7 +770,7 @@ describe('Matrícula digital: archivos, envío, PDF, devolución y Séneca', () 
     const f = await ficha(id);
     expect(f).toMatchObject({ estado: 'EXPORTADA', estadoEtiqueta: 'Exportada a Séneca' });
     const a = (await request(app).get(`/api/alumnado/${s.alumnaId}`).set(auth())).body;
-    expect(a).toMatchObject({ estado: 'MATRICULADA', curso: 1, cursoEscolar: '2027-2028', familia: 'CICLOS_CONCERTADOS_GM' });
+    expect(a).toMatchObject({ estado: 'MATRICULADA', curso: 1, cursoEscolar: '2027-2028', familia: 'CICLOS_CONCERTADOS_GM', estudios: 'Gestión Administrativa' });
     const sol = (await request(app).get(`/api/solicitudes/${s.solicitudId}`).set(auth())).body;
     expect(sol.estado).toBe('MATRICULADA');
     await enviarCorreos();

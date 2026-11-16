@@ -178,7 +178,7 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 ## Modelo de datos y migraciones
 
 Tablas:
-- `usuarios`, `refresh_tokens`, `roles`, `ajustes`, `vias`, `familias`;
+- `usuarios`, `refresh_tokens`, `roles`, `ajustes`, `vias`, `ciclos`, `familias`;
 - `solicitudes`, `solicitud_eventos` (historial auditable), `eventos_vistos`;
 - `propuestas_cita`, `franjas_agenda`, `entrevistas`, `tokens_publicos`, `documentos`;
 - `plantillas_correo`, `correos_salientes`, `reservas`, `cobros`, `secuencias`;
@@ -199,6 +199,9 @@ Tablas:
 | `0009_matricula` | `matriculas`, `enlaces_matricula`, `matricula_eventos` y los enumerados `estado_matricula` y `alcance_enlace` |
 | `0010_firmas_matricula` | `documentos_matricula`, `firmas_matricula` (imagen en `bytea`), `mandatos_sepa` y sus enumerados |
 | `0011_archivos_pdfs_matricula` | `archivos_matricula` (foto y copias del checklist, con categoría de conservación) y `pdfs_matricula` (PDF finales) |
+| `0012_resultado_curso` / `0013_quitar_promociona` | `alumnas.resultado_curso` (A7) y retirada de la marca `promociona` |
+| `0014_comercial_hasta_matricula` | Solo datos: permisos de serie del perfil Comercial (A2) |
+| `0015_catalogo_ciclos` | `ciclos` con los 8 del centro y `solicitudes.ciclo_id`; rellena el ciclo de las antiguas cuya «modalidad que le interesa» coincide (A6) |
 
 ## Convenciones
 
@@ -258,6 +261,7 @@ Tablas:
 Detalle, flujo de referencia paso a paso y prioridad en `../RESUMEN-PROYECTO-ALBAYDAR.md` y `../docs/diagrama-flujo-admision.png` (fuera del repo, en `albaydar-project/`). Lo que toca a la API:
 
 - ~~**Código con letra de tipo:** B Bachillerato, C Ciclos~~ ✅ hecho en `feat/codigo-solicitud-por-tipo` y ajustado a las series del centro (ajuste A1, 15/11/2026, `feat/series-solicitud`): `B2027-0001`, `CC2027-0001` (concertados) y `CP2027-0001` (privados), con el año de inicio de los estudios (el del curso escolar de la vía) y contador por serie y año (`siguienteCodigo` y `SERIE_CODIGO` en `solicitudes/comun.ts`). Las anteriores conservan su código (`B-2026-…`, `C-2026-…`, `SOL-…`).
+- **Catálogo de ciclos** (ajuste A6). ✅ **Entrega 1** (16/11/2026, `feat/catalogo-ciclos`): tabla `ciclos` (migración 0015), `cicloId` obligatorio en las vías de ciclos al dar de alta (`cicloDeVia` en `solicitudes.service.ts`: `CICLO_OBLIGATORIO` / `CICLO_NO_VALIDO`), ciclos en `/public/vias` y `GET /catalogo/ciclos`, `ciclo` en lista, kanban, ficha y CSV, filtro `ciclo`, asignarlo o corregirlo con `PATCH /solicitudes/:id`, el expediente toma el ciclo como `estudios` y el anexo de la matrícula arranca con el ciclo y su grado (`CYCLES`, 8 ciclos, igual en el front). **Entrega 2, pendiente:** plazas por ciclo y curso, ocupación y revisión por ciclo (y decidir el cupo de la Junta en GS concertado).
 - **Varios entrevistadores (~7, según el tipo de solicitud)** y calendario de todos para secretaría, con Google Calendar como opción. **Revierte la decisión D2** (agenda única del equipo directivo, `CHECK entrevistas_presencial_chk`, `EXCLUDE` global): entrevistador por entrevista y agenda por persona. Esperar la lista de entrevistadores antes de migrar.
 - ~~**Cancelar desde el recordatorio del día antes** y desde `/cita/:token`, con aviso a secretaría; respuestas por correo a secretaría~~ ✅ hecho en `feat/cancelar-cita-familia`: `POST /public/citas/:token/cancelar` (`cancelarPorFamilia`), propuesta `CANCELADA` (migración `0005`), aviso `CITA_CANCELADA_FAMILIA` en `respuestas-familia`, correo `AVISO_CANCELACION_FAMILIA` y `Reply-To` (`MAIL_REPLY_TO` o `MAIL_SECRETARIA`). El front lo tiene desde el 29/10.
 - ~~**Entrevista previa ya realizada:** validarla sin repetirla~~ ✅ hecho en `feat/entrevista-previa`: `POST /solicitudes/:id/entrevista-previa` (`registrarEntrevistaPrevia` en `citacion.service.ts`) y acción `REGISTRAR_ENTREVISTA_PREVIA` en `siguientes`. El front lo tiene desde el 29/10.
