@@ -46,7 +46,7 @@
 
 **Permisos**
 
-8. **Perfil Comercial.** Por defecto ve el dashboard, el alumnado y las entrevistas, y puede gestionar solicitudes (moverlas en el kanban, citar). No ve cobros, configuración ni plantillas. ¿Es correcto? Dirección lo puede cambiar desde la matriz en cualquier momento.
+8. ~~**Perfil Comercial.**~~ **Respondido el 11/11 y aplicado el 15/11/2026 (ajuste A2):** acceso a todos los datos del proceso de admisión hasta la matrícula. Ve dashboard, alumnado, entrevistas, evaluación, matrícula y cobros, y gestiona solicitudes (kanban, citar). No ve configuración ni plantillas. Los interesados (CRM) llegarán con la captación.
 
 **Datos personales** (punto 20, explicado de otra forma)
 

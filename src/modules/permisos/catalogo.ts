@@ -63,9 +63,11 @@ export const ROLES_INICIALES = [
   {
     codigo: 'COMERCIAL',
     nombre: 'Comercial / Promoción',
-    descripcion: 'Seguimiento de solicitudes, entrevistas y nuevas alumnas (CRM).',
+    // Ajuste A2 (respuesta del centro, 11/11/2026): acceso a todos los datos del proceso de admisión
+    // hasta la matrícula, cobros incluidos; solo edita solicitudes.
+    descripcion: 'Seguimiento de todo el proceso de admisión hasta la matrícula: consulta y gestiona solicitudes.',
     esSuperadmin: false,
     orden: 4,
-    permisos: [...todo('solicitudes'), ...ver('dashboard', 'alumnado', 'entrevistas')],
+    permisos: [...todo('solicitudes'), ...ver('dashboard', 'alumnado', 'entrevistas', 'evaluacion', 'matricula', 'cobros')],
   },
 ] as const satisfies readonly { codigo: string; nombre: string; descripcion: string; esSuperadmin: boolean; orden: number; permisos: readonly Permiso[] }[];
