@@ -10,8 +10,8 @@ import { logger } from '../../lib/logger';
 import { enviarEvento } from '../../correo/enviar';
 import { boton } from '../../correo/plantillas';
 import { importeReserva, reservaConfig, type ReservaConfig } from '../ajustes/ajustes.service';
-import { datosCorreo, obtenerSolicitud, registrarEvento, type Actor } from '../solicitudes/comun';
-import { DIAS_RESERVA_POR_VENCER, ETIQUETA_ESTADO_RESERVA, ETIQUETA_METODO_PAGO } from '../solicitudes/dominio';
+import { cambiarEstado, datosCorreo, obtenerSolicitud, registrarEvento, type Actor } from '../solicitudes/comun';
+import { DIAS_RESERVA_POR_VENCER, ETIQUETA_ESTADO_RESERVA, ETIQUETA_METODO_PAGO, cursoEscolarCorto } from '../solicitudes/dominio';
 
 /**
  * Reserva de plaza (fase 03), con las reglas acordadas con el cliente:
@@ -334,6 +334,52 @@ export async function cambiarPlazo(id: string, d: z.infer<typeof cambiarPlazoBod
     const pagado = (await pagadoPorReserva(tx, [r.id])).get(r.id) ?? 0;
     const [final] = await tx.select().from(reservas).where(eq(reservas.id, r.id));
     return { ...vistaReserva(final!, pagado, hoy), notificada };
+  });
+}
+
+export const liberarBody = z.object({
+  /** Por qué se libera (no pagó, renuncia…): queda en el historial de la solicitud. No va a la familia. */
+  motivo: z.string().trim().min(1, 'Indica por qué se libera la plaza.').max(500),
+  /** Avisar a la familia con la plantilla «Plaza liberada». */
+  notificar: z.boolean().default(true),
+});
+
+/**
+ * "Liberar plaza" (ajuste A5; el centro respondió que la reserva vencida la libera secretaría,
+ * caso por caso). Vale para una reserva pendiente o vencida de una solicitud admitida:
+ * la reserva se anula, la solicitud pasa a DESCARTADA (se puede reabrir) y deja de ocupar plaza.
+ * Con cobros, 409 RESERVA_CON_COBROS: primero se anulan desde Cobros.
+ * Devuelve cuántas solicitudes esperan en la lista de su vía, para que secretaría lo vea;
+ * no se admite a nadie automáticamente.
+ */
+export async function liberarPlaza(id: string, d: z.infer<typeof liberarBody>, usuarioId: string) {
+  return db.transaction(async (tx) => {
+    const [r] = await tx.select().from(reservas).where(eq(reservas.id, id)).for('update');
+    if (!r) throw notFound('Reserva no encontrada.', 'RESERVA_NO_ENCONTRADA');
+    if (r.estado !== 'PENDIENTE' && r.estado !== 'VENCIDA') {
+      throw conflict('RESERVA_NO_PENDIENTE', `La reserva está ${ETIQUETA_ESTADO_RESERVA[r.estado].toLowerCase()}: no hay plaza que liberar.`);
+    }
+    const { s, via } = await obtenerSolicitud(tx, r.solicitudId, true);
+    if (s.estado !== 'ADMITIDA') {
+      throw conflict('SOLICITUD_NO_ADMITIDA', 'La solicitud ya no está admitida: recarga para ver su estado actual.');
+    }
+    const actor: Actor = { tipo: 'usuario', usuarioId };
+    await anularReservaVigente(tx, s.id, `Plaza liberada: ${d.motivo}`, actor);
+    await cambiarEstado(tx, s, 'DESCARTADA', actor, 'PLAZA_LIBERADA', { reservaId: r.id, motivo: d.motivo, notificar: d.notificar });
+
+    let notificada = false;
+    if (d.notificar) {
+      notificada = await enviarEvento(tx, 'PLAZA_LIBERADA', {
+        para: s.email,
+        vars: { ...datosCorreo(s, via), etapa: via.nombre, curso_escolar: cursoEscolarCorto(via.cursoEscolar), fecha_limite: fechaTexto(r.fechaLimite) },
+        solicitudId: s.id,
+      });
+    }
+    const [espera] = await tx
+      .select({ n: count() })
+      .from(solicitudes)
+      .where(and(eq(solicitudes.viaId, s.viaId), eq(solicitudes.estado, 'EN_ESPERA')));
+    return { solicitudId: s.id, estado: 'DESCARTADA' as const, notificada, enEspera: Number(espera?.n ?? 0), via: via.nombre };
   });
 }
 

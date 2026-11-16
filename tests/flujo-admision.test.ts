@@ -947,6 +947,45 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     expect(cambios).toHaveLength(2);
     expect(cambios.map((e: { detalle: { motivo: string } }) => e.detalle.motivo).sort()).toEqual(['Fuerza mayor: hospitalización', 'Quedan pocas plazas']);
   });
+
+  it('liberar la plaza de una reserva sin pagar (A5): con cobros no; descarta, avisa y dice cuántas esperan', async () => {
+    const lidia = await evaluada('Lidia');
+    const reservaId = (await decidir(lidia.id, { decision: 'ADMITIDA', notificar: false })).body.reserva.id as string;
+    const espera = await evaluada('Esther');
+    await decidir(espera.id, { decision: 'EN_ESPERA', notificar: false });
+    const liberar = (body: Record<string, unknown>, quien = 'secretaria') => request(app).post(`/api/reservas/${reservaId}/liberar`).set(auth(quien)).send(body);
+
+    expect((await liberar({ motivo: 'No ha pagado' }, 'administracion')).status).toBe(403);
+    expect((await liberar({ motivo: '  ' })).body.error.code).toBe('DATOS_INVALIDOS');
+
+    // Con un cobro parcial no se libera: primero se anula el cobro.
+    const cobro = (await cobrar({ solicitudId: lidia.id, importe: 5000, metodo: 'EFECTIVO', notificar: false })).body.cobro.id as string;
+    expect((await liberar({ motivo: 'No ha pagado' })).body.error.code).toBe('RESERVA_CON_COBROS');
+    await request(app).post(`/api/cobros/${cobro}/anular`).set(auth('administracion')).send({ motivo: 'Cobro de prueba' });
+
+    // Vencida: secretaría la libera y avisa a la familia.
+    await db.update(reservas).set({ fechaLimite: fechaLocal(sumarDias(new Date(), -1)) }).where(eq(reservas.id, reservaId));
+    await vencerReservas();
+    const r = await liberar({ motivo: 'No ha pagado en plazo y no contesta' });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ estado: 'DESCARTADA', notificada: true });
+    expect(r.body.enEspera).toBeGreaterThanOrEqual(1);
+
+    const f = await ficha(lidia.id);
+    expect(f.estado).toBe('DESCARTADA');
+    expect(f.reserva).toBeNull();
+    const ev = f.eventos.find((e: { tipo: string }) => e.tipo === 'PLAZA_LIBERADA');
+    expect(ev).toMatchObject({ deEstado: 'ADMITIDA', aEstado: 'DESCARTADA', detalle: { motivo: 'No ha pagado en plazo y no contesta' } });
+    await enviarCorreos();
+    const aviso = ultimoPara(lidia.email);
+    expect(aviso.subject).toBe(`Reserva de plaza sin completar · Lidia Fase Tres · ${f.codigo}`);
+    expect(aviso.html).not.toContain('no contesta'); // el motivo es interno
+
+    // Ya no hay nada que liberar; la solicitud se puede reabrir.
+    expect((await liberar({ motivo: 'otra vez' })).body.error.code).toBe('RESERVA_NO_PENDIENTE');
+    const reabrir = await request(app).patch(`/api/solicitudes/${lidia.id}/estado`).set(auth()).send({ estado: 'EN_REVISION' });
+    expect(reabrir.status).toBe(200);
+  });
 });
 
 describe('Cola de correos', () => {
