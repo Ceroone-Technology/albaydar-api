@@ -127,7 +127,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 
 ```json
 {
-  "ref": "B-2026-0001", "alumno": "Lucía Márquez Peña", "tutor": "Elena", "curso": "Bachillerato 1º",
+  "ref": "B2027-0001", "alumno": "Lucía Márquez Peña", "tutor": "Elena", "curso": "Bachillerato 1º",
   "info": [{ "k": "Tipo", "v": "Presencial" }, { "k": "Con", "v": "Equipo directivo" },
            { "k": "Lugar", "v": "Sala de reuniones de Dirección · Avda. de la Palmera, 36" }],
   "estado": "propuesta | elegida | realizada | no_presentada | alternativa | caducada | cancelada",
@@ -159,7 +159,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 
 ## Admisión
 
-**Código de la solicitud** (acordado el 21/10/2026, formato provisional): letra de la vía, año y contador por letra y año: `B-2026-0001` (Bachillerato) y `C-2026-0001` (Ciclos). Las solicitudes creadas antes conservan su `SOL-2026-NNNN`. El formato está solo en `siguienteCodigo()` (`solicitudes/comun.ts`), para cambiarlo cuando el centro dé sus series.
+**Código de la solicitud** (series del centro, ajuste A1, 15/11/2026): serie de la vía, **año de inicio de los estudios** (el del curso escolar de la vía: 2027-2028 → 2027) y contador de cuatro cifras por serie y año: `B2027-0001` (Bachillerato), `CC2027-0001` (Ciclos Concertados, GM y GS) y `CP2027-0001` (Ciclos Privados). Las solicitudes creadas antes conservan su código (`B-2026-…`, `C-2026-…`, `SOL-2026-…`). El formato está solo en `siguienteCodigo()` y `SERIE_CODIGO` (`solicitudes/comun.ts`).
 
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
@@ -184,7 +184,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 
 ```json
 {
-  "id": "uuid", "codigo": "B-2026-0001",
+  "id": "uuid", "codigo": "B2027-0001",
   "estado": "CITACION_ENVIADA", "estadoEtiqueta": "Esperando a la familia", "estadoTono": "violet", "columna": "entrevista",
   "alumna": "Lucía Márquez Peña", "tutor": "Elena Peña Ríos", "email": "…", "telefono": "…",
   "centroProcedencia": "…", "modalidadInteres": "Ciencias",
@@ -246,7 +246,7 @@ Al elegir fecha, la solicitud sale de la bandeja; al cancelarla, vuelve. `GET /s
 ```json
 { "items": [{
   "eventoId": "uuid", "tipo": "CITA_CONFIRMADA | CITA_CAMBIADA | CITA_CANCELADA_FAMILIA", "fecha": "…",
-  "solicitud": { "id": "uuid", "codigo": "B-2026-0001", "alumna": "Lucía Márquez Peña", "estado": "ENTREVISTA_PROGRAMADA" },
+  "solicitud": { "id": "uuid", "codigo": "B2027-0001", "alumna": "Lucía Márquez Peña", "estado": "ENTREVISTA_PROGRAMADA" },
   "cita": { "inicio": "…", "fin": "…", "dia": "Martes 27 de octubre", "franja": "12:00 – 13:00" }
 }] }
 ```
