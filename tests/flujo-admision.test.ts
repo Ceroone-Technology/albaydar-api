@@ -1113,6 +1113,67 @@ describe('Ciclo de la solicitud (A6, entrega 1)', () => {
   });
 });
 
+describe('Plazas por ciclo (A6, entrega 2)', () => {
+  it('cada ciclo con sus plazas: la vía es la suma y la revisión, la lista de espera y «Liberar plaza» van por ciclo', async () => {
+    const cicloDe = async (nombre: string) => (await db.select().from(ciclos).where(eq(ciclos.nombre, nombre)))[0]!;
+    const marketing = await cicloDe('Marketing y Publicidad');
+    const integracion = await cicloDe('Integración Social');
+
+    // Una vía de ciclos nueva nace con una fila a 0 por ciclo: las plazas de la vía son su suma.
+    const nueva = await request(app).post('/api/catalogo/vias').set(auth('direccion')).send({
+      familia: 'CICLOS_PRIVADOS_GS', curso: 1, nombre: 'GS privado 1º (2030)', cursoEscolar: '2030-2031', plazas: 99,
+    });
+    expect(nueva.status).toBe(201);
+    expect(nueva.body.plazas).toBe(0);
+    const viaId = nueva.body.id as string;
+    const plazas = (cicloId: string, n: number) => request(app).patch(`/api/catalogo/vias/${viaId}/ciclos/${cicloId}`).set(auth('direccion')).send({ plazas: n });
+    expect((await request(app).patch(`/api/catalogo/vias/${viaId}`).set(auth('direccion')).send({ plazas: 5 })).body.error.code).toBe('PLAZAS_POR_CICLO');
+    expect((await plazas(marketing.id, 1)).body).toMatchObject({ plazas: 1, via: { plazas: 1 } });
+    expect((await plazas(integracion.id, 2)).body).toMatchObject({ plazas: 2, via: { plazas: 3 } });
+    expect((await request(app).patch(`/api/catalogo/vias/${viaId}/ciclos/${marketing.id}`).set(auth()).send({ plazas: 9 })).status).toBe(403);
+
+    let telefono = 0;
+    const alta = async (nombre: string, cicloId: string) =>
+      (await request(app).post('/api/solicitudes').set(auth()).send({
+        viaId, cicloId, alumnaNombre: nombre, alumnaApellidos: 'Plazas Ciclo', tutorNombre: `Tutora de ${nombre}`, centroProcedencia: 'IES Plazas',
+        email: `${nombre.toLowerCase()}.plazas@example.com`, telefono: `+34 622 700 ${String(++telefono).padStart(3, '0')}`, consentimientoPrivacidad: true,
+      })).body.id as string;
+    const decidir = async (id: string, decision: string) => {
+      await db.update(solicitudes).set({ estado: 'ENTREVISTA_REALIZADA' }).where(eq(solicitudes.id, id));
+      expect((await request(app).post(`/api/solicitudes/${id}/decision`).set(auth('direccion')).send({ decision, notificar: false })).status).toBe(200);
+    };
+    const ficha = async (id: string) => (await request(app).get(`/api/solicitudes/${id}`).set(auth())).body;
+    const plazasDe = (f: { revision: { checks: { id: string; texto: string }[] } }) => f.revision.checks.find((c) => c.id === 'plazas')!.texto;
+
+    const admitida = await alta('Plazauno', marketing.id);
+    await decidir(admitida, 'ADMITIDA');
+    const otraMarketing = await alta('Plazados', marketing.id);
+    const deIntegracion = await alta('Plazatres', integracion.id);
+    expect(plazasDe(await ficha(otraMarketing))).toBe('GS privado 1º (2030) · Marketing y Publicidad: sin plazas libres · la solicitud iría a lista de espera');
+    expect(plazasDe(await ficha(deIntegracion))).toBe('GS privado 1º (2030) · Integración Social: 2 plazas libres');
+
+    const item = ((await request(app).get('/api/catalogo/vias').set(auth())).body.items as { id: string }[]).find((x) => x.id === viaId);
+    expect(item).toMatchObject({
+      plazas: 3, ocupadas: 1, libres: 2, plazasPorCiclo: true,
+      ciclos: [
+        { nombre: 'Integración Social', plazas: 2, ocupadas: 0, libres: 2 },
+        { nombre: 'Marketing y Publicidad', plazas: 1, ocupadas: 1, libres: 0 },
+      ],
+    });
+
+    // Cada ciclo tiene su lista de espera.
+    await decidir(otraMarketing, 'EN_ESPERA');
+    await decidir(deIntegracion, 'EN_ESPERA');
+    expect((await ficha(otraMarketing)).posicionEspera).toBe(1);
+    expect((await ficha(deIntegracion)).posicionEspera).toBe(1);
+
+    // Al liberar la plaza de Marketing, el aviso cuenta solo la lista de Marketing.
+    const reservaId = (await ficha(admitida)).reserva.id as string;
+    const liberada = await request(app).post(`/api/reservas/${reservaId}/liberar`).set(auth()).send({ motivo: 'Prueba de plazas por ciclo.', notificar: false });
+    expect(liberada.body).toMatchObject({ estado: 'DESCARTADA', enEspera: 1, via: 'GS privado 1º (2030) · Marketing y Publicidad' });
+  });
+});
+
 describe('Entrevista previa: «¿Ya tuvo entrevista? Sí» (paso 6 del diagrama)', () => {
   let telefono = 0;
   const alta = async (nombre: string, extra: Record<string, unknown> = {}) =>

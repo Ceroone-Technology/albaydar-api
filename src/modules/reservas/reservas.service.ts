@@ -1,7 +1,7 @@
 import { and, asc, count, eq, gte, ilike, inArray, isNull, lt, lte, ne, or, sql, sum, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { env } from '../../config/env';
-import { cobros, estadoReservaEnum, reservas, solicitudes, vias, type Reserva, type Solicitud, type Via } from '../../db/schema';
+import { ciclos, cobros, estadoReservaEnum, reservas, solicitudes, vias, type Reserva, type Solicitud, type Via } from '../../db/schema';
 import { db, type Tx } from '../../lib/db';
 import { euros, formatearIban } from '../../lib/dinero';
 import { badRequest, conflict, notFound } from '../../lib/errors';
@@ -349,8 +349,8 @@ export const liberarBody = z.object({
  * caso por caso). Vale para una reserva pendiente o vencida de una solicitud admitida:
  * la reserva se anula, la solicitud pasa a DESCARTADA (se puede reabrir) y deja de ocupar plaza.
  * Con cobros, 409 RESERVA_CON_COBROS: primero se anulan desde Cobros.
- * Devuelve cuántas solicitudes esperan en la lista de su vía, para que secretaría lo vea;
- * no se admite a nadie automáticamente.
+ * Devuelve cuántas solicitudes esperan en su lista (la de su ciclo si lo tiene, A6; si no, la de
+ * su vía), para que secretaría lo vea; no se admite a nadie automáticamente.
  */
 export async function liberarPlaza(id: string, d: z.infer<typeof liberarBody>, usuarioId: string) {
   return db.transaction(async (tx) => {
@@ -378,8 +378,15 @@ export async function liberarPlaza(id: string, d: z.infer<typeof liberarBody>, u
     const [espera] = await tx
       .select({ n: count() })
       .from(solicitudes)
-      .where(and(eq(solicitudes.viaId, s.viaId), eq(solicitudes.estado, 'EN_ESPERA')));
-    return { solicitudId: s.id, estado: 'DESCARTADA' as const, notificada, enEspera: Number(espera?.n ?? 0), via: via.nombre };
+      .where(and(eq(solicitudes.viaId, s.viaId), eq(solicitudes.estado, 'EN_ESPERA'), ...(s.cicloId ? [eq(solicitudes.cicloId, s.cicloId)] : [])));
+    const [ciclo] = s.cicloId ? await tx.select({ nombre: ciclos.nombre }).from(ciclos).where(eq(ciclos.id, s.cicloId)) : [];
+    return {
+      solicitudId: s.id,
+      estado: 'DESCARTADA' as const,
+      notificada,
+      enEspera: Number(espera?.n ?? 0),
+      via: ciclo ? `${via.nombre} · ${ciclo.nombre}` : via.nombre,
+    };
   });
 }
 

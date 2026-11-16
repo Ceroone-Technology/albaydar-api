@@ -13,7 +13,7 @@ import { db, pool } from '../lib/db';
 import { hashPassword } from '../modules/auth/auth.service';
 import { alumnaContactos, alumnaEventos, alumnas, ciclos, familias, solicitudes, usuarios, vias } from './schema';
 import { sembrarBase } from './datos-base';
-import { siguienteCodigo, siguienteValor, registrarEvento } from '../modules/solicitudes/comun';
+import { asegurarPlazasCiclo, plazasCicloDelCentro, siguienteCodigo, siguienteValor, registrarEvento } from '../modules/solicitudes/comun';
 import { formatoExpediente } from '../modules/alumnado/dominio';
 
 const CURSO_ESCOLAR = process.env.SEED_CURSO_ESCOLAR ?? '2027-2028';
@@ -91,22 +91,26 @@ async function main() {
   await usuario('comercial@albaydar.org', 'Promoción y marketing', ['COMERCIAL'], demoPass);
 
   // Vías: plazas de ejemplo para que la comprobación devuelva los textos del mockup
-  // ("6 plazas libres", "3 plazas libres", "cupo asignado por la Junta", "9 plazas libres").
+  // ("6 plazas libres", "3 plazas libres"…). En los ciclos, las plazas son por ciclo (A6): la vía es su suma.
   const defs = [
     { familia: 'BACHILLERATO', curso: 1, nombre: '1º Bachillerato', plazas: 6 },
     { familia: 'BACHILLERATO', curso: 2, nombre: '2º Bachillerato', plazas: 4 },
     { familia: 'CICLOS_CONCERTADOS_GM', curso: 1, nombre: 'GM concertado 1º', plazas: 3 },
     { familia: 'CICLOS_CONCERTADOS_GM', curso: 2, nombre: 'GM concertado 2º', plazas: 3 },
-    { familia: 'CICLOS_CONCERTADOS_GS', curso: 1, nombre: 'GS concertado 1º', plazas: 0, junta: true },
-    { familia: 'CICLOS_CONCERTADOS_GS', curso: 2, nombre: 'GS concertado 2º', plazas: 0, junta: true },
+    { familia: 'CICLOS_CONCERTADOS_GS', curso: 1, nombre: 'GS concertado 1º', plazas: 0 },
+    { familia: 'CICLOS_CONCERTADOS_GS', curso: 2, nombre: 'GS concertado 2º', plazas: 0 },
     { familia: 'CICLOS_PRIVADOS_GS', curso: 1, nombre: 'GS privado 1º', plazas: 9 },
     { familia: 'CICLOS_PRIVADOS_GS', curso: 2, nombre: 'GS privado 2º', plazas: 9 },
   ] as const;
   for (const d of defs) {
     await db
       .insert(vias)
-      .values({ familia: d.familia, curso: d.curso, nombre: d.nombre, cursoEscolar: CURSO_ESCOLAR, plazas: d.plazas, plazasAsignadasPorJunta: 'junta' in d })
+      .values({ familia: d.familia, curso: d.curso, nombre: d.nombre, cursoEscolar: CURSO_ESCOLAR, plazas: d.plazas })
       .onConflictDoNothing();
+  }
+  // Ciclos (A6, entrega 2): plazas por ciclo con las del centro (solo las que falten); la vía, su suma.
+  for (const x of await db.select().from(vias).where(eq(vias.cursoEscolar, CURSO_ESCOLAR))) {
+    await asegurarPlazasCiclo(db, x, plazasCicloDelCentro);
   }
   const todas = await db.select().from(vias).where(eq(vias.cursoEscolar, CURSO_ESCOLAR));
   const via = (f: string, c: number) => todas.find((x) => x.familia === f && x.curso === c)!.id;

@@ -947,9 +947,12 @@ Formato pensado para abrir con doble clic en Excel en español: separador `;`, c
 
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
-| GET | `/catalogo/vias` | sesión | Vías con `ocupadas` y `libres` |
-| GET | `/catalogo/ciclos` | sesión | Catálogo de ciclos (A6): `{ items: [{ id, familia, etiquetaFamilia, nombre, orden, activo }] }`, también los retirados (filtros de lo antiguo). Se carga por migración (0015); las plazas por ciclo llegan en la entrega 2 |
-| POST / PATCH | `/catalogo/vias`, `/catalogo/vias/:id` | configuracion.editar | Alta y edición de vías y plazas |
+| GET | `/catalogo/vias` | sesión | Vías con `ocupadas` y `libres`. En las de ciclos (A6, entrega 2), `plazasPorCiclo: true` y `ciclos: [{ cicloId, nombre, plazas, ocupadas, libres }]`; las `plazas` de la vía son la suma de las de sus ciclos |
+| PATCH | `/catalogo/vias/:id/ciclos/:cicloId` | configuracion.editar | `{ plazas }` de un ciclo en esa vía → `{ cicloId, plazas, via: { id, plazas } }` (la vía pasa a la nueva suma) |
+| GET | `/catalogo/ciclos` | sesión | Catálogo de ciclos (A6): `{ items: [{ id, familia, etiquetaFamilia, nombre, orden, activo }] }`, también los retirados (filtros de lo antiguo). Se carga por migración (0015) |
+
+**Plazas por ciclo** (A6, entrega 2, migración 0016): cada vía de ciclos tiene las plazas de cada ciclo (`plazas_ciclo`; las del centro: 30 por ciclo y curso, 60 en Administración y Finanzas) y GS concertado deja de ser «cupo asignado por la Junta». Con ciclo, la comprobación de plazas de la revisión, la posición en la lista de espera y el aviso de «Liberar plaza» (`enEspera`, `via` con el ciclo) son los de su ciclo en esa vía; sin ciclo (antiguas), los de la vía.
+| POST / PATCH | `/catalogo/vias`, `/catalogo/vias/:id` | configuracion.editar | Alta y edición de vías y plazas. Una vía de ciclos nace con una fila de plazas a 0 por cada ciclo activo y sus `plazas` no se editan en la vía (400 `PLAZAS_POR_CICLO`): se cambian por ciclo |
 
 ## Rutas del front que enlazan los correos
 
