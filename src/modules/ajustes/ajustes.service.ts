@@ -17,7 +17,7 @@ export const agendaConfigSchema = z
     diasSemana: z.array(z.number().int().min(1).max(7)).min(1),
     horaInicio: hhmm,
     horaFin: hhmm,
-    /** Duraciones que secretaría puede elegir al proponer (la entrevista dura 45 a 60 min). */
+    /** Duraciones que secretaría puede elegir al proponer (la entrevista dura de 30 a 60 min; A4). */
     duraciones: z.array(z.number().int().min(15).max(180)).min(1),
     duracionPorDefecto: z.number().int().min(15).max(180),
     /** Cada cuántos minutos puede empezar una entrevista (09:00, 09:30…). */
@@ -34,12 +34,16 @@ export const agendaConfigSchema = z
 
 export type AgendaConfig = z.infer<typeof agendaConfigSchema>;
 
-/** Jornada laboral acordada: lunes a viernes de 8:00 a 18:00, entrevistas de 45 o 60 minutos. */
+/**
+ * Jornada laboral acordada: lunes a viernes de 8:00 a 18:00, entrevistas de 30, 45 o 60 minutos
+ * (ajuste A4: «de 30 a 60 minutos»; por defecto, 45). Solo vale para un entorno nuevo: en uno ya
+ * creado, las duraciones se marcan en Configuración › Agenda.
+ */
 export const AGENDA_POR_DEFECTO: AgendaConfig = {
   diasSemana: [1, 2, 3, 4, 5],
   horaInicio: '08:00',
   horaFin: '18:00',
-  duraciones: [45, 60],
+  duraciones: [30, 45, 60],
   duracionPorDefecto: 45,
   pasoMin: 30,
   antelacionMinHoras: 2,

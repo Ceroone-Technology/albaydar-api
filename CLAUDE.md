@@ -105,7 +105,7 @@ tests/                   reglas.test.ts (funciones puras) · flujo-admision.test
 - Aviso "la familia ya eligió fecha": `GET /solicitudes/respuestas-familia` y `POST …/visto`, con el "visto" guardado por usuario (tabla `eventos_vistos`).
 
 **Citación, agenda y entrevistas**
-- La agenda es la jornada (L–V 8–18, configurable) menos lo ocupado. Entrevistas de 45 o 60 min, siempre presenciales con el equipo directivo.
+- La agenda es la jornada (L–V 8–18, configurable) menos lo ocupado. Entrevistas de 30, 45 o 60 min (A4; de serie, 45), siempre presenciales con el equipo directivo.
 - Secretaría propone 1–3 fechas, que quedan `RESERVADA`. La restricción `EXCLUDE` de la BD impide dobles reservas.
 - La familia elige desde `/cita/:token`. `elegir` y `otra-franja` devuelven la cita completa.
 - La familia puede cambiar durante 24 h desde la primera aceptación. Tiene "Ninguna me encaja" y subida del boletín de notas (se valida el tipo real del fichero).
@@ -241,7 +241,7 @@ Tablas:
 - **Perfiles:** Dirección (superadministrador, todos los permisos, no se le pueden quitar), Administración, Secretaría y Comercial/Promoción. Matriz editable por Dirección. Siempre debe quedar un usuario activo de Dirección. Solo Dirección registra la decisión de admisión (`evaluacion.editar`).
 - **Solicitud web:** obligatorios alumna (nombre y apellidos), vía, centro de procedencia, tutor, correo y teléfono; la modalidad es opcional. Entra como `RECIBIDA` y se envía un acuse.
 - **Revisión:** cinco comprobaciones (datos completos, correo válido, plazas libres por vía, familia ya vinculada, cupo SNEC). No se puede citar si está incompleta: se usa "Pedir que complete".
-- **Agenda:** jornada de lunes a viernes de 8:00 a 18:00. Entrevistas de 45 o 60 min, siempre **presenciales con el equipo directivo** en la sala de reuniones de Dirección. **Nunca el mismo día** (21/10/2026): la disponibilidad marca las horas de hoy como `Mismo día` y `citar` responde 400 `FECHA_MISMO_DIA`; se controla con `permitirMismoDia` (por defecto `false`) en `ajustes.agenda`.
+- **Agenda:** jornada de lunes a viernes de 8:00 a 18:00. Entrevistas de 30 a 60 min (A4: 30, 45 o 60; de serie, 45), siempre **presenciales con el equipo directivo** en la sala de reuniones de Dirección. **Nunca el mismo día** (21/10/2026): la disponibilidad marca las horas de hoy como `Mismo día` y `citar` responde 400 `FECHA_MISMO_DIA`; se controla con `permitirMismoDia` (por defecto `false`) en `ajustes.agenda`.
 - **Citación:** 1 a 3 fechas reservadas hasta que la familia elige. Al elegir, la elegida se confirma, las demás se liberan y la entrevista aparece en el calendario (.ics por correo).
 - **Cambio de cita:** solo durante las **24 h siguientes a la primera aceptación**. Después, 409 `CAMBIO_FUERA_DE_PLAZO`.
 - **Recordatorios:** uno si la familia no elige en 3 días, y otro el día antes de la entrevista.

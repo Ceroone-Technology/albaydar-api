@@ -245,13 +245,15 @@ describe('Admisión y citación', () => {
     expect(c.body.completa).toBe(true);
   });
 
-  it('la agenda va de lunes a viernes de 8:00 a 18:00, en tramos de 45 o 60 minutos', async () => {
+  it('la agenda va de lunes a viernes de 8:00 a 18:00, en tramos de 30, 45 o 60 minutos (A4)', async () => {
     const r = await request(app).get(`/api/agenda/disponibilidad?desde=${dia(0)}&hasta=${dia(6)}&duracion=60`).set(auth());
     expect(r.body.dias.map((d: { fecha: string }) => d.fecha)).toEqual([dia(0), dia(1), dia(2), dia(3), dia(4)]); // sin fin de semana
     const lun = r.body.dias[0];
     expect(lun.huecos[0].franja).toBe('08:00 – 09:00');
     expect(lun.huecos[lun.huecos.length - 1].franja).toBe('17:00 – 18:00');
-    expect((await request(app).get(`/api/agenda/disponibilidad?desde=${dia(0)}&hasta=${dia(0)}&duracion=30`).set(auth())).body.error.code).toBe('DURACION_NO_VALIDA');
+    const media = await request(app).get(`/api/agenda/disponibilidad?desde=${dia(0)}&hasta=${dia(0)}&duracion=30`).set(auth());
+    expect(media.body.dias[0].huecos[0].franja).toBe('08:00 – 08:30');
+    expect((await request(app).get(`/api/agenda/disponibilidad?desde=${dia(0)}&hasta=${dia(0)}&duracion=20`).set(auth())).body.error.code).toBe('DURACION_NO_VALIDA');
   });
 
   it('no deja citar fuera de la jornada', async () => {

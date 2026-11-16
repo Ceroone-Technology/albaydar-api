@@ -27,7 +27,7 @@ import {
 const citarBody = z.object({
   /** Horas de inicio elegidas en la disponibilidad (ISO 8601). */
   inicios: z.array(z.iso.datetime({ offset: true, error: 'Fecha y hora no válidas.' })).min(1, 'Selecciona al menos una fecha.').max(3, 'Máximo 3 fechas.'),
-  /** 45 o 60 minutos (según la configuración de la agenda). */
+  /** Una de las duraciones de la agenda (30, 45 o 60 minutos de serie). */
   duracion: z.number().int().optional(),
   mensaje: z.string().trim().max(1000).optional().nullable(),
 });
