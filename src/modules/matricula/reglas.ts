@@ -395,16 +395,136 @@ export function checklistProgress(draft: Draft): { done: number; total: number }
 
 // ── Validación por paso ─────────────────────────────────────────────────────
 
+// ── Formatos de los datos (16/11/2026) ─────────────────────────────────────
+//
+// Un dato con formato incorrecto cuenta como no completado: no deja continuar
+// ni enviar. Misma copia en la API (modules/matricula/reglas.ts) y en el front
+// (domain/rules/enrollment.rules.ts): si cambia una, cambia la otra.
+
+const compact = (value: string) => value.replace(/[\s.\-/]/g, '').toUpperCase();
+
+// Longitud del IBAN de cada país de la zona SEPA (lista del EPC).
+const SEPA_IBAN_LENGTH: Record<string, number> = {
+  AD: 24, AL: 28, AT: 20, BE: 16, BG: 22, CH: 21, CY: 28, CZ: 24, DE: 22, DK: 18, EE: 20, ES: 24, FI: 18, FR: 27,
+  GB: 22, GI: 23, GR: 27, HR: 21, HU: 28, IE: 22, IS: 26, IT: 27, LI: 21, LT: 20, LU: 20, LV: 21, MC: 27, MD: 24,
+  ME: 22, MK: 19, MT: 31, NL: 18, NO: 15, PL: 28, PT: 25, RO: 24, SE: 24, SI: 19, SK: 24, SM: 27, VA: 22,
+};
+
+// IBAN de la zona SEPA: país, longitud de ese país (24 en España) y dígitos de
+// control ISO 13616 (módulo 97). Admite espacios y guiones.
+export function isValidIban(value: string): boolean {
+  const iban = compact(value);
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(iban) || SEPA_IBAN_LENGTH[iban.slice(0, 2)] !== iban.length) {
+    return false;
+  }
+  let rest = 0;
+  for (const char of iban.slice(4) + iban.slice(0, 4)) {
+    const digits = char >= 'A' ? String(char.charCodeAt(0) - 55) : char;
+    for (const digit of digits) {
+      rest = (rest * 10 + Number(digit)) % 97;
+    }
+  }
+
+  return rest === 1;
+}
+
+const ID_LETTERS = 'TRWAGMYFPDXBNJZSQVHLCKE';
+
+// DNI (8 cifras y letra) o NIE (X, Y o Z, 7 cifras y letra) con su letra de control.
+export function isValidSpanishId(value: string): boolean {
+  const match = /^([XYZ]|\d)(\d{7})([A-Z])$/.exec(compact(value));
+  if (match === null) {
+    return false;
+  }
+  const [, initial = '', digits = '', letter = ''] = match;
+  const first = 'XYZ'.includes(initial) ? String('XYZ'.indexOf(initial)) : initial;
+
+  return ID_LETTERS[Number(first + digits) % 23] === letter;
+}
+
+// Documento de una persona: DNI o NIE con su letra o, si es extranjero, un
+// pasaporte (de 5 a 20 letras y cifras, con alguna cifra). Un DNI o NIE sin
+// letra no vale.
+export function isValidIdentityDocument(value: string): boolean {
+  const doc = compact(value);
+  if (/^(\d{8}|[XYZ]\d{7})[A-Z]$/.test(doc)) {
+    return isValidSpanishId(doc);
+  }
+  if (/^(\d{7,8}|[XYZ]\d{7})$/.test(doc)) {
+    return false;
+  }
+
+  return /^[A-Z0-9]{5,20}$/.test(doc) && /\d/.test(doc);
+}
+
+// BIC o SWIFT: 8 u 11 caracteres (banco, país, localidad y oficina).
+export function isValidBic(value: string): boolean {
+  return /^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(compact(value));
+}
+
+// Teléfono: de 9 a 15 cifras, con prefijo internacional opcional.
+export function isValidPhone(value: string): boolean {
+  return /^\+?\d{9,15}$/.test(value.replace(/[\s().-]/g, ''));
+}
+
+export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+export function isValidEmail(value: string): boolean {
+  return EMAIL_PATTERN.test(value.trim());
+}
+
+// Código postal español: 5 cifras de una provincia que existe (01 a 52).
+export function isValidPostalCode(value: string): boolean {
+  return /^(0[1-9]|[1-4]\d|5[0-2])\d{3}$/.test(value.trim());
+}
+
+// Fecha DD/MM/AAAA que existe, desde 1900 y no posterior a hoy.
+export function isValidPastDate(value: string): boolean {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value.trim());
+  if (match === null) {
+    return false;
+  }
+  const [day, month, year] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return year >= 1900 && date.getUTCMonth() === month - 1 && date.getUTCDate() === day && date.getTime() <= Date.now();
+}
+
+// Nº de afiliación a la Seguridad Social: provincia (2), número (7 u 8) y dos
+// dígitos de control (módulo 97). Admite espacios, puntos y barras.
+export function isValidNuss(value: string): boolean {
+  const nuss = value.replace(/[\s./-]/g, '');
+  if (!/^\d{11,12}$/.test(nuss)) {
+    return false;
+  }
+  const province = Number(nuss.slice(0, 2));
+  const number = Number(nuss.slice(2, -2));
+  const control = Number(nuss.slice(-2));
+  const base = number < 10_000_000 ? number + province * 10_000_000 : Number(`${nuss.slice(0, 2)}${nuss.slice(2, -2).padStart(8, '0')}`);
+
+  return base % 97 === control;
+}
+
+// Nota media de 0 a 10, con coma o punto y hasta dos decimales: «7,5».
+export function isValidGrade(value: string): boolean {
+  return /^(10([.,]0{1,2})?|\d([.,]\d{1,2})?)$/.test(value.trim());
+}
+
 function filled(value: string | undefined | null): boolean {
   return (value ?? '').trim() !== '';
 }
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function stepMissing(draft: Draft, step: EnrollmentStepId): string[] {
   const missing: string[] = [];
   const need = (ok: boolean, field: string) => {
     if (!ok) {
+      missing.push(field);
+    }
+  };
+  // Con algo escrito, tiene que tener el formato; vacío lo marca `need` si es obligatorio.
+  const valid = (value: string | undefined | null, check: (value: string) => boolean, field: string) => {
+    if (filled(value) && !check(value ?? '') && !missing.includes(field)) {
       missing.push(field);
     }
   };
@@ -421,13 +541,19 @@ export function stepMissing(draft: Draft, step: EnrollmentStepId): string[] {
         need(filled(student[field]), `student.${field}`);
       }
       need(EMAIL_PATTERN.test(student.email.trim()), 'student.email');
+      valid(student.birthDate, isValidPastDate, 'student.birthDate');
+      valid(student.document, isValidIdentityDocument, 'student.document');
+      valid(student.phone, isValidPhone, 'student.phone');
+      valid(student.postalCode, isValidPostalCode, 'student.postalCode');
       if (showsNuss(draft.via)) {
         need(filled(student.nuss), 'student.nuss');
+        valid(student.nuss, isValidNuss, 'student.nuss');
       }
       if (showsPreviousStudies(draft.via)) {
         for (const field of ['school', 'course', 'locality', 'averageGrade'] as const) {
           need(filled(previous[field]), `previousStudies.${field}`);
         }
+        valid(previous.averageGrade, isValidGrade, 'previousStudies.averageGrade');
         need(previous.stage !== null, 'previousStudies.stage');
         need(previous.promotes !== null, 'previousStudies.promotes');
         if (previous.promotes === false) {
@@ -437,6 +563,7 @@ export function stepMissing(draft: Draft, step: EnrollmentStepId): string[] {
         if (pasen.enabled) {
           need(filled(pasen.holder), 'pasen.holder');
           need(filled(pasen.phone), 'pasen.phone');
+          valid(pasen.phone, isValidPhone, 'pasen.phone');
         }
       }
       break;
@@ -449,6 +576,13 @@ export function stepMissing(draft: Draft, step: EnrollmentStepId): string[] {
       need(filled(first.document), 'family.guardians.0.document');
       need(EMAIL_PATTERN.test(first.email.trim()), 'family.guardians.0.email');
       need(filled(first.phone), 'family.guardians.0.phone');
+      valid(first.document, isValidIdentityDocument, 'family.guardians.0.document');
+      valid(first.phone, isValidPhone, 'family.guardians.0.phone');
+      const second = family.guardians[1];
+      valid(second?.document, isValidIdentityDocument, 'family.guardians.1.document');
+      valid(second?.phone, isValidPhone, 'family.guardians.1.phone');
+      valid(second?.email, isValidEmail, 'family.guardians.1.email');
+      valid(family.address.postalCode, isValidPostalCode, 'family.address.postalCode');
       need(family.familySize !== null && familySizeOptions().includes(family.familySize), 'family.familySize');
       if (showsFamilySizeTitle(draft)) {
         need(filled(family.familySizeTitle), 'family.familySizeTitle');
@@ -476,6 +610,10 @@ export function stepMissing(draft: Draft, step: EnrollmentStepId): string[] {
         need(filled(annex.custodians[0]?.fullName), 'annex.custodians.0.fullName');
         need(filled(annex.custodians[0]?.document), 'annex.custodians.0.document');
       }
+      valid(annex.custodians[0]?.document, isValidIdentityDocument, 'annex.custodians.0.document');
+      valid(annex.custodians[0]?.phone, isValidPhone, 'annex.custodians.0.phone');
+      valid(annex.custodians[0]?.email, isValidEmail, 'annex.custodians.0.email');
+      valid(annex.postalCode, isValidPostalCode, 'annex.postalCode');
       break;
     }
 
@@ -499,6 +637,10 @@ export function stepMissing(draft: Draft, step: EnrollmentStepId): string[] {
         need(filled(draft.economic.sepa.iban), 'economic.sepa.iban');
         need(filled(draft.economic.sepa.holder), 'economic.sepa.holder');
         need(filled(draft.economic.sepa.holderDocument), 'economic.sepa.holderDocument');
+        // Lo mismo que exige la orden SEPA al firmarla (IBAN de la zona SEPA, DNI o NIE del titular y BIC).
+        valid(draft.economic.sepa.iban, isValidIban, 'economic.sepa.iban');
+        valid(draft.economic.sepa.holderDocument, isValidSpanishId, 'economic.sepa.holderDocument');
+        valid(draft.economic.sepa.bic, isValidBic, 'economic.sepa.bic');
       }
       need(economicDone(draft), 'signature.economic');
       break;
