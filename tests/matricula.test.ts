@@ -703,7 +703,7 @@ describe('Matrícula digital: archivos, envío, PDF, devolución y Séneca', () 
 
     const actual = (await pub()).body;
     const b = structuredClone(actual.borrador);
-    b.student = { ...b.student, secondSurname: 'Envío', birthDate: '01/02/2011', document: '49218735T', email: 'gema@example.com', phone: '+34 600 000 001', address: 'C/ Feria 1', municipality: 'Sevilla', province: 'Sevilla', postalCode: '41003', nuss: '281234567890' };
+    b.student = { ...b.student, secondSurname: 'Envío', birthDate: '01/02/2011', document: '49218735T', email: 'gema@example.com', phone: '+34 600 000 001', address: 'C/ Feria 1', municipality: 'Sevilla', province: 'Sevilla', postalCode: '41003', nuss: '281234567840' };
     b.family.guardians[0] = { ...b.family.guardians[0], document: '12345678Z', email: s.email, phone: '+34 600 000 002' };
     b.family = { ...b.family, familySize: 'no', siblings: 0, contactPreference: 'mother' };
     b.annex = { ...b.annex, sex: 'M', cycleType: 'intermediate', regime: 'ordinary', enrollmentCourse: '1', imageConsent: true, minor: true, custodians: [{ fullName: 'Elena Tutora de Gema', document: '12345678Z', phone: '', email: '', relationship: 'mother' }] };
