@@ -1737,3 +1737,69 @@ describe('Alumnado: expedientes, familias e historial', () => {
     expect(fc.revision.checks.find((c: { id: string }) => c.id === 'familia').texto).not.toContain('alumna del centro');
   });
 });
+
+describe('CRM básico: interesados (18/11/2026)', () => {
+  it('alta con bienvenida, duplicados, llamadas, cualificación, perdido con motivo y paso a solicitud', async () => {
+    const crm = (quien = 'comercial') => ({ ...auth(quien) });
+    // Permisos de partida: Comercial y Secretaría sí; Administración no.
+    expect((await request(app).get('/api/interesados').set(auth('administracion'))).status).toBe(403);
+    expect((await request(app).get('/api/interesados').set(auth('secretaria'))).status).toBe(200);
+
+    const [gs] = await db.select().from(ciclos).where(eq(ciclos.familia, 'CICLOS_PRIVADOS_GS'));
+    const alta = await request(app).post('/api/interesados').set(crm()).send({
+      nombre: 'Irene Lead Prueba', telefono: '600 111 222', email: 'irene.lead@example.com',
+      familia: 'CICLOS_PRIVADOS_GS', cicloId: gs!.id, origen: 'REDES', campana: 'meta-nov', consentimientoComunicaciones: true,
+    });
+    expect(alta.status).toBe(201);
+    expect(alta.body).toMatchObject({ estado: 'NUEVO', bienvenidaEnviada: true, proximaAccion: 'Llamar antes de 24 h', asesor: { nombre: 'Promoción' } });
+    expect(alta.body.estudio).toBe(`Ciclos Privados (GS) · ${gs!.nombre}`);
+    await enviarCorreos();
+    expect(ultimoPara('irene.lead@example.com').subject).toBe('Irene, te llamamos en menos de 24 horas');
+    const id = alta.body.id as string;
+
+    // Duplicado por correo o teléfono (salvo forzar); sin teléfono ni correo, no.
+    const dup = await request(app).post('/api/interesados').set(crm()).send({ nombre: 'Otra', telefono: '600 111 222', origen: 'WEB' });
+    expect(dup.body.error).toMatchObject({ code: 'INTERESADO_DUPLICADO', details: { id } });
+    expect((await request(app).post('/api/interesados').set(crm()).send({ nombre: 'Sin datos', origen: 'WEB' })).status).toBe(400);
+    // El ciclo tiene que ser del estudio elegido.
+    const [gm] = await db.select().from(ciclos).where(eq(ciclos.familia, 'CICLOS_CONCERTADOS_GM'));
+    expect((await request(app).patch(`/api/interesados/${id}`).set(crm()).send({ cicloId: gm!.id })).body.error.code).toBe('CICLO_NO_VALIDO');
+
+    // No contesta: suma intento y sigue nuevo; contesta: pasa a contactado.
+    let f = (await request(app).post(`/api/interesados/${id}/seguimiento`).set(crm()).send({ tipo: 'LLAMADA', resultado: 'NO_CONTESTA', proximaAccionEl: '2030-01-10' })).body;
+    expect(f).toMatchObject({ estado: 'NUEVO', intentos: 1, proximaAccionEl: '2030-01-10', vencida: false });
+    f = (await request(app).post(`/api/interesados/${id}/seguimiento`).set(crm()).send({ tipo: 'LLAMADA', resultado: 'CONTESTA', texto: 'Le interesa mucho' })).body;
+    expect(f.estado).toBe('CONTACTADO');
+    f = (await request(app).patch(`/api/interesados/${id}`).set(crm()).send({ puntuacion: 'A', esMenor: true, tutorNombre: 'Madre de Irene', localidad: 'Dos Hermanas' })).body;
+    expect(f).toMatchObject({ puntuacion: 'A', esMenor: true, consentimientoComunicaciones: true });
+
+    // Perdido exige motivo; se puede reabrir.
+    expect((await request(app).patch(`/api/interesados/${id}`).set(crm()).send({ estado: 'PERDIDO' })).body.error.code).toBe('MOTIVO_OBLIGATORIO');
+    f = (await request(app).patch(`/api/interesados/${id}`).set(crm()).send({ estado: 'PERDIDO', motivoPerdida: 'PRECIO' })).body;
+    expect(f).toMatchObject({ estado: 'PERDIDO', motivoPerdida: 'PRECIO', vencida: false });
+    f = (await request(app).patch(`/api/interesados/${id}`).set(crm()).send({ estado: 'CONTACTADO' })).body;
+    expect(f).toMatchObject({ estado: 'CONTACTADO', motivoPerdida: null });
+
+    // Listado con totales por estado.
+    const lista = (await request(app).get('/api/interesados?q=Irene').set(crm())).body;
+    expect(lista.total).toBe(1);
+    expect(lista.porEstado.CONTACTADO).toBeGreaterThanOrEqual(1);
+
+    // Pasa a solicitud: la solicitud queda enlazada y no se puede repetir.
+    const [via] = await db.insert(vias).values({ familia: 'CICLOS_PRIVADOS_GS', curso: 1, nombre: 'GS privado 1º (CRM)', cursoEscolar: '2039-2040', plazas: 0 }).returning();
+    const sol = {
+      viaId: via!.id, cicloId: gs!.id, alumnaNombre: 'Irene', alumnaApellidos: 'Lead Prueba', centroProcedencia: 'IES Prueba',
+      tutorNombre: 'Madre de Irene', email: 'irene.lead@example.com', telefono: '600111222', canal: 'TELEFONO', consentimientoPrivacidad: true, interesadoId: id,
+    };
+    const s = await request(app).post('/api/solicitudes').set(crm()).send(sol);
+    expect(s.status).toBe(201);
+    f = (await request(app).get(`/api/interesados/${id}`).set(crm())).body;
+    expect(f).toMatchObject({ estado: 'SOLICITUD', solicitud: { id: s.body.id, codigo: s.body.codigo } });
+    expect(f.historial.map((h: { tipo: string }) => h.tipo)).toEqual(expect.arrayContaining(['ALTA', 'CORREO', 'LLAMADA', 'EDICION', 'ESTADO', 'SOLICITUD']));
+    const otra = await request(app).post('/api/solicitudes').set(crm()).send({ ...sol, alumnaApellidos: 'Lead Prueba Dos' });
+    expect(otra.body.error.code).toBe('INTERESADO_CONVERTIDO');
+    // La segunda no se creó (misma transacción).
+    expect((await db.select().from(solicitudes).where(eq(solicitudes.alumnaApellidos, 'Lead Prueba Dos'))).length).toBe(0);
+    expect((await request(app).patch(`/api/interesados/${id}`).set(crm()).send({ notas: 'x' })).body.error.code).toBe('INTERESADO_CONVERTIDO');
+  });
+});

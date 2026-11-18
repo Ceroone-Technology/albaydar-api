@@ -134,6 +134,13 @@
       "when": 1794856748219,
       "tag": "0018_responsables_multiples",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794972803468,
+      "tag": "0019_crm_interesados",
+      "breakpoints": true
     }
   ]
 }

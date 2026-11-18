@@ -62,6 +62,8 @@ export const solicitudInternaBody = z.object({
   responsableId: z.string().uuid().optional().nullable(),
   observacionesInternas: textoOpc(4000),
   consentimientoPrivacidad: z.literal(true, { error: 'Registra el consentimiento de la familia.' }),
+  /** CRM básico (18/11/2026): el interesado que pasa a solicitud. */
+  interesadoId: z.string().uuid().optional().nullable(),
 });
 
 /** Completar desde el enlace: solo los campos de la familia, todos opcionales. */

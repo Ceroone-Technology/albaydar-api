@@ -1,5 +1,6 @@
 import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import { vincularSolicitud } from '../crm/crm.service';
 import type { z } from 'zod';
 import { env } from '../../config/env';
 import {
@@ -171,8 +172,10 @@ export async function crearInterna(d: z.infer<typeof solicitudInternaBody>, usua
     await fijarResponsables(tx, s!.id, [{ tipo: 'usuario', id: d.responsableId ?? usuarioId }]);
     await registrarEvento(tx, s!.id, { tipo: 'usuario', usuarioId }, 'CREADA', {
       aEstado: 'RECIBIDA',
-      detalle: { canal: d.canal, asignadaSnec: d.asignadaSnec },
+      detalle: { canal: d.canal, asignadaSnec: d.asignadaSnec, interesadoId: d.interesadoId ?? undefined },
     });
+    // CRM básico (18/11/2026): el interesado pasa a «Solicitud» y queda enlazado.
+    if (d.interesadoId) await vincularSolicitud(tx, d.interesadoId, s!, usuarioId);
     return s!;
   });
 }
