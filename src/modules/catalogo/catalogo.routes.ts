@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { ciclos, entrevistadores, familiaViaEnum, plazasCiclo, vias } from '../../db/schema';
 import { db } from '../../lib/db';
-import { badRequest, notFound } from '../../lib/errors';
+import { badRequest, conflict, notFound } from '../../lib/errors';
 import { requirePermiso } from '../../middleware/auth';
 import { v, validate } from '../../middleware/validate';
 import { asegurarPlazasCiclo, claveCiclo, ocupadasPorCiclo, plazasDeCiclos, plazasOcupadas, sumarPlazasVia } from '../solicitudes/comun';
@@ -118,11 +118,67 @@ catalogoRouter.patch(
       const [conCiclos] = await db.select({ id: plazasCiclo.id }).from(plazasCiclo).where(eq(plazasCiclo.viaId, id)).limit(1);
       if (conCiclos) throw badRequest('PLAZAS_POR_CICLO', 'Las plazas de esta vía son la suma de las de sus ciclos: cámbialas en cada ciclo.');
     }
-    const [x] = await db.update(vias).set(cambios).where(and(eq(vias.id, id))).returning();
-    if (!x) throw notFound('Vía no encontrada.');
-    res.json(x);
+    const r = await db.transaction(async (tx) => {
+      const [x] = await tx.update(vias).set(cambios).where(and(eq(vias.id, id))).returning();
+      if (!x) throw notFound('Vía no encontrada.');
+      // El formulario público ofrece un solo curso escolar: al poner una vía en él, salen las de otros cursos.
+      const retiradas =
+        cambios.activa === true
+          ? await tx
+              .update(vias)
+              .set({ activa: false })
+              .where(and(ne(vias.cursoEscolar, x.cursoEscolar), eq(vias.activa, true)))
+              .returning({ id: vias.id })
+          : [];
+      return { ...x, otrosCursosRetirados: retiradas.length };
+    });
+    res.json(r);
   },
 );
+
+// ── Curso escolar siguiente (17/11/2026) ─────────────────────────────────────
+
+const cursoSiguiente = (c: string) => `${Number(c.slice(0, 4)) + 1}-${Number(c.slice(5, 9)) + 1}`;
+const abrirCursoBody = z.object({ desde: z.string().regex(/^\d{4}-\d{4}$/).optional() });
+
+/**
+ * «Abrir el curso siguiente»: copia las vías del curso escolar `desde` (por defecto, el último que
+ * hay) al siguiente, con sus plazas y las de cada ciclo. Nacen fuera del formulario público: se
+ * ponen en él cuando empieza esa admisión (y entonces salen las del curso anterior).
+ */
+catalogoRouter.post('/cursos-escolares/siguiente', requirePermiso('configuracion.editar'), validate({ body: abrirCursoBody }), async (req, res) => {
+  const { desde } = v<typeof abrirCursoBody>(req, 'body');
+  const r = await db.transaction(async (tx) => {
+    const origen = desde ?? (await tx.select({ c: sql<string | null>`max(${vias.cursoEscolar})` }).from(vias))[0]?.c ?? null;
+    if (!origen) throw badRequest('SIN_VIAS', 'No hay vías que copiar.');
+    const destino = cursoSiguiente(origen);
+    const [ya] = await tx.select({ id: vias.id }).from(vias).where(eq(vias.cursoEscolar, destino)).limit(1);
+    if (ya) throw conflict('CURSO_YA_ABIERTO', `El curso ${destino.replace(/-\d{2}(\d{2})$/, '/$1')} ya está abierto.`);
+    const base = await tx.select().from(vias).where(eq(vias.cursoEscolar, origen)).orderBy(asc(vias.familia), asc(vias.curso));
+    if (!base.length) throw notFound(`No hay vías del curso ${origen}.`, 'SIN_VIAS');
+    const activos = new Set((await listarCiclos(true)).map((c) => c.id));
+    for (const anterior of base) {
+      const [nueva] = await tx
+        .insert(vias)
+        .values({
+          familia: anterior.familia,
+          curso: anterior.curso,
+          nombre: anterior.nombre,
+          cursoEscolar: destino,
+          plazas: anterior.plazas,
+          plazasAsignadasPorJunta: anterior.plazasAsignadasPorJunta,
+          activa: false,
+        })
+        .returning();
+      // Las plazas de cada ciclo (los que siguen activos), como estaban; los que falten, a 0.
+      const porCiclo = (await tx.select().from(plazasCiclo).where(eq(plazasCiclo.viaId, anterior.id))).filter((p) => activos.has(p.cicloId));
+      if (porCiclo.length) await tx.insert(plazasCiclo).values(porCiclo.map((p) => ({ viaId: nueva!.id, cicloId: p.cicloId, plazas: p.plazas })));
+      await asegurarPlazasCiclo(tx, nueva!, () => 0);
+    }
+    return { desde: origen, cursoEscolar: destino, vias: base.length };
+  });
+  res.status(201).json(r);
+});
 
 /** Plazas de un ciclo en una vía de ciclos (A6); la vía pasa a la nueva suma. */
 catalogoRouter.patch(

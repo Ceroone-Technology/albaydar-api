@@ -1075,6 +1075,40 @@ describe('Entrevistadoras y varios responsables (16/11/2026)', () => {
   });
 });
 
+describe('Curso escolar siguiente (17/11/2026)', () => {
+  it('abrir el curso siguiente copia vías y plazas fuera del formulario; activarlo retira el anterior', async () => {
+    const activasAntes = (await db.select({ id: vias.id }).from(vias).where(eq(vias.activa, true))).map((x) => x.id);
+    // Una vía de ciclos de un curso propio, con plazas por ciclo.
+    const base = (await request(app).post('/api/catalogo/vias').set(auth('direccion')).send({
+      familia: 'CICLOS_PRIVADOS_GS', curso: 2, nombre: 'GS privado 2º', cursoEscolar: '2040-2041', plazas: 0, activa: false,
+    })).body;
+    const [marketing] = await db.select().from(ciclos).where(eq(ciclos.nombre, 'Marketing y Publicidad'));
+    await request(app).patch(`/api/catalogo/vias/${base.id}/ciclos/${marketing!.id}`).set(auth('direccion')).send({ plazas: 25 });
+
+    const abrir = (quien = 'direccion') => request(app).post('/api/catalogo/cursos-escolares/siguiente').set(auth(quien)).send({ desde: '2040-2041' });
+    expect((await abrir('secretaria')).status).toBe(403);
+    const r = await abrir();
+    expect(r.status).toBe(201);
+    expect(r.body).toEqual({ desde: '2040-2041', cursoEscolar: '2041-2042', vias: 1 });
+    expect((await abrir()).body.error.code).toBe('CURSO_YA_ABIERTO');
+
+    const nueva = ((await request(app).get('/api/catalogo/vias').set(auth())).body.items as { cursoEscolar: string; activa: boolean; plazas: number; ciclos: { nombre: string; plazas: number }[]; id: string }[])
+      .find((x) => x.cursoEscolar === '2041-2042')!;
+    expect(nueva).toMatchObject({ activa: false, plazas: 25 });
+    expect(nueva.ciclos.find((c) => c.nombre === 'Marketing y Publicidad')!.plazas).toBe(25);
+
+    // Al ponerla en el formulario, las de los demás cursos salen de él: un solo curso a la vez.
+    const activar = await request(app).patch(`/api/catalogo/vias/${nueva.id}`).set(auth('direccion')).send({ activa: true });
+    expect(activar.body.otrosCursosRetirados).toBe(activasAntes.length);
+    const publico = (await request(app).get('/api/public/vias')).body;
+    expect(publico.cursoEscolar).toBe('2041-2042');
+
+    // Se deja el formulario como estaba para el resto de pruebas.
+    await db.update(vias).set({ activa: false }).where(eq(vias.id, nueva.id));
+    for (const id of activasAntes) await db.update(vias).set({ activa: true }).where(eq(vias.id, id));
+  });
+});
+
 describe('Cola de correos', () => {
   it('envía en el orden en que se encolaron, también dentro de una misma transacción', async () => {
     await enviarCorreos();
