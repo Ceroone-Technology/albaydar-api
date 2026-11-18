@@ -962,6 +962,20 @@ Formato pensado para abrir con doble clic en Excel en español: separador `;`, c
 | POST / PATCH | `/catalogo/vias`, `/catalogo/vias/:id` | configuracion.editar | Alta y edición de vías y plazas. Una vía de ciclos nace con una fila de plazas a 0 por cada ciclo activo y sus `plazas` no se editan en la vía (400 `PLAZAS_POR_CICLO`): se cambian por ciclo. Poner `activa: true` (en el formulario) retira del formulario las vías de los demás cursos escolares (el formulario ofrece uno solo): la respuesta trae `otrosCursosRetirados` |
 | POST | `/catalogo/cursos-escolares/siguiente` | configuracion.editar | `{ desde? }` (`AAAA-AAAA`; por defecto, el último curso con vías) → `{ desde, cursoEscolar, vias }`: copia las vías del curso `desde` al siguiente, fuera del formulario (`activa: false`), con sus plazas y las de cada ciclo activo. 409 `CURSO_YA_ABIERTO` si el siguiente ya tiene vías |
 
+## Captación: interesados (CRM básico, 18/11/2026)
+
+Etapas 1 y 2 del embudo de captación del centro (documento «Embudo de captación y matriculación de leads»): alta con correo de bienvenida, llamada antes de 24 h, cualificación (nivel 2, A/B/C), nutrición y perdido con motivo. «Pasar a solicitud» es el alta de una solicitud con `interesadoId`. Permisos `crm.ver` / `crm.editar` (de serie: Dirección, Secretaría y Comercial; Administración, no).
+
+| Método | Ruta | Permiso | Qué hace |
+|---|---|---|---|
+| GET | `/interesados` | crm.ver | `?estado=&origen=&asesorId=&q=&vencidas=true&page=&pageSize=` → `{ items, page, pageSize, total, porEstado, vencidas }`. Orden: próxima acción más temprana primero (sin ella, al principio). `vencida`: abierto (nuevo, contactado o nutrición) con la próxima acción para antes de hoy o sin ella |
+| GET | `/interesados/asesores` | crm.ver | Personal activo con `crm.editar` (o Dirección) |
+| GET | `/interesados/:id` | crm.ver | Ficha con `historial` (alta, edición, llamada, nota, estado, correo, solicitud) |
+| POST | `/interesados` | crm.editar | `{ nombre, telefono?, email?, familia?, cicloId?, origen, campana?, consentimientoComunicaciones, asesorId?, notas?, enviarBienvenida = true, forzar = false }`. Hace falta teléfono o correo. 409 `INTERESADO_DUPLICADO` (mismo correo o teléfono, salvo perdidos; `details: { id, nombre, estado }`) salvo `forzar`. Nace con la próxima acción «Llamar antes de 24 h» para mañana y el asesor que da el alta. Con correo, envía `BIENVENIDA_INTERESADO` → 201 con la ficha y `bienvenidaEnviada` |
+| PATCH | `/interesados/:id` | crm.editar | Datos de nivel 1 y 2, `puntuacion` (A/B/C), `asesorId`, `proximaAccion`, `proximaAccionEl`, `estado` (`NUEVO`, `CONTACTADO`, `NUTRICION`, `PERDIDO`; perdido exige `motivoPerdida`: 400 `MOTIVO_OBLIGATORIO`). El ciclo debe ser del estudio (`CICLO_NO_VALIDO`). Uno que pasó a solicitud: 409 `INTERESADO_CONVERTIDO` |
+| POST | `/interesados/:id/seguimiento` | crm.editar | `{ tipo: 'LLAMADA' \| 'NOTA', resultado?: 'CONTESTA' \| 'NO_CONTESTA', texto?, proximaAccion?, proximaAccionEl? }`. No contesta suma un intento; contesta pasa un nuevo (o en nutrición) a `CONTACTADO` |
+| POST | `/solicitudes` con `interesadoId` | solicitudes.editar | Alta de la solicitud desde el interesado: en la misma transacción pasa a `SOLICITUD` y queda enlazado (409 `INTERESADO_CONVERTIDO` si ya lo estaba; la solicitud no se crea) |
+
 ## Rutas del front que enlazan los correos
 
 Base `PUBLIC_APP_URL`. Deben existir en Angular y ser públicas:

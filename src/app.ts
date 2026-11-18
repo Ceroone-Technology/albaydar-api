@@ -11,6 +11,7 @@ import { requireAuth } from './middleware/auth';
 import { errorHandler, notFoundHandler } from './middleware/error-handler';
 import { agendaRouter } from './modules/agenda/agenda.routes';
 import { alumnadoRouter } from './modules/alumnado/alumnado.routes';
+import { crmRouter } from './modules/crm/crm.routes';
 import { authRouter } from './modules/auth/auth.routes';
 import { catalogoRouter } from './modules/catalogo/catalogo.routes';
 import { cobrosRouter } from './modules/cobros/cobros.routes';
@@ -69,6 +70,7 @@ export function crearApp() {
     ['/cobros', cobrosRouter],
     ['/alumnado', alumnadoRouter],
     ['/matriculas', matriculasRouter],
+    ['/interesados', crmRouter],
   ];
   for (const [ruta, router] of privados) api.use(ruta, requireAuth, router);
 

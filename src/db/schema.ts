@@ -155,6 +155,45 @@ export const tipoMandatoEnum = pgEnum('tipo_mandato', ['SEPA', 'PLUS']);
 export const secuenciaMandatoEnum = pgEnum('secuencia_mandato', ['RCUR', 'OOFF']);
 export const estadoMandatoEnum = pgEnum('estado_mandato', ['VIGENTE', 'ANULADO']);
 
+// CRM básico (18/11/2026): embudo de captación de Luis Fdo. (documento «Embudo de captación y
+// matriculación de leads»). Etapas 1 y 2 del embudo, nutrición y perdido; de la 3 en adelante es
+// la solicitud.
+export const estadoInteresadoEnum = pgEnum('estado_interesado', [
+  'NUEVO', //       acaba de entrar: llamar antes de 24 h
+  'CONTACTADO', //  contactado y cualificado (ficha de nivel 2, A/B/C)
+  'NUTRICION', //   sin respuesta o lo aplaza
+  'SOLICITUD', //   pasó a solicitud de admisión
+  'PERDIDO', //     con motivo obligatorio
+]);
+/** Canales de entrada del documento del embudo. */
+export const origenInteresadoEnum = pgEnum('origen_interesado', [
+  'REDES',
+  'WEB',
+  'TELEFONO',
+  'EMAIL',
+  'FERIA',
+  'PORTAL',
+  'RECOMENDACION',
+]);
+/** Motivo de pérdida: lista cerrada del documento del embudo. */
+export const motivoPerdidaEnum = pgEnum('motivo_perdida', [
+  'PRECIO',
+  'ELIGIO_PUBLICO',
+  'OTRO_PRIVADO',
+  'SIN_REQUISITOS',
+  'NO_CONTESTA',
+  'NO_INTERESA',
+]);
+export const tipoEventoInteresadoEnum = pgEnum('tipo_evento_interesado', [
+  'ALTA',
+  'EDICION',
+  'LLAMADA',
+  'NOTA',
+  'ESTADO',
+  'CORREO',
+  'SOLICITUD',
+]);
+
 // ── Usuarios internos y sesiones ────────────────────────────────────────────
 
 export const usuarios = pgTable('usuarios', {
@@ -1092,3 +1131,79 @@ export type EstadoMatricula = (typeof estadoMatriculaEnum.enumValues)[number];
 export type FirmaMatricula = typeof firmasMatricula.$inferSelect;
 export type MandatoSepa = typeof mandatosSepa.$inferSelect;
 export type ArchivoMatricula = typeof archivosMatricula.$inferSelect;
+
+// ── CRM básico: interesados (18/11/2026) ────────────────────────────────────
+
+/**
+ * Interesado (lead): alguien que pide información antes de presentar la solicitud. Nivel 1 (para no
+ * perderlo) al darlo de alta; nivel 2 (cualificación) en la primera llamada. Siempre con una próxima
+ * acción con fecha y responsable («ningún lead sin próxima acción»).
+ */
+export const interesados = pgTable(
+  'interesados',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    estado: estadoInteresadoEnum('estado').notNull().default('NUEVO'),
+    // Nivel 1
+    nombre: text('nombre').notNull(),
+    telefono: text('telefono'),
+    email: text('email'),
+    /** Estudio de interés: la familia de vías y, en ciclos, el ciclo. */
+    familia: familiaViaEnum('familia'),
+    cicloId: uuid('ciclo_id').references(() => ciclos.id),
+    origen: origenInteresadoEnum('origen').notNull(),
+    campana: text('campana'),
+    /** Consentimiento de comunicaciones comerciales (RGPD). */
+    consentimientoComunicaciones: boolean('consentimiento_comunicaciones').notNull().default(false),
+    // Nivel 2 (primera llamada)
+    esMenor: boolean('es_menor'),
+    tutorNombre: text('tutor_nombre'),
+    tutorTelefono: text('tutor_telefono'),
+    estudiosActuales: text('estudios_actuales'),
+    localidad: text('localidad'),
+    motivacion: text('motivacion'),
+    otrosCentros: text('otros_centros'),
+    /** A = cumple requisitos, empieza este curso y responde; B = duda o el próximo curso; C = sin requisitos o sin respuesta. */
+    puntuacion: text('puntuacion'),
+    // Seguimiento
+    asesorId: uuid('asesor_id').references(() => usuarios.id),
+    proximaAccion: text('proxima_accion'),
+    proximaAccionEl: date('proxima_accion_el', { mode: 'string' }),
+    intentos: integer('intentos').notNull().default(0),
+    ultimoContactoEn: ts('ultimo_contacto_en'),
+    motivoPerdida: motivoPerdidaEnum('motivo_perdida'),
+    solicitudId: uuid('solicitud_id').references(() => solicitudes.id),
+    notas: text('notas'),
+    creadoPorId: uuid('creado_por_id').references(() => usuarios.id),
+    createdAt: creado(),
+    updatedAt: actualizado(),
+  },
+  (t) => [
+    index('interesados_estado_idx').on(t.estado),
+    index('interesados_email_idx').on(t.email),
+    index('interesados_telefono_idx').on(t.telefono),
+    index('interesados_proxima_idx').on(t.proximaAccionEl),
+    check('interesados_puntuacion_chk', sql`${t.puntuacion} is null or ${t.puntuacion} in ('A', 'B', 'C')`),
+    check('interesados_perdido_chk', sql`(${t.estado} = 'PERDIDO') = (${t.motivoPerdida} is not null)`),
+  ],
+);
+
+/** Historial del interesado: alta, llamadas, notas, cambios de estado, correos y paso a solicitud. */
+export const interesadoEventos = pgTable(
+  'interesado_eventos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    interesadoId: uuid('interesado_id')
+      .notNull()
+      .references(() => interesados.id, { onDelete: 'cascade' }),
+    tipo: tipoEventoInteresadoEnum('tipo').notNull(),
+    texto: text('texto'),
+    detalle: jsonb('detalle').$type<Record<string, unknown>>(),
+    usuarioId: uuid('usuario_id').references(() => usuarios.id),
+    createdAt: ts('created_at').notNull().default(sql`clock_timestamp()`),
+  },
+  (t) => [index('interesado_eventos_interesado_idx').on(t.interesadoId, t.createdAt)],
+);
+
+export type Interesado = typeof interesados.$inferSelect;
+export type EstadoInteresado = (typeof estadoInteresadoEnum.enumValues)[number];
