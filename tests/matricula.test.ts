@@ -8,7 +8,7 @@ import { crc32, deflateSync } from 'node:zlib';
 import type { Transporter } from 'nodemailer';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { crearApp } from '../src/app';
 import { db, pool } from '../src/lib/db';
@@ -76,11 +76,12 @@ afterAll(async () => {
 });
 
 /** Solicitud admitida y pagada: el expediente queda en «Reserva confirmada». */
-async function reservaPagada(nombre: string, viaId = viaBach, cicloId?: string) {
+async function reservaPagada(nombre: string, viaId = viaBach, cicloId?: string, extra: Record<string, unknown> = {}) {
   const email = `${nombre.toLowerCase()}.matricula@example.com`;
   const r = await request(app).post('/api/solicitudes').set(auth()).send({
     viaId, cicloId, alumnaNombre: nombre, alumnaApellidos: 'Matrícula Prueba', tutorNombre: `Elena Tutora de ${nombre}`, email,
     telefono: `+34 622 100 ${String(buzon.length).padStart(3, '0')}`, centroProcedencia: 'IES Bécquer', canal: 'PRESENCIAL', consentimientoPrivacidad: true,
+    ...extra,
   });
   await db.update(solicitudes).set({ estado: 'ENTREVISTA_REALIZADA' }).where(eq(solicitudes.id, r.body.id));
   expect((await request(app).post(`/api/solicitudes/${r.body.id}/decision`).set(auth('direccion')).send({ decision: 'ADMITIDA' })).status).toBe(200);
@@ -678,10 +679,20 @@ describe('Matrícula digital: archivos, envío, PDF, devolución y Séneca', () 
     expect(h).toEqual(expect.arrayContaining(['Sube: Fotocopia del DNI de la alumna', 'Sustituye: Fotocopia del DNI de la alumna', 'Quita: Foto de carné']));
   });
 
+  it('una alumna que llega por admisión a 2º es nueva en el centro: firma ideario y LOPD', async () => {
+    const [gs2] = await db.insert(vias).values({ familia: 'CICLOS_CONCERTADOS_GS', curso: 2, nombre: '2º GS concertado', cursoEscolar: '2027-2028', plazas: 20 }).onConflictDoNothing().returning();
+    const via = gs2 ?? (await db.select().from(vias).where(and(eq(vias.familia, 'CICLOS_CONCERTADOS_GS'), eq(vias.curso, 2), eq(vias.cursoEscolar, '2027-2028'))))[0]!;
+    const [afi] = await db.select().from(ciclos).where(eq(ciclos.nombre, 'Administración y Finanzas'));
+    const nueva = await reservaPagada('Nadia', via.id, afi!.id);
+    const r = await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: nueva.alumnaId, enviarEnlace: false });
+    expect(r.body.matricula).toMatchObject({ nuevaAlumna: true, curso: 2, borrador: { course: '2', newStudent: true } });
+    expect(Object.keys(r.body.matricula.pendientes)).toContain('ideario');
+  });
+
   it('la foto se puede subir aunque la matrícula no la pida (concertado de 2º, alumna que no es nueva)', async () => {
     const [gm2] = await db.insert(vias).values({ familia: 'CICLOS_CONCERTADOS_GM', curso: 2, nombre: '2º GM concertado', cursoEscolar: '2027-2028', plazas: 20 }).returning();
     const [gestion] = await db.select().from(ciclos).where(eq(ciclos.nombre, 'Gestión Administrativa'));
-    const segunda = await reservaPagada('Gala', gm2!.id, gestion!.id);
+    const segunda = await reservaPagada('Gala', gm2!.id, gestion!.id, { esAlumnaNueva: false });
     const r = await request(app).post('/api/matriculas').set(auth()).send({ alumnaId: segunda.alumnaId, enviarEnlace: false });
     expect(r.body.matricula.borrador).toMatchObject({ via: 'gm', course: '2', photo: null });
     expect(r.body.matricula.nuevaAlumna).toBe(false);

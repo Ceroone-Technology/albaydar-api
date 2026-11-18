@@ -641,8 +641,13 @@ async function abrir(tx: Tx, alumnaId: string, enviarEnlace: boolean, usuarioId:
     }
   } else {
     const contactos = await tx.select().from(alumnaContactos).where(eq(alumnaContactos.alumnaId, a.id));
-    const [s] = a.solicitudId ? await tx.select({ centro: solicitudes.centroProcedencia }).from(solicitudes).where(eq(solicitudes.id, a.solicitudId)) : [];
+    const [s] = a.solicitudId
+      ? await tx.select({ centro: solicitudes.centroProcedencia, nueva: solicitudes.esAlumnaNueva }).from(solicitudes).where(eq(solicitudes.id, a.solicitudId))
+      : [];
     datos = borradorDesdeExpediente(a, contactos, s?.centro ?? null, curso);
+    // Quien llega por admisión dice en su solicitud si es nueva en el centro: vale para cualquier
+    // curso (de partida, 1º es nueva y 2º no). Una alumna nueva en 2º firma ideario y LOPD.
+    if (s && s.nueva !== (curso === '1')) datos.newStudent = s.nueva;
   }
 
   const [m] = await tx
