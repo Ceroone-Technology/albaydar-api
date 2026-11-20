@@ -14,7 +14,21 @@ import { caducidadEnlace, cursoEscolarSiguiente, formatoCodigoMatricula } from '
 import { jsonCanonico } from '../src/modules/matricula/matricula.service';
 import { MATRICULA_POR_DEFECTO } from '../src/modules/ajustes/ajustes.service';
 import { cambiosEntre, contenidoFirmado, generarDocumento } from '../src/modules/matricula/documentos/generar';
-import { canSubmit, enrollmentFlow, stepMissing } from '../src/modules/matricula/reglas';
+import {
+  canSubmit,
+  enrollmentFlow,
+  isValidBic,
+  isValidEmail,
+  isValidGrade,
+  isValidIban,
+  isValidIdentityDocument,
+  isValidNuss,
+  isValidPastDate,
+  isValidPhone,
+  isValidPostalCode,
+  isValidSpanishId,
+  stepMissing,
+} from '../src/modules/matricula/reglas';
 
 const base: EntradaRevision = {
   alumnaNombre: 'Lucía',
@@ -411,5 +425,54 @@ describe('Matrícula: documentos con huella y datos bancarios', () => {
     expect(identificadorAcreedorValido('ES09605G41829037')).toBe(true); // el sufijo no cuenta en el control
     expect(identificadorAcreedorValido('G-41829037/605')).toBe(false);
     expect(enmascararIban('ES9121000418450200051332')).toBe('ES91 **** **** **** **** 1332');
+  });
+});
+
+describe('Formatos de los datos de la matrícula (16/11/2026)', () => {
+  it('IBAN de la zona SEPA: país, longitud y dígitos de control', () => {
+    expect(isValidIban('ES91 2100 0418 4502 0005 1332')).toBe(true);
+    expect(isValidIban('es9121000418450200051332')).toBe(true);
+    expect(isValidIban('DE89370400440532013000')).toBe(true);
+    expect(isValidIban('ES9121000418450200051333')).toBe(false); // control
+    expect(isValidIban('ES0123121121312446339123125121123121312312124121')).toBe(false); // largo
+    expect(isValidIban('ES91210004184502')).toBe(false); // corto
+    expect(isValidIban('US91210004184502000513')).toBe(false); // fuera de SEPA
+  });
+
+  it('DNI y NIE con su letra; un documento extranjero o pasaporte, alfanumérico', () => {
+    expect(isValidSpanishId('12345678Z')).toBe(true);
+    expect(isValidSpanishId('12.345.678-z')).toBe(true);
+    expect(isValidSpanishId('X1234567L')).toBe(true);
+    expect(isValidSpanishId('12345678A')).toBe(false);
+    expect(isValidSpanishId('PAB123456')).toBe(false);
+    expect(isValidIdentityDocument('PAB123456')).toBe(true);
+    expect(isValidIdentityDocument('36695137')).toBe(false); // DNI sin letra
+    expect(isValidIdentityDocument('12345678A')).toBe(false);
+    expect(isValidIdentityDocument('Fabio')).toBe(false);
+  });
+
+  it('teléfono, correo, código postal, fecha pasada, NUSS, BIC y nota', () => {
+    expect(isValidPhone('+34 600 333 444')).toBe(true);
+    expect(isValidPhone('954 61 02 54')).toBe(true);
+    expect(isValidPhone('600 333')).toBe(false);
+    expect(isValidEmail('familia@example.com')).toBe(true);
+    expect(isValidEmail('familia@example')).toBe(false);
+    expect(isValidPostalCode('41012')).toBe(true);
+    expect(isValidPostalCode('61012')).toBe(false);
+    expect(isValidPostalCode('4101')).toBe(false);
+    expect(isValidPastDate('15/03/2011')).toBe(true);
+    expect(isValidPastDate('31/02/2011')).toBe(false);
+    expect(isValidPastDate('2011-03-15')).toBe(false);
+    expect(isValidPastDate('15/03/2099')).toBe(false);
+    expect(isValidNuss('28/1234567/42')).toBe(true); // 11 cifras
+    expect(isValidNuss('28 12345678 40')).toBe(true); // 12 cifras
+    expect(isValidNuss('28/1234567/76')).toBe(false);
+    expect(isValidNuss('1234')).toBe(false);
+    expect(isValidBic('CAIXESBBXXX')).toBe(true);
+    expect(isValidBic('CAIXESBB')).toBe(true);
+    expect(isValidBic('XX')).toBe(false);
+    expect(isValidGrade('7,5')).toBe(true);
+    expect(isValidGrade('10')).toBe(true);
+    expect(isValidGrade('11')).toBe(false);
   });
 });

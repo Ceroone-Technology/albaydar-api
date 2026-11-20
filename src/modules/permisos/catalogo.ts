@@ -5,6 +5,10 @@
  */
 export const MODULOS = [
   { id: 'dashboard', nombre: 'Dashboard' },
+  // Indicadores (reunión del 18/11/2026): módulo aparte, de serie solo Dirección y Administración.
+  { id: 'indicadores', nombre: 'Indicadores' },
+  // CRM básico (18/11/2026): interesados antes de la solicitud.
+  { id: 'crm', nombre: 'Captación (CRM)' },
   { id: 'alumnado', nombre: 'Alumnado' },
   { id: 'solicitudes', nombre: 'Solicitudes y admisión' },
   { id: 'entrevistas', nombre: 'Entrevistas y agenda' },
@@ -50,7 +54,7 @@ export const ROLES_INICIALES = [
     esSuperadmin: false,
     orden: 2,
     // "Registrar decisión de admisión" es solo de Dirección (matriz del mockup): Evaluación solo en lectura.
-    permisos: [...todo('alumnado', 'solicitudes', 'entrevistas', 'matricula', 'comunicaciones'), ...ver('dashboard', 'evaluacion')],
+    permisos: [...todo('crm', 'alumnado', 'solicitudes', 'entrevistas', 'matricula', 'comunicaciones'), ...ver('dashboard', 'evaluacion')],
   },
   {
     codigo: 'ADMINISTRACION',
@@ -58,7 +62,7 @@ export const ROLES_INICIALES = [
     descripcion: 'Cobros, facturación y comunicaciones de pagos.',
     esSuperadmin: false,
     orden: 3,
-    permisos: [...todo('cobros', 'comunicaciones'), ...ver('dashboard', 'alumnado', 'configuracion')],
+    permisos: [...todo('cobros', 'comunicaciones'), ...ver('dashboard', 'indicadores', 'alumnado', 'configuracion')],
   },
   {
     codigo: 'COMERCIAL',
@@ -68,6 +72,6 @@ export const ROLES_INICIALES = [
     descripcion: 'Seguimiento de todo el proceso de admisión hasta la matrícula: consulta y gestiona solicitudes.',
     esSuperadmin: false,
     orden: 4,
-    permisos: [...todo('solicitudes'), ...ver('dashboard', 'alumnado', 'entrevistas', 'evaluacion', 'matricula', 'cobros')],
+    permisos: [...todo('crm', 'solicitudes'), ...ver('dashboard', 'alumnado', 'entrevistas', 'evaluacion', 'matricula', 'cobros')],
   },
 ] as const satisfies readonly { codigo: string; nombre: string; descripcion: string; esSuperadmin: boolean; orden: number; permisos: readonly Permiso[] }[];

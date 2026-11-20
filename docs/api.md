@@ -87,7 +87,7 @@ Son los valores iniciales (tomados de la navegación y la matriz del mockup; Com
 | PATCH | `/usuarios/:id` | configuracion.editar | `{ email?, nombre?, roles?, activo? }`. Al cambiar roles o desactivar se cierran sus sesiones. |
 | POST | `/usuarios/:id/password` | configuracion.editar | `{ password }` (contraseña temporal; desbloquea la cuenta) |
 | DELETE | `/usuarios/:id` | configuracion.editar | Lo borra; si tiene actividad registrada lo desactiva (`{ eliminado: false, desactivado: true }`) |
-| GET | `/usuarios/responsables` | solicitudes.ver | Chips de responsable: usuarios activos que pueden gestionar solicitudes (`solicitudes.editar` según la matriz actual) |
+| GET | `/usuarios/responsables` | solicitudes.ver | Chips de responsable: usuarios activos que pueden gestionar solicitudes (`solicitudes.editar` según la matriz actual), con `tipo: "usuario"`, y las entrevistadoras activas de la lista de Configuración, con `tipo: "entrevistador"` (16/11/2026) |
 
 Contraseña: mínimo 10 caracteres, con letras y números. Siempre debe quedar un usuario activo de Dirección (`ULTIMO_SUPERADMIN`).
 
@@ -173,7 +173,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
 | POST | `/solicitudes/respuestas-familia/visto` | solicitudes.ver | `{ eventoIds: [...] }` → 204. No se vuelve a avisar a este usuario |
 | POST | `/solicitudes` | solicitudes.editar | Alta interna (teléfono, presencial…): puede faltar el correo o el centro; la revisión lo marca |
 | GET | `/solicitudes/:id` | solicitudes.ver | Ficha: `revision`, `siguientes`, `propuesta` vigente con sus franjas, `entrevista`, `documentos`, `correos`, `eventos`. La revisión se recalcula en cada lectura (las plazas libres cambian con otras solicitudes) |
-| PATCH | `/solicitudes/:id` | solicitudes.editar | `{ responsableId?, observacionesInternas?, asignadaSnec?, canal?, cicloId? }`. Solo cambia lo que llega (lo que no viene se queda como estaba). `cicloId`: asigna o corrige el ciclo, de la familia de la vía (mismos errores que el alta; en una vía de ciclos no se puede quitar). Queda en `GESTION_ACTUALIZADA` con `cicloAnterior` y `cicloNuevo` |
+| PATCH | `/solicitudes/:id` | solicitudes.editar | `{ responsables?, responsableId?, observacionesInternas?, asignadaSnec?, canal?, cicloId? }`. `responsables` (16/11/2026): `[{ tipo: "usuario" | "entrevistador", id }]`, uno o varios (personal activo o entrevistadoras activas; si no, 400 `RESPONSABLE_NO_VALIDO`), sustituye la lista; `[]` la vacía. `responsableId` sigue valiendo (un único usuario). Queda en `GESTION_ACTUALIZADA` con `responsablesAnteriores` y `responsablesNuevos`. Solo cambia lo que llega (lo que no viene se queda como estaba). `cicloId`: asigna o corrige el ciclo, de la familia de la vía (mismos errores que el alta; en una vía de ciclos no se puede quitar). Queda en `GESTION_ACTUALIZADA` con `cicloAnterior` y `cicloNuevo` |
 | POST | `/solicitudes/:id/revisar` | solicitudes.editar | Las cinco comprobaciones |
 | POST | `/solicitudes/:id/pedir-completar` | solicitudes.editar | `{ campos?, mensaje? }` |
 | POST | `/solicitudes/:id/citar` | solicitudes.editar | Ver abajo |
@@ -193,6 +193,7 @@ Respuesta de `GET /public/citas/:token` (mismos nombres que el `Component` del m
   "via": { "familia": "BACHILLERATO", "curso": 1, "nombre": "1º Bachillerato", "etiqueta": "Bachillerato", "etapa": "Bachillerato" },
   "ciclo": null,
   "origen": "Solicitud web", "canal": "SOLICITUD_WEB", "asignadaSnec": false,
+  "responsables": [{ "tipo": "usuario", "id": "uuid", "nombre": "María Reyes" }, { "tipo": "entrevistador", "id": "uuid", "nombre": "Rosa Jurado" }],
   "responsable": { "id": "uuid", "nombre": "María Reyes" },
   "revision": { "checks": [{ "id": "datos", "resultado": "ok", "texto": "Datos básicos completos" }], "completa": true, "faltan": [], "puedeCitar": true, "calculadaEn": "…" },
   "propuesta": {
@@ -425,6 +426,8 @@ Las solicitudes que se admitieron antes de existir la reserva (con el `PATCH /es
 | POST | `/cobros` | cobros.editar | "Registrar cobro manual": `{ solicitudId, importe, metodo, fecha?, observaciones?, notificar = true }`. Con `notificar`, la familia recibe `PAGO_RECIBIDO` con el recibo; la respuesta trae `notificado` |
 | GET | `/cobros?solicitudId=&concepto=&metodo=&desde=&hasta=&incluirAnulados=&page=&pageSize=` | cobros.ver | Pestaña "Pagos". Devuelve también `suma` (de los no anulados, en céntimos) y `sumaTexto` |
 | POST | `/cobros/:id/anular` | cobros.editar | `{ motivo }` (obligatorio). Un cobro nunca se borra |
+| POST | `/cobros/:id/comprobante` | cobros.editar | Comprobante de la familia (16/11/2026): multipart, campo `archivo`, PDF, JPG, PNG o HEIC (tipo real; si no, 400 `TIPO_NO_PERMITIDO`). Sustituye al anterior; no en un cobro anulado (409 `COBRO_ANULADO`). 201 con el cobro (`comprobante: { nombre, mime, tamano, subidoEn }`). Queda en el historial (`COMPROBANTE_ADJUNTO`) y en el CSV de cobros |
+| GET | `/cobros/:id/comprobante` | cobros.ver | Descarga del comprobante, sin caché (404 `SIN_COMPROBANTE` si no hay) |
 | GET | `/cobros/resumen?desde=&hasta=` | cobros.ver | KPIs (abajo) |
 | GET | `/cobros/:id/recibo` | cobros.ver | Recibo imprimible en HTML (`text/html`). El navegador lo imprime o lo guarda como PDF. Los anulados salen marcados «RECIBO ANULADO» |
 
@@ -583,7 +586,7 @@ BORRADOR ──enviar──▶ ENVIADA ──exportar a Séneca──▶ EXPORTA
 | Método | Ruta | Permiso | Uso |
 |---|---|---|---|
 | GET | `/matriculas?q=&estado=&cursoEscolar=&familia=&curso=&page=&pageSize=` | matricula.ver | Listado, lo último guardado primero. `q` busca en nombre, apellidos y expediente de la alumna y en el código de la matrícula, sin importar tildes |
-| POST | `/matriculas` | matricula.editar | `{ alumnaId, enviarEnlace? }`: abre la matrícula (201) |
+| POST | `/matriculas` | matricula.editar | `{ alumnaId, enviarEnlace? }`: abre la matrícula (201). Si la alumna llega por admisión, «¿alumna nueva?» sale de su solicitud (`esAlumnaNueva`) en cualquier curso: una nueva en 2º firma ideario y LOPD (17/11/2026) |
 | POST | `/matriculas/renovacion` | matricula.editar | `{ familia, cursoEscolar, curso = 1, alumnaIds?, enviarEnlace? }`: cierra el curso en bloque según el resultado de cada alumna (abre la siguiente o da de baja a quien titula) |
 | GET | `/matriculas/:id` | matricula.ver | Ficha con `enlaces` e `historial` |
 | PUT | `/matriculas/:id` | matricula.editar | `{ borrador, version }`: guarda el borrador |
@@ -823,7 +826,7 @@ Al firmar la orden SEPA (`sepa-titular`) o la de AlbaydarPLUS (`plus-titular`) n
 ### Archivos de la familia
 
 `destino`: `photo` (foto de carné, que cuenta para «2 fotos tamaño carné», `m5`), `m4` (fotocopia del DNI), `c2` (tarjeta de la Seguridad Social), `b1` (Libro de Familia) o `b2` (certificación académica).
-- **Solo los que pide la matrícula:** según el checklist de las reglas. Si no hace falta, 409 `DOCUMENTO_NO_APLICA`; por ejemplo, el Libro de Familia en GM.
+- **Solo los que pide la matrícula:** según el checklist de las reglas. Si no hace falta, 409 `DOCUMENTO_NO_APLICA`; por ejemplo, el Libro de Familia en GM. **La foto se admite siempre** (16/11/2026): aunque el sobre no la pida (concertados, alumna que no es nueva), puede no tener foto o traer una reciente; solo cuenta para `m5` donde se pide.
 - **Tipo real del fichero:** PDF, JPG, PNG o HEIC; la foto, solo imagen. Si no, 400 `TIPO_NO_PERMITIDO`. Hasta `UPLOAD_MAX_MB` (10 MB).
 - **Uno por destino:** subir otro lo sustituye; el anterior se marca eliminado y sale del almacén. Quitar: 404 `ARCHIVO_NO_ENCONTRADO` si no había.
 - **Cuándo:** solo en `BORRADOR`. El enlace de un progenitor no sube archivos (403 `ENLACE_SIN_PERMISO`).
@@ -931,6 +934,18 @@ Reglas:
 
 Al arrancar, una plantilla de una fase que ya está construida y que sigue en borrador **sin haberse editado nunca** se sustituye por la predeterminada actual y se activa. Si el centro ya la ha tocado, no se cambia.
 
+## Notificaciones masivas (20/11/2026)
+
+Avisos por correo al alumnado de unos cursos o a sus familias (Comunicaciones › Notificaciones). Cada destinatario recibe su propio correo, nunca con los demás en copia, por la cola de siempre (`plantilla = 'NOTIFICACION'`, `notificacionId`). Queda en el historial del expediente (`NOTIFICACION`, «Notificación enviada»). WhatsApp no se envía desde la API: la vista previa da los teléfonos de las familias.
+
+| Método | Ruta | Permiso | Qué hace |
+|---|---|---|---|
+| GET | `/comunicaciones/notificaciones/opciones` | comunicaciones.ver | `{ actual: '2026-2027', cursosEscolares: [{ cursoEscolar, grupos: [{ familia, etiqueta, curso, alumnas, ciclos: [{ nombre, alumnas }] }] }] }`. Solo alumnado que no está de baja. `actual` es el curso escolar en marcha (de septiembre a agosto, hora del centro) |
+| POST | `/comunicaciones/notificaciones/destinatarios` | comunicaciones.ver | `{ cursoEscolar, grupos: [{ familia, curso, ciclo? }], destinatarios: 'FAMILIAS' \| 'ALUMNADO' \| 'AMBOS' }` → `{ alumnas: [{ id, expediente, nombre, familia, curso, estudios, correos: [{ email, nombre, parentesco }], telefonos: [...] }], totales: { alumnas, correos, sinCorreo, telefonos } }`. `ciclo` filtra por `alumnas.estudios`. Una dirección compartida por dos hermanas cuenta una vez |
+| POST | `/comunicaciones/notificaciones` | comunicaciones.editar | Lo anterior más `{ asunto, mensaje (texto plano, ≤ 5000), excluir: [alumnaId] }` → 201 con la notificación. El mensaje se escapa; los párrafos van separados por línea en blanco y los enlaces `http(s)` se convierten. Firma «Secretaría · centro». 400 `SIN_DESTINATARIOS` (nadie con correo) o `DEMASIADOS_DESTINATARIOS` (más de 1500) |
+| GET | `/comunicaciones/notificaciones` | comunicaciones.ver | `?page=&pageSize=` → `{ items: [{ id, asunto, mensaje, destinatarios, cursoEscolar, grupos (con etiqueta), alumnas, correos, enviadas, pendientes, errores, enviadaPor, enviadaEn }], page, pageSize, total }` |
+| GET | `/comunicaciones/notificaciones/:id` | comunicaciones.ver | Una notificación, con el estado de sus correos |
+
 ## Exportaciones (CSV para Excel)
 
 Cada listado tiene su descarga con **los mismos filtros y permisos**, sin paginar (`page` y `pageSize` se ignoran; tope de 10 000 filas). Responden `text/csv; charset=utf-8` con `Content-Disposition: attachment; filename="<nombre>-AAAA-MM-DD.csv"` (expuesta por CORS) y `Cache-Control: no-store`.
@@ -951,10 +966,36 @@ Formato pensado para abrir con doble clic en Excel en español: separador `;`, c
 |---|---|---|---|
 | GET | `/catalogo/vias` | sesión | Vías con `ocupadas` y `libres`. En las de ciclos (A6, entrega 2), `plazasPorCiclo: true` y `ciclos: [{ cicloId, nombre, plazas, ocupadas, libres }]`; las `plazas` de la vía son la suma de las de sus ciclos |
 | PATCH | `/catalogo/vias/:id/ciclos/:cicloId` | configuracion.editar | `{ plazas }` de un ciclo en esa vía → `{ cicloId, plazas, via: { id, plazas } }` (la vía pasa a la nueva suma) |
+| GET | `/catalogo/entrevistadores` | sesión | Lista de entrevistadoras (16/11/2026): `{ items: [{ id, nombre, email, activo, orden }] }`, también las desactivadas. No entran en la plataforma: se asignan como responsables |
+| POST / PATCH | `/catalogo/entrevistadores`, `/catalogo/entrevistadores/:id` | configuracion.editar | Alta `{ nombre, email? }` (al final de la lista) y edición `{ nombre?, email?, activo?, orden? }`. No se borran: se desactivan |
 | GET | `/catalogo/ciclos` | sesión | Catálogo de ciclos (A6): `{ items: [{ id, familia, etiquetaFamilia, nombre, orden, activo }] }`, también los retirados (filtros de lo antiguo). Se carga por migración (0015) |
 
 **Plazas por ciclo** (A6, entrega 2, migración 0016): cada vía de ciclos tiene las plazas de cada ciclo (`plazas_ciclo`; las del centro: 30 por ciclo y curso, 60 en Administración y Finanzas) y GS concertado deja de ser «cupo asignado por la Junta». Con ciclo, la comprobación de plazas de la revisión, la posición en la lista de espera y el aviso de «Liberar plaza» (`enEspera`, `via` con el ciclo) son los de su ciclo en esa vía; sin ciclo (antiguas), los de la vía.
-| POST / PATCH | `/catalogo/vias`, `/catalogo/vias/:id` | configuracion.editar | Alta y edición de vías y plazas. Una vía de ciclos nace con una fila de plazas a 0 por cada ciclo activo y sus `plazas` no se editan en la vía (400 `PLAZAS_POR_CICLO`): se cambian por ciclo |
+| POST / PATCH | `/catalogo/vias`, `/catalogo/vias/:id` | configuracion.editar | Alta y edición de vías y plazas. Una vía de ciclos nace con una fila de plazas a 0 por cada ciclo activo y sus `plazas` no se editan en la vía (400 `PLAZAS_POR_CICLO`): se cambian por ciclo. Poner `activa: true` (en el formulario) retira del formulario las vías de los demás cursos escolares (el formulario ofrece uno solo): la respuesta trae `otrosCursosRetirados` |
+| POST | `/catalogo/cursos-escolares/siguiente` | configuracion.editar | `{ desde? }` (`AAAA-AAAA`; por defecto, el último curso con vías) → `{ desde, cursoEscolar, vias }`: copia las vías del curso `desde` al siguiente, fuera del formulario (`activa: false`), con sus plazas y las de cada ciclo activo. 409 `CURSO_YA_ABIERTO` si el siguiente ya tiene vías |
+
+## Captación: interesados (CRM básico, 18/11/2026)
+
+Etapas 1 y 2 del embudo de captación del centro (documento «Embudo de captación y matriculación de leads»): alta con correo de bienvenida, llamada antes de 24 h, cualificación (nivel 2, A/B/C), nutrición y perdido con motivo. «Pasar a solicitud» es el alta de una solicitud con `interesadoId`. Permisos `crm.ver` / `crm.editar` (de serie: Dirección, Secretaría y Comercial; Administración, no).
+
+| Método | Ruta | Permiso | Qué hace |
+|---|---|---|---|
+| GET | `/interesados` | crm.ver | `?estado=&origen=&asesorId=&q=&vencidas=true&page=&pageSize=` (`asesorId=sin`: los que no tienen asesor, p. ej. los del formulario público) → `{ items, page, pageSize, total, porEstado, vencidas }`. Orden: próxima acción más temprana primero (sin ella, al principio). `vencida`: abierto (nuevo, contactado o nutrición) con la próxima acción para antes de hoy o sin ella |
+| GET | `/interesados/asesores` | crm.ver | Personal activo con `crm.editar` (o Dirección) |
+| GET | `/interesados/:id` | crm.ver | Ficha con `historial` (alta, edición, llamada, nota, estado, correo, solicitud) |
+| POST | `/interesados` | crm.editar | `{ nombre, telefono?, email?, familia?, cicloId?, origen, campana?, consentimientoComunicaciones, asesorId?, notas?, enviarBienvenida = true, forzar = false }`. Hace falta teléfono o correo. 409 `INTERESADO_DUPLICADO` (mismo correo o teléfono, salvo perdidos; `details: { id, nombre, estado }`) salvo `forzar`. Nace con la próxima acción «Llamar antes de 24 h» para mañana y el asesor que da el alta. Con correo, envía `BIENVENIDA_INTERESADO` → 201 con la ficha y `bienvenidaEnviada` |
+| PATCH | `/interesados/:id` | crm.editar | Datos de nivel 1 y 2, `puntuacion` (A/B/C), `asesorId`, `proximaAccion`, `proximaAccionEl`, `estado` (`NUEVO`, `CONTACTADO`, `NUTRICION`, `PERDIDO`; perdido exige `motivoPerdida`: 400 `MOTIVO_OBLIGATORIO`). El ciclo debe ser del estudio (`CICLO_NO_VALIDO`). Uno que pasó a solicitud: 409 `INTERESADO_CONVERTIDO` |
+| POST | `/interesados/:id/seguimiento` | crm.editar | `{ tipo: 'LLAMADA' \| 'NOTA', resultado?: 'CONTESTA' \| 'NO_CONTESTA', texto?, proximaAccion?, proximaAccionEl? }`. No contesta suma un intento; contesta pasa un nuevo (o en nutrición) a `CONTACTADO` |
+| POST | `/solicitudes` con `interesadoId` | solicitudes.editar | Alta de la solicitud desde el interesado: en la misma transacción pasa a `SOLICITUD` y queda enlazado (409 `INTERESADO_CONVERTIDO` si ya lo estaba; la solicitud no se crea) |
+| POST | `/public/interesados` | — (público) | Formulario «Pide información» (19/11/2026), el destino de las campañas y los QR: `{ nombre, email, telefono, familia, cicloId?, consentimiento: true, origen = 'WEB', website? }` (sin campaña). En las vías de ciclos, el ciclo es obligatorio y de esa etapa (`CICLO_NO_VALIDO`). Responde siempre 201 `{ recibido: true }`. Nuevo: interesado `NUEVO` **sin asesor**, «Llamar antes de 24 h» para mañana y `BIENVENIDA_INTERESADO` (con `asesor` = «el equipo de admisión»). Si ya hay uno abierto o convertido con ese correo o teléfono, no se duplica: nota «Volvió a pedir información desde el formulario web» y, si sigue abierto, próxima acción «Volvió a pedir información: llamar» para mañana. Con `website` relleno (trampa), no guarda nada. Límite: 30 por hora e IP |
+
+## Indicadores (reunión del 18/11/2026)
+
+Módulo aparte con el permiso `indicadores.ver` (de serie: Dirección, y Administración en lectura; la migración 0020 los añade a los roles existentes). Todo es de un curso escolar; importes en céntimos.
+
+| Método | Ruta | Permiso | Qué hace |
+|---|---|---|---|
+| GET | `/indicadores` | indicadores.ver | `?cursoEscolar=2027-2028` (sin él, el de las vías del formulario público; si no hay, el último con vías) → `{ cursoEscolar, cursosEscolares, ocupacion, captacion, solicitudes, ingresos }`. **ocupacion**: por vía del curso, `plazas`, `ocupadas` (solicitudes admitidas, con plaza reservada o matriculadas, como la comprobación de plazas) y `alumnas` del curso por estado (`reserva`, `enProceso`, `matriculadas`; sin bajas). **captacion**: interesados dados de alta en la campaña del curso (del 1/9 al 31/8 anteriores: la de 2027-2028 va de `2026-09-01` a `2027-09-01`, sin incluir), `porEstado`, `porOrigen` (con `convertidos`), `perdidosPorMotivo` y `conversion` (% que pasó a solicitud). **solicitudes**: las de las vías del curso, `porColumna` (columnas del pipeline), `noAdmitidas`, `enEspera`, `descartadas`, `admitidas`, `tasaAdmision` (admitidas / (admitidas + no admitidas), %) y `porVia`. **ingresos**: cobros sin anular de las reservas del curso, `cobrado`, `pendiente` (reservas pendientes o vencidas), `reservasAbiertas`, `porMes` (`AAAA-MM`, por la fecha del pago) y `porVia` |
 
 ## Rutas del front que enlazan los correos
 

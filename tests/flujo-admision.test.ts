@@ -991,6 +991,122 @@ describe('Fase 03: decisión de admisión, reserva de plaza y cobros', () => {
     const reabrir = await request(app).patch(`/api/solicitudes/${lidia.id}/estado`).set(auth()).send({ estado: 'EN_REVISION' });
     expect(reabrir.status).toBe(200);
   });
+
+  it('comprobante del pago: se adjunta (PDF o imagen), se sustituye, se descarga y queda en el historial', async () => {
+    const carla = await evaluada('Carla');
+    await decidir(carla.id, { decision: 'ADMITIDA', notificar: false });
+    // Lo que falte de la reserva (otro caso de este bloque puede haber cambiado el importe).
+    const { pendiente } = (await ficha(carla.id)).reserva;
+    const cobro = (await cobrar({ solicitudId: carla.id, importe: pendiente, metodo: 'TRANSFERENCIA', notificar: false })).body.cobro;
+    expect(cobro.comprobante).toBeNull();
+    const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
+    const PDF = Buffer.from('%PDF-1.4\n%prueba\n');
+    const adjuntar = (datos: Buffer, nombre: string, quien = 'administracion', id = cobro.id) =>
+      request(app).post(`/api/cobros/${id}/comprobante`).set(auth(quien)).attach('archivo', datos, nombre);
+
+    expect((await adjuntar(Buffer.from('no soy una imagen'), 'captura.png')).body.error.code).toBe('TIPO_NO_PERMITIDO');
+    expect((await adjuntar(PNG, 'captura.png', 'secretaria')).status).toBe(403);
+    const primero = await adjuntar(PNG, 'captura.png');
+    expect(primero.status).toBe(201);
+    expect(primero.body.comprobante).toMatchObject({ nombre: 'captura.png', mime: 'image/png' });
+    const segundo = await adjuntar(PDF, 'transferencia.pdf');
+    expect(segundo.body.comprobante).toMatchObject({ nombre: 'transferencia.pdf', mime: 'application/pdf' });
+
+    const d = await request(app).get(`/api/cobros/${cobro.id}/comprobante`).set(auth('direccion')).buffer(true).parse((res, cb) => {
+      const trozos: Buffer[] = [];
+      res.on('data', (c: Buffer) => trozos.push(c));
+      res.on('end', () => cb(null, Buffer.concat(trozos)));
+    });
+    expect(d.headers['content-type']).toMatch(/^application\/pdf/);
+    expect(Buffer.compare(d.body as Buffer, PDF)).toBe(0);
+    const lista = (await request(app).get(`/api/cobros?solicitudId=${carla.id}`).set(auth('administracion'))).body.items;
+    expect(lista[0].comprobante.nombre).toBe('transferencia.pdf');
+    const csv = (await request(app).get(`/api/cobros/exportar?solicitudId=${carla.id}`).set(auth('administracion'))).text.replace(/^﻿/, '').trimEnd().split('\r\n');
+    expect(csv[1]!.split(';')[csv[0]!.split(';').indexOf('Comprobante')]).toBe('transferencia.pdf');
+    expect((await ficha(carla.id)).eventos.filter((e: { tipo: string }) => e.tipo === 'COMPROBANTE_ADJUNTO')).toHaveLength(2);
+
+    // En un cobro anulado ya no se adjunta.
+    expect((await request(app).post(`/api/cobros/${cobro.id}/anular`).set(auth('administracion')).send({ motivo: 'Prueba' })).status).toBe(200);
+    expect((await adjuntar(PNG, 'otra.png')).body.error.code).toBe('COBRO_ANULADO');
+  });
+});
+
+describe('Entrevistadoras y varios responsables (16/11/2026)', () => {
+  it('la lista de entrevistadoras se gestiona en Configuración y una solicitud tiene varios responsables', async () => {
+    const nueva = (nombre: string, quien = 'direccion') => request(app).post('/api/catalogo/entrevistadores').set(auth(quien)).send({ nombre, email: '' });
+    expect((await nueva('Sin Permiso', 'secretaria')).status).toBe(403);
+    const veronica = (await nueva('Verónica Prueba')).body;
+    const rosa = (await nueva('Rosa Prueba')).body;
+    expect(veronica).toMatchObject({ nombre: 'Verónica Prueba', email: null, activo: true });
+    expect(rosa.orden).toBeGreaterThan(veronica.orden);
+
+    const posibles = (await request(app).get('/api/usuarios/responsables').set(auth())).body.items as { id: string; tipo: string }[];
+    expect(posibles.filter((p) => p.tipo === 'entrevistador').map((p) => p.id)).toEqual(expect.arrayContaining([veronica.id, rosa.id]));
+    const personal = posibles.find((p) => p.tipo === 'usuario')!;
+
+    const alta = await request(app).post('/api/solicitudes').set(auth()).send({
+      viaId: viaBach, alumnaNombre: 'Varios', alumnaApellidos: 'Responsables Prueba', tutorNombre: 'Tutora Varios', centroProcedencia: 'IES Uno',
+      email: 'varios.responsables@example.com', telefono: '+34 600 800 900', canal: 'TELEFONO', consentimientoPrivacidad: true,
+    });
+    // De partida, quien da el alta.
+    expect((await request(app).get(`/api/solicitudes/${alta.body.id}`).set(auth())).body.responsables).toHaveLength(1);
+
+    const patch = (responsables: unknown) => request(app).patch(`/api/solicitudes/${alta.body.id}`).set(auth()).send({ responsables });
+    expect((await patch([{ tipo: 'usuario', id: personal.id }, { tipo: 'entrevistador', id: veronica.id }, { tipo: 'entrevistador', id: rosa.id }])).status).toBe(200);
+    const ficha = (await request(app).get(`/api/solicitudes/${alta.body.id}`).set(auth())).body;
+    expect(ficha.responsables.map((r: { tipo: string; nombre: string }) => `${r.tipo}:${r.nombre}`)).toEqual([
+      `usuario:${(await db.select({ nombre: usuarios.nombre }).from(usuarios).where(eq(usuarios.id, personal.id)))[0]!.nombre}`,
+      'entrevistador:Verónica Prueba',
+      'entrevistador:Rosa Prueba',
+    ]);
+    expect(ficha.eventos.find((e: { tipo: string }) => e.tipo === 'GESTION_ACTUALIZADA').detalle.responsablesNuevos).toContain('Rosa Prueba');
+
+    // El filtro por responsable vale para personal y entrevistadoras.
+    const porRosa = (await request(app).get(`/api/solicitudes?responsableId=${rosa.id}`).set(auth())).body.items.map((s: { id: string }) => s.id);
+    expect(porRosa).toEqual([alta.body.id]);
+    const csv = (await request(app).get('/api/solicitudes/exportar?q=Responsables%20Prueba').set(auth())).text.replace(/^﻿/, '').trimEnd().split('\r\n');
+    expect(csv[1]!.split(';')[csv[0]!.split(';').indexOf('Responsable')]).toMatch(/Verónica Prueba, Rosa Prueba$/);
+
+    // Desactivada: deja de ofrecerse y no se puede asignar; quien ya la tenía la conserva.
+    expect((await request(app).patch(`/api/catalogo/entrevistadores/${rosa.id}`).set(auth('direccion')).send({ activo: false })).body.activo).toBe(false);
+    expect((await request(app).get('/api/usuarios/responsables').set(auth())).body.items.map((p: { id: string }) => p.id)).not.toContain(rosa.id);
+    expect((await patch([{ tipo: 'entrevistador', id: rosa.id }])).body.error.code).toBe('RESPONSABLE_NO_VALIDO');
+    expect((await request(app).get(`/api/solicitudes/${alta.body.id}`).set(auth())).body.responsables).toHaveLength(3);
+  });
+});
+
+describe('Curso escolar siguiente (17/11/2026)', () => {
+  it('abrir el curso siguiente copia vías y plazas fuera del formulario; activarlo retira el anterior', async () => {
+    const activasAntes = (await db.select({ id: vias.id }).from(vias).where(eq(vias.activa, true))).map((x) => x.id);
+    // Una vía de ciclos de un curso propio, con plazas por ciclo.
+    const base = (await request(app).post('/api/catalogo/vias').set(auth('direccion')).send({
+      familia: 'CICLOS_PRIVADOS_GS', curso: 2, nombre: 'GS privado 2º', cursoEscolar: '2040-2041', plazas: 0, activa: false,
+    })).body;
+    const [marketing] = await db.select().from(ciclos).where(eq(ciclos.nombre, 'Marketing y Publicidad'));
+    await request(app).patch(`/api/catalogo/vias/${base.id}/ciclos/${marketing!.id}`).set(auth('direccion')).send({ plazas: 25 });
+
+    const abrir = (quien = 'direccion') => request(app).post('/api/catalogo/cursos-escolares/siguiente').set(auth(quien)).send({ desde: '2040-2041' });
+    expect((await abrir('secretaria')).status).toBe(403);
+    const r = await abrir();
+    expect(r.status).toBe(201);
+    expect(r.body).toEqual({ desde: '2040-2041', cursoEscolar: '2041-2042', vias: 1 });
+    expect((await abrir()).body.error.code).toBe('CURSO_YA_ABIERTO');
+
+    const nueva = ((await request(app).get('/api/catalogo/vias').set(auth())).body.items as { cursoEscolar: string; activa: boolean; plazas: number; ciclos: { nombre: string; plazas: number }[]; id: string }[])
+      .find((x) => x.cursoEscolar === '2041-2042')!;
+    expect(nueva).toMatchObject({ activa: false, plazas: 25 });
+    expect(nueva.ciclos.find((c) => c.nombre === 'Marketing y Publicidad')!.plazas).toBe(25);
+
+    // Al ponerla en el formulario, las de los demás cursos salen de él: un solo curso a la vez.
+    const activar = await request(app).patch(`/api/catalogo/vias/${nueva.id}`).set(auth('direccion')).send({ activa: true });
+    expect(activar.body.otrosCursosRetirados).toBe(activasAntes.length);
+    const publico = (await request(app).get('/api/public/vias')).body;
+    expect(publico.cursoEscolar).toBe('2041-2042');
+
+    // Se deja el formulario como estaba para el resto de pruebas.
+    await db.update(vias).set({ activa: false }).where(eq(vias.id, nueva.id));
+    for (const id of activasAntes) await db.update(vias).set({ activa: true }).where(eq(vias.id, id));
+  });
 });
 
 describe('Cola de correos', () => {
@@ -1619,5 +1735,200 @@ describe('Alumnado: expedientes, familias e historial', () => {
     const carmen = (await alumnado('?q=Carmen Expediente')).body.items[0];
     const fc = (await request(app).get(`/api/solicitudes/${carmen.solicitud.id}`).set(auth())).body;
     expect(fc.revision.checks.find((c: { id: string }) => c.id === 'familia').texto).not.toContain('alumna del centro');
+  });
+});
+
+describe('CRM básico: interesados (18/11/2026)', () => {
+  it('alta con bienvenida, duplicados, llamadas, cualificación, perdido con motivo y paso a solicitud', async () => {
+    const crm = (quien = 'comercial') => ({ ...auth(quien) });
+    // Permisos de partida: Comercial y Secretaría sí; Administración no.
+    expect((await request(app).get('/api/interesados').set(auth('administracion'))).status).toBe(403);
+    expect((await request(app).get('/api/interesados').set(auth('secretaria'))).status).toBe(200);
+
+    const [gs] = await db.select().from(ciclos).where(eq(ciclos.familia, 'CICLOS_PRIVADOS_GS'));
+    const alta = await request(app).post('/api/interesados').set(crm()).send({
+      nombre: 'Irene Lead Prueba', telefono: '600 111 222', email: 'irene.lead@example.com',
+      familia: 'CICLOS_PRIVADOS_GS', cicloId: gs!.id, origen: 'REDES', campana: 'meta-nov', consentimientoComunicaciones: true,
+    });
+    expect(alta.status).toBe(201);
+    expect(alta.body).toMatchObject({ estado: 'NUEVO', bienvenidaEnviada: true, proximaAccion: 'Llamar antes de 24 h', asesor: { nombre: 'Promoción' } });
+    expect(alta.body.estudio).toBe(`Ciclos Privados (GS) · ${gs!.nombre}`);
+    await enviarCorreos();
+    expect(ultimoPara('irene.lead@example.com').subject).toBe('Irene, te llamamos en menos de 24 horas');
+    const id = alta.body.id as string;
+
+    // Duplicado por correo o teléfono (salvo forzar); sin teléfono ni correo, no.
+    const dup = await request(app).post('/api/interesados').set(crm()).send({ nombre: 'Otra', telefono: '600 111 222', origen: 'WEB' });
+    expect(dup.body.error).toMatchObject({ code: 'INTERESADO_DUPLICADO', details: { id } });
+    expect((await request(app).post('/api/interesados').set(crm()).send({ nombre: 'Sin datos', origen: 'WEB' })).status).toBe(400);
+    // El ciclo tiene que ser del estudio elegido.
+    const [gm] = await db.select().from(ciclos).where(eq(ciclos.familia, 'CICLOS_CONCERTADOS_GM'));
+    expect((await request(app).patch(`/api/interesados/${id}`).set(crm()).send({ cicloId: gm!.id })).body.error.code).toBe('CICLO_NO_VALIDO');
+
+    // No contesta: suma intento y sigue nuevo; contesta: pasa a contactado.
+    let f = (await request(app).post(`/api/interesados/${id}/seguimiento`).set(crm()).send({ tipo: 'LLAMADA', resultado: 'NO_CONTESTA', proximaAccionEl: '2030-01-10' })).body;
+    expect(f).toMatchObject({ estado: 'NUEVO', intentos: 1, proximaAccionEl: '2030-01-10', vencida: false });
+    f = (await request(app).post(`/api/interesados/${id}/seguimiento`).set(crm()).send({ tipo: 'LLAMADA', resultado: 'CONTESTA', texto: 'Le interesa mucho' })).body;
+    expect(f.estado).toBe('CONTACTADO');
+    f = (await request(app).patch(`/api/interesados/${id}`).set(crm()).send({ puntuacion: 'A', esMenor: true, tutorNombre: 'Madre de Irene', localidad: 'Dos Hermanas' })).body;
+    expect(f).toMatchObject({ puntuacion: 'A', esMenor: true, consentimientoComunicaciones: true });
+
+    // Perdido exige motivo; se puede reabrir.
+    expect((await request(app).patch(`/api/interesados/${id}`).set(crm()).send({ estado: 'PERDIDO' })).body.error.code).toBe('MOTIVO_OBLIGATORIO');
+    f = (await request(app).patch(`/api/interesados/${id}`).set(crm()).send({ estado: 'PERDIDO', motivoPerdida: 'PRECIO' })).body;
+    expect(f).toMatchObject({ estado: 'PERDIDO', motivoPerdida: 'PRECIO', vencida: false });
+    f = (await request(app).patch(`/api/interesados/${id}`).set(crm()).send({ estado: 'CONTACTADO' })).body;
+    expect(f).toMatchObject({ estado: 'CONTACTADO', motivoPerdida: null });
+
+    // Listado con totales por estado.
+    const lista = (await request(app).get('/api/interesados?q=Irene').set(crm())).body;
+    expect(lista.total).toBe(1);
+    expect(lista.porEstado.CONTACTADO).toBeGreaterThanOrEqual(1);
+
+    // Pasa a solicitud: la solicitud queda enlazada y no se puede repetir.
+    const [via] = await db.insert(vias).values({ familia: 'CICLOS_PRIVADOS_GS', curso: 1, nombre: 'GS privado 1º (CRM)', cursoEscolar: '2039-2040', plazas: 0 }).returning();
+    const sol = {
+      viaId: via!.id, cicloId: gs!.id, alumnaNombre: 'Irene', alumnaApellidos: 'Lead Prueba', centroProcedencia: 'IES Prueba',
+      tutorNombre: 'Madre de Irene', email: 'irene.lead@example.com', telefono: '600111222', canal: 'TELEFONO', consentimientoPrivacidad: true, interesadoId: id,
+    };
+    const s = await request(app).post('/api/solicitudes').set(crm()).send(sol);
+    expect(s.status).toBe(201);
+    f = (await request(app).get(`/api/interesados/${id}`).set(crm())).body;
+    expect(f).toMatchObject({ estado: 'SOLICITUD', solicitud: { id: s.body.id, codigo: s.body.codigo } });
+    expect(f.historial.map((h: { tipo: string }) => h.tipo)).toEqual(expect.arrayContaining(['ALTA', 'CORREO', 'LLAMADA', 'EDICION', 'ESTADO', 'SOLICITUD']));
+    const otra = await request(app).post('/api/solicitudes').set(crm()).send({ ...sol, alumnaApellidos: 'Lead Prueba Dos' });
+    expect(otra.body.error.code).toBe('INTERESADO_CONVERTIDO');
+    // La segunda no se creó (misma transacción).
+    expect((await db.select().from(solicitudes).where(eq(solicitudes.alumnaApellidos, 'Lead Prueba Dos'))).length).toBe(0);
+    expect((await request(app).patch(`/api/interesados/${id}`).set(crm()).send({ notas: 'x' })).body.error.code).toBe('INTERESADO_CONVERTIDO');
+  });
+});
+
+describe('Formulario público «Pide información» (19/11/2026)', () => {
+  it('alta sin asesor con bienvenida y el origen del enlace; repetido no duplica; validación y trampa', async () => {
+    const [gs] = await db.select().from(ciclos).where(eq(ciclos.familia, 'CICLOS_PRIVADOS_GS'));
+    const base = { nombre: 'Lucía Web Prueba', email: 'lucia.web@example.com', telefono: '611 222 333', familia: 'CICLOS_PRIVADOS_GS', cicloId: gs!.id, consentimiento: true };
+    const r = await request(app).post('/api/public/interesados').set('Origin', ORIGIN).send({ ...base, origen: 'REDES' });
+    expect(r.status).toBe(201);
+    expect(r.body).toEqual({ recibido: true });
+    await enviarCorreos();
+    expect(ultimoPara('lucia.web@example.com').html).toContain('el equipo de admisión');
+
+    const sin = (await request(app).get('/api/interesados?asesorId=sin&q=Lucía Web').set(auth('comercial'))).body;
+    expect(sin.items).toHaveLength(1);
+    const lead = sin.items[0];
+    expect(lead).toMatchObject({ estado: 'NUEVO', origen: 'REDES', campana: null, asesor: null, consentimientoComunicaciones: true, proximaAccion: 'Llamar antes de 24 h' });
+
+    // Repetido (mismo teléfono): no se duplica, se apunta en su historial y vuelve a tocar llamarle.
+    expect((await request(app).post('/api/public/interesados').set('Origin', ORIGIN).send({ ...base, email: 'otro.correo@example.com' })).status).toBe(201);
+    expect((await request(app).get('/api/interesados?q=Lucía Web').set(auth('comercial'))).body.items).toHaveLength(1);
+    const ficha = (await request(app).get(`/api/interesados/${lead.id}`).set(auth('comercial'))).body;
+    expect(ficha.proximaAccion).toBe('Volvió a pedir información: llamar');
+    expect(ficha.historial[0]).toMatchObject({ tipo: 'NOTA', texto: 'Volvió a pedir información desde el formulario web', autor: null });
+
+    // Sin consentimiento, sin ciclo en ciclos o con el ciclo de otra etapa: 400.
+    const mal = (body: object) => request(app).post('/api/public/interesados').set('Origin', ORIGIN).send({ ...base, email: 'x@example.com', telefono: '622 000 111', ...body });
+    expect((await mal({ consentimiento: false })).status).toBe(400);
+    expect((await mal({ cicloId: null })).status).toBe(400);
+    const [gm] = await db.select().from(ciclos).where(eq(ciclos.familia, 'CICLOS_CONCERTADOS_GM'));
+    expect((await mal({ cicloId: gm!.id })).body.error.code).toBe('CICLO_NO_VALIDO');
+    // Bachillerato no lleva ciclo; la trampa rellena no guarda nada.
+    expect((await mal({ familia: 'BACHILLERATO', cicloId: null, nombre: 'Robot', website: 'http://spam' })).status).toBe(201);
+    expect((await request(app).get('/api/interesados?q=Robot').set(auth('comercial'))).body.items).toHaveLength(0);
+  });
+});
+
+describe('Indicadores (reunión del 18/11/2026)', () => {
+  it('solo Dirección y Administración; ocupación, captación, solicitudes e ingresos del curso', async () => {
+    expect((await request(app).get('/api/indicadores').set(auth('secretaria'))).status).toBe(403);
+    expect((await request(app).get('/api/indicadores').set(auth('comercial'))).status).toBe(403);
+    expect((await request(app).get('/api/indicadores').set(auth('administracion'))).status).toBe(200);
+    expect((await request(app).get('/api/indicadores?cursoEscolar=2027').set(auth('direccion'))).status).toBe(400);
+
+    const r = await request(app).get('/api/indicadores').set(auth('direccion'));
+    expect(r.status).toBe(200);
+    const [via] = await db.select().from(vias).where(eq(vias.id, viaBach));
+    // Sin curso: el del formulario público.
+    expect(r.body.cursoEscolar).toBe(via!.cursoEscolar);
+    expect(r.body.cursosEscolares).toContain(via!.cursoEscolar);
+
+    // Las cifras cuadran con la base.
+    const delCurso = await db.select({ estado: solicitudes.estado, viaId: solicitudes.viaId }).from(solicitudes).innerJoin(vias, eq(vias.id, solicitudes.viaId)).where(eq(vias.cursoEscolar, via!.cursoEscolar));
+    expect(r.body.solicitudes.total).toBe(delCurso.length);
+    const columnas = Object.values(r.body.solicitudes.porColumna as Record<string, number>).reduce((t, n) => t + n, 0);
+    expect(columnas + r.body.solicitudes.noAdmitidas + r.body.solicitudes.descartadas).toBe(delCurso.length);
+    const bach = r.body.ocupacion.find((o: { viaId: string }) => o.viaId === viaBach);
+    expect(bach).toMatchObject({ familia: 'BACHILLERATO', plazas: via!.plazas });
+    expect(bach.ocupadas).toBe(delCurso.filter((s) => s.viaId === viaBach && ['ADMITIDA', 'PLAZA_RESERVADA', 'MATRICULADA'].includes(s.estado)).length);
+    // Captación: los interesados del CRM de este archivo entran en la campaña de su curso.
+    expect(r.body.captacion.total).toBeGreaterThan(0);
+    expect(r.body.captacion.porOrigen.reduce((t: number, o: { total: number }) => t + o.total, 0)).toBe(r.body.captacion.total);
+    // Ingresos: lo cobrado por vía suma el total.
+    expect(r.body.ingresos.porVia.reduce((t: number, x: { cobrado: number }) => t + x.cobrado, 0)).toBe(r.body.ingresos.cobrado);
+    expect(r.body.ingresos.porMes.reduce((t: number, x: { cobrado: number }) => t + x.cobrado, 0)).toBe(r.body.ingresos.cobrado);
+  });
+});
+
+describe('Notificaciones masivas (20/11/2026)', () => {
+  it('destinatarios por curso, un correo por dirección, histórico, expediente y permisos', async () => {
+    const dni = (n: number) => `${n}${'TRWAGMYFPDXBNJZSQVHLCKE'[n % 23]}`;
+    const alta = (o: Record<string, unknown>) =>
+      request(app).post('/api/alumnado').set(auth()).send({
+        fechaNacimiento: '2009-03-03', cursoEscolar: '2030-2031', estado: 'MATRICULADA', familia: 'BACHILLERATO', curso: 1, ...o,
+      });
+    // Dos hermanas en 1º con la misma madre; una alumna de 2º; una de 1º sin correo en la familia.
+    const a1 = await alta({ nombre: 'Ana', apellidos: 'Noti Uno', documento: dni(71000001), email: 'ana.noti@example.com',
+      contactos: [{ parentesco: 'Madre', nombre: 'Madre Noti', telefono: '+34 600 100 100', email: 'madre.noti@example.com', principal: true }] });
+    const a2 = await alta({ nombre: 'Bea', apellidos: 'Noti Uno', documento: dni(71000002),
+      contactos: [{ parentesco: 'Madre', nombre: 'Madre Noti', telefono: '+34 600 100 100', email: 'madre.noti@example.com', principal: true },
+        { parentesco: 'Padre', nombre: 'Padre Noti', telefono: '+34 600 200 200', email: 'padre.noti@example.com' }] });
+    const a3 = await alta({ nombre: 'Cris', apellidos: 'Noti Dos', documento: dni(71000003), curso: 2,
+      contactos: [{ parentesco: 'Tutor', nombre: 'Tutor Noti', telefono: '+34 600 300 300', email: 'tutor.noti@example.com', principal: true }] });
+    const a4 = await alta({ nombre: 'Dani', apellidos: 'Noti Sin', documento: dni(71000004),
+      contactos: [{ parentesco: 'Madre', nombre: 'Sin Correo', telefono: '+34 600 400 400', principal: true }] });
+    for (const r of [a1, a2, a3, a4]) expect(r.status).toBe(201);
+
+    const op = (await request(app).get('/api/comunicaciones/notificaciones/opciones').set(auth())).body;
+    expect(op.cursosEscolares.find((c: { cursoEscolar: string }) => c.cursoEscolar === '2030-2031').grupos).toEqual(
+      expect.arrayContaining([expect.objectContaining({ familia: 'BACHILLERATO', curso: 1, alumnas: 3 }), expect.objectContaining({ familia: 'BACHILLERATO', curso: 2, alumnas: 1 })]),
+    );
+
+    const sel = { cursoEscolar: '2030-2031', grupos: [{ familia: 'BACHILLERATO', curso: 1 }] };
+    const fam = (await request(app).post('/api/comunicaciones/notificaciones/destinatarios').set(auth()).send({ ...sel, destinatarios: 'FAMILIAS' })).body;
+    // La madre de las dos hermanas cuenta una vez; Dani no tiene correo; 2º no entra.
+    expect(fam.totales).toEqual({ alumnas: 3, correos: 2, sinCorreo: 1, telefonos: 3 });
+    const ambos = (await request(app).post('/api/comunicaciones/notificaciones/destinatarios').set(auth()).send({ ...sel, destinatarios: 'AMBOS' })).body;
+    expect(ambos.totales.correos).toBe(3);
+
+    // Comercial solo ve Comunicaciones si se le da: de serie, no.
+    expect((await request(app).post('/api/comunicaciones/notificaciones').set(auth('comercial')).send({ ...sel, destinatarios: 'FAMILIAS', asunto: 'x', mensaje: 'x' })).status).toBe(403);
+
+    buzon.length = 0;
+    const r = await request(app).post('/api/comunicaciones/notificaciones').set(auth()).send({
+      ...sel, destinatarios: 'AMBOS', asunto: '1º de Bachillerato: no hay clase el viernes',
+      mensaje: 'Os informamos de que el viernes 4 no hay clase en 1º de Bachillerato.\n\nMás información: https://www.albaydar.org', excluir: [a2.body.id],
+    });
+    expect(r.status).toBe(201);
+    // Sin Bea: Ana, la madre (de Ana) y nadie de Dani.
+    expect(r.body).toMatchObject({ alumnas: 2, correos: 2, destinatarios: 'AMBOS', grupos: [{ familia: 'BACHILLERATO', curso: 1, ciclo: null, etiqueta: 'Bachillerato' }] });
+    await enviarCorreos();
+    const para = buzon.map((m) => m.to).sort();
+    expect(para).toEqual(['ana.noti@example.com', 'madre.noti@example.com']);
+    const m = ultimoPara('madre.noti@example.com');
+    expect(m.subject).toBe('1º de Bachillerato: no hay clase el viernes');
+    expect(m.html).toContain('<a href="https://www.albaydar.org">');
+    expect(m.html).not.toContain('ana.noti@example.com');
+
+    const lista = (await request(app).get('/api/comunicaciones/notificaciones').set(auth())).body;
+    expect(lista.items[0]).toMatchObject({ id: r.body.id, enviadas: 2, pendientes: 0, errores: 0, enviadaPor: expect.any(String) });
+    const envios = (await request(app).get('/api/comunicaciones/envios?evento=NOTIFICACION').set(auth())).body;
+    expect(envios.items[0].eventoNombre).toBe('Notificación');
+    const ficha = (await request(app).get(`/api/alumnado/${a1.body.id}`).set(auth())).body;
+    expect(ficha.historial[0]).toMatchObject({ titulo: 'Notificación enviada', tipo: 'CORREO' });
+
+    // Sin nadie con correo: 400.
+    const sin = await request(app).post('/api/comunicaciones/notificaciones').set(auth()).send({ ...sel, destinatarios: 'FAMILIAS', asunto: 'x', mensaje: 'x', excluir: [a1.body.id, a2.body.id] });
+    expect(sin.body.error.code).toBe('SIN_DESTINATARIOS');
+    expect((await request(app).post('/api/comunicaciones/notificaciones').set(auth()).send({ ...sel, grupos: [], destinatarios: 'FAMILIAS', asunto: 'x', mensaje: 'x' })).status).toBe(400);
   });
 });

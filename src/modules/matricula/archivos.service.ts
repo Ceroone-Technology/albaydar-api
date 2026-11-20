@@ -55,10 +55,14 @@ export function aBorrador(archivos: ArchivoMatricula[]): Pick<Expediente, 'photo
   };
 }
 
-/** ¿Pide esta matrícula ese archivo? La foto cuenta para «fotos tamaño carné» (m5). */
+/**
+ * ¿Admite esta matrícula ese archivo? La foto, siempre: aunque el sobre no la pida (concertados,
+ * alumna que no es nueva), puede no tener foto o traer una reciente; solo cuenta para «fotos
+ * tamaño carné» (m5) donde se pide. Las copias, solo las que la matrícula pide a la familia.
+ */
 function aplica(base: Expediente, destino: Destino) {
-  const items = checklist(base);
-  return destino === 'photo' ? items.some((i) => i.id === 'm5') : items.some((i) => i.id === (destino as ChecklistDocId) && i.origin === 'family');
+  if (destino === 'photo') return true;
+  return checklist(base).some((i) => i.id === (destino as ChecklistDocId) && i.origin === 'family');
 }
 
 function comprobar(m: Matricula, quien: Firmante) {

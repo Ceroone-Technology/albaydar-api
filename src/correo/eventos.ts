@@ -79,6 +79,33 @@ const caja = (t: string) =>
 const saludo = p('Estimada familia:');
 
 export const EVENTOS: EventoDef[] = [
+  // ── CRM básico (18/11/2026): el primer correo del embudo de captación ──
+  {
+    clave: 'BIENVENIDA_INTERESADO',
+    nombre: 'Bienvenida al interesado',
+    cuando: 'Se da de alta un interesado en Captación (con correo)',
+    destinatario: 'familia',
+    obligatorio: false,
+    disponible: true,
+    variables: [
+      v('nombre', 'Nombre del interesado', 'Lucía'),
+      v('estudio', 'Estudio que le interesa', 'Ciclo de Grado Superior · Marketing y Publicidad'),
+      v('asesor', 'Quién le atenderá', 'María Reyes'),
+      v('centro_nombre', 'Nombre del centro', 'Centro Educativo Albaydar'),
+      v('centro_direccion', 'Dirección del centro', 'Avda. de la Palmera, 36 · 41012 Sevilla'),
+      v('centro_telefono', 'Teléfono del centro', '954 61 02 54'),
+    ],
+    predeterminada: {
+      nombre: 'Bienvenida al interesado',
+      asunto: '{{nombre}}, te llamamos en menos de 24 horas',
+      cuerpoHtml: [
+        p('Hola {{nombre}}:'),
+        p('Gracias por tu interés en <strong>{{estudio}}</strong> en el {{centro_nombre}}. Soy {{asesor}} y seré tu persona de referencia durante todo el proceso.'),
+        p('Te llamaremos en las próximas 24 horas desde el {{centro_telefono}}. Guárdalo en tu agenda para reconocer la llamada. Si te viene mejor otra hora, respóndenos a este correo.'),
+        p('Un saludo,<br>{{asesor}} · {{centro_nombre}}'),
+      ].join('\n'),
+    },
+  },
   {
     clave: 'SOLICITUD_RECIBIDA',
     nombre: 'Solicitud recibida',

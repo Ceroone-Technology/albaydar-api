@@ -1,5 +1,6 @@
 import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import { vincularSolicitud } from '../crm/crm.service';
 import type { z } from 'zod';
 import { env } from '../../config/env';
 import {
@@ -15,6 +16,7 @@ import {
   propuestasCita,
   solicitudEventos,
   solicitudes,
+  solicitudResponsables,
   tokensPublicos,
   usuarios,
   reservas,
@@ -46,6 +48,7 @@ import {
   type Actor,
 } from './comun';
 import { anularReservaVigente, reservasDe } from '../reservas/reservas.service';
+import { fijarResponsables, responsablesDe, type Responsable } from './responsables';
 import {
   ACCION_REQUERIDA,
   COLUMNAS_PIPELINE,
@@ -162,14 +165,17 @@ export async function crearInterna(d: z.infer<typeof solicitudInternaBody>, usua
         telefono: d.telefono,
         consentimientoPrivacidad: true,
         consentimientoEn: ahora,
-        responsableId: d.responsableId ?? usuarioId,
         observacionesInternas: d.observacionesInternas,
       })
       .returning();
+    // Responsable de partida: el indicado o quien da el alta.
+    await fijarResponsables(tx, s!.id, [{ tipo: 'usuario', id: d.responsableId ?? usuarioId }]);
     await registrarEvento(tx, s!.id, { tipo: 'usuario', usuarioId }, 'CREADA', {
       aEstado: 'RECIBIDA',
-      detalle: { canal: d.canal, asignadaSnec: d.asignadaSnec },
+      detalle: { canal: d.canal, asignadaSnec: d.asignadaSnec, interesadoId: d.interesadoId ?? undefined },
     });
+    // CRM básico (18/11/2026): el interesado pasa a «Solicitud» y queda enlazado.
+    if (d.interesadoId) await vincularSolicitud(tx, d.interesadoId, s!, usuarioId);
     return s!;
   });
 }
@@ -202,7 +208,12 @@ function condiciones(f: Partial<Filtros>): SQL[] {
   if (f.ciclo?.length) c.push(inArray(solicitudes.cicloId, f.ciclo));
   if (f.canal?.length) c.push(inArray(solicitudes.canal, f.canal as Solicitud['canal'][]));
   if (f.asignadaSnec !== undefined) c.push(eq(solicitudes.asignadaSnec, f.asignadaSnec));
-  if (f.responsableId) c.push(eq(solicitudes.responsableId, f.responsableId));
+  if (f.responsableId) {
+    // Personal o entrevistadora: los dos tipos de responsable comparten el filtro.
+    c.push(
+      sql`exists (select 1 from ${solicitudResponsables} where ${solicitudResponsables.solicitudId} = ${solicitudes.id} and (${solicitudResponsables.usuarioId} = ${f.responsableId} or ${solicitudResponsables.entrevistadorId} = ${f.responsableId}))`,
+    );
+  }
   if (f.notasPendientes) {
     c.push(
       eq(solicitudes.estado, 'ENTREVISTA_PROGRAMADA'),
@@ -271,13 +282,11 @@ const columnasResumen = {
   viaPlazasJunta: vias.plazasAsignadasPorJunta,
   cicloId: solicitudes.cicloId,
   cicloNombre: ciclos.nombre,
-  responsableId: solicitudes.responsableId,
-  responsableNombre: usuarios.nombre,
 };
 
 
 /** Forma de tarjeta/fila común a bandeja, lista y kanban. */
-function aResumen(r: FilaResumen) {
+function aResumen(r: FilaResumen, responsables: Responsable[] = []) {
   return {
     id: r.id,
     codigo: r.codigo,
@@ -296,7 +305,9 @@ function aResumen(r: FilaResumen) {
     origen: r.asignadaSnec ? 'Asignada por la Junta (SNEC)' : ETIQUETA_CANAL[r.canal],
     canal: r.canal,
     asignadaSnec: r.asignadaSnec,
-    responsable: r.responsableId ? { id: r.responsableId, nombre: r.responsableNombre } : null,
+    responsables,
+    // El primero, para quien aún lee un solo responsable.
+    responsable: responsables[0] ? { id: responsables[0].id, nombre: responsables[0].nombre } : null,
     creadaEn: r.createdAt,
     actualizadaEn: r.updatedAt,
   };
@@ -313,7 +324,7 @@ async function enriquecer(filas: FilaResumen[], p: Permisos) {
   if (!filas.length) return [];
   const ids = filas.map((f) => f.id);
   // Fuera de transacción (pool): las consultas van en paralelo, cada una por su conexión.
-  const [revisiones, props, ents, docs, reservaDe, posiciones] = await Promise.all([
+  const [revisiones, props, ents, docs, reservaDe, posiciones, responsablesPorSolicitud] = await Promise.all([
     calcularRevisiones(
       db,
       filas.map((f) => ({ ...f, via: { id: f.viaId, nombre: f.viaNombre, plazas: f.viaPlazas, plazasAsignadasPorJunta: f.viaPlazasJunta } })),
@@ -334,6 +345,7 @@ async function enriquecer(filas: FilaResumen[], p: Permisos) {
       .where(and(inArray(documentos.solicitudId, ids), eq(documentos.tipo, 'BOLETIN_NOTAS'), isNull(documentos.eliminadoEn))),
     reservasDe(db, ids),
     posicionesEnEspera(db, filas.filter((f) => f.estado === 'EN_ESPERA').map((f) => f.viaId)),
+    responsablesDe(db, ids),
   ]);
   // Ordenadas de más reciente a más antigua: la primera de cada solicitud es la vigente.
   const propuestaDe = new Map<string, PropuestaCita>();
@@ -355,7 +367,7 @@ async function enriquecer(filas: FilaResumen[], p: Permisos) {
     const e = entrevistaDe.get(f.id);
     const reserva = reservaDe.get(f.id) ?? null;
     return {
-      ...aResumen(f),
+      ...aResumen(f, responsablesPorSolicitud.get(f.id)),
       revision,
       propuesta: pr
         ? {
@@ -392,8 +404,7 @@ function consultaBase(tx: Tx) {
     .select(columnasResumen)
     .from(solicitudes)
     .innerJoin(vias, eq(vias.id, solicitudes.viaId))
-    .leftJoin(ciclos, eq(ciclos.id, solicitudes.cicloId))
-    .leftJoin(usuarios, eq(usuarios.id, solicitudes.responsableId));
+    .leftJoin(ciclos, eq(ciclos.id, solicitudes.cicloId));
 }
 
 const contar = (where: SQL | undefined) =>
@@ -457,9 +468,7 @@ export async function detalle(id: string, p: Permisos) {
   const { s, via } = await obtenerSolicitud(db, id);
   const revision = await calcularRevision(db, s, via);
 
-  const [responsable] = s.responsableId
-    ? await db.select({ id: usuarios.id, nombre: usuarios.nombre }).from(usuarios).where(eq(usuarios.id, s.responsableId))
-    : [];
+  const responsables = (await responsablesDe(db, [id])).get(id) ?? [];
   const [ciclo] = s.cicloId ? await db.select({ id: ciclos.id, nombre: ciclos.nombre }).from(ciclos).where(eq(ciclos.id, s.cicloId)) : [];
 
   const eventos = await db
@@ -522,7 +531,10 @@ export async function detalle(id: string, p: Permisos) {
     origen: s.asignadaSnec ? 'Asignada por la Junta (SNEC)' : ETIQUETA_CANAL[s.canal],
     via: { ...via, etiqueta: ETIQUETA_FAMILIA_VIA[via.familia], etapa: ETAPA[via.familia] },
     ciclo: ciclo ?? null,
-    responsable: responsable ?? null,
+    responsables,
+    // El primero, para quien aún lee un solo responsable.
+    responsable: responsables[0] ? { id: responsables[0].id, nombre: responsables[0].nombre } : null,
+    responsableId: responsables[0]?.id ?? null,
     revision,
     siguientes: siguientesEstados(s.estado, { ...p, puedeCitar: revision.puedeCitar, reservaPendiente: reservaAbierta(reserva) }),
     reserva,
@@ -592,23 +604,31 @@ export async function marcarRespuestasVistas(usuarioId: string, eventoIds: strin
 export async function actualizarGestion(id: string, d: z.infer<typeof gestionBody>, usuarioId: string) {
   return db.transaction(async (tx) => {
     const { s, via } = await obtenerSolicitud(tx, id, true);
-    if (d.responsableId) {
-      const [u] = await tx.select({ id: usuarios.id }).from(usuarios).where(and(eq(usuarios.id, d.responsableId), eq(usuarios.activo, true)));
-      if (!u) throw badRequest('RESPONSABLE_NO_VALIDO', 'El responsable no existe o está desactivado.');
-    }
+    // Responsables: la lista nueva (personal y entrevistadoras) o, como antes, un único usuario.
+    const nuevos =
+      d.responsables !== undefined
+        ? d.responsables
+        : d.responsableId !== undefined
+          ? d.responsableId
+            ? [{ tipo: 'usuario' as const, id: d.responsableId }]
+            : []
+          : undefined;
+    const antes = nuevos !== undefined ? ((await responsablesDe(tx, [id])).get(id) ?? []) : [];
+    const despues = nuevos !== undefined ? await fijarResponsables(tx, id, nuevos) : [];
     const cambios: Partial<Solicitud> = {};
-    if (d.responsableId !== undefined) cambios.responsableId = d.responsableId;
     if (d.observacionesInternas !== undefined) cambios.observacionesInternas = d.observacionesInternas;
     if (d.asignadaSnec !== undefined) cambios.asignadaSnec = d.asignadaSnec;
     if (d.canal !== undefined) cambios.canal = d.canal;
     if (d.cicloId !== undefined) cambios.cicloId = await cicloDeVia(tx, via, d.cicloId);
-    const [act] = await tx.update(solicitudes).set(cambios).where(eq(solicitudes.id, id)).returning();
-    const campos = Object.keys(cambios).filter((k) => k !== 'observacionesInternas');
-    if (campos.length || cambios.observacionesInternas !== undefined) {
+    const [act] = await tx.update(solicitudes).set({ ...cambios, updatedAt: new Date() }).where(eq(solicitudes.id, id)).returning();
+    const campos = [...Object.keys(cambios), ...(nuevos !== undefined ? ['responsables'] : [])];
+    if (campos.length) {
+      const nombres = (lista: { tipo: string; id: string }[]) => lista.map((r) => antes.find((a) => a.tipo === r.tipo && a.id === r.id)?.nombre ?? r.id);
+      const despuesConNombre = nuevos !== undefined ? ((await responsablesDe(tx, [id])).get(id) ?? []) : [];
       await registrarEvento(tx, id, { tipo: 'usuario', usuarioId }, 'GESTION_ACTUALIZADA', {
         detalle: {
-          campos: Object.keys(cambios),
-          ...(cambios.responsableId !== undefined ? { responsableAnterior: s.responsableId, responsableNuevo: cambios.responsableId } : {}),
+          campos,
+          ...(nuevos !== undefined ? { responsablesAnteriores: nombres(antes), responsablesNuevos: despuesConNombre.map((r) => r.nombre), n: despues.length } : {}),
           ...(cambios.cicloId !== undefined ? { cicloAnterior: s.cicloId, cicloNuevo: cambios.cicloId } : {}),
         },
       });

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { and, arrayContains, arrayOverlaps, asc, eq, ilike, ne, or, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
-import { usuarios, type Usuario } from '../../db/schema';
+import { entrevistadores, usuarios, type Usuario } from '../../db/schema';
 import { db } from '../../lib/db';
 import { badRequest, codigoPg, conflict, notFound } from '../../lib/errors';
 import { requirePermiso } from '../../middleware/auth';
@@ -60,7 +60,18 @@ usuariosRouter.get('/responsables', requirePermiso('solicitudes.ver'), async (_r
       return ef.superadmin || ef.permisos.includes('solicitudes.editar');
     }),
   );
-  res.json({ items: filas.filter((_, i) => gestionan[i]).map((u) => ({ id: u.id, nombre: u.nombre, roles: u.roles })) });
+  // Y las entrevistadoras activas de la lista de Configuración (16/11/2026): también pueden ser responsables.
+  const lista = await db
+    .select()
+    .from(entrevistadores)
+    .where(eq(entrevistadores.activo, true))
+    .orderBy(asc(entrevistadores.orden), asc(entrevistadores.nombre));
+  res.json({
+    items: [
+      ...filas.filter((_, i) => gestionan[i]).map((u) => ({ id: u.id, nombre: u.nombre, roles: u.roles, tipo: 'usuario' as const })),
+      ...lista.map((e) => ({ id: e.id, nombre: e.nombre, roles: [] as string[], tipo: 'entrevistador' as const })),
+    ],
+  });
 });
 
 usuariosRouter.get('/', verConfig, validate({ query: listarQuery }), async (req, res) => {

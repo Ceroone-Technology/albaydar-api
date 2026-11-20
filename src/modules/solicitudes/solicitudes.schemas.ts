@@ -62,6 +62,8 @@ export const solicitudInternaBody = z.object({
   responsableId: z.string().uuid().optional().nullable(),
   observacionesInternas: textoOpc(4000),
   consentimientoPrivacidad: z.literal(true, { error: 'Registra el consentimiento de la familia.' }),
+  /** CRM básico (18/11/2026): el interesado que pasa a solicitud. */
+  interesadoId: z.string().uuid().optional().nullable(),
 });
 
 /** Completar desde el enlace: solo los campos de la familia, todos opcionales. */
@@ -73,7 +75,13 @@ export const completarBody = z
 
 export const gestionBody = z
   .object({
+    /** Antes: un único responsable del personal. Sigue valiendo (equivale a `responsables` con uno). */
     responsableId: z.string().uuid().nullable().optional(),
+    /** Responsables (16/11/2026): personal o entrevistadoras de la lista, uno o varios; [] los quita. */
+    responsables: z
+      .array(z.object({ tipo: z.enum(['usuario', 'entrevistador']), id: z.string().uuid() }))
+      .max(12)
+      .optional(),
     // .optional() fuera de la transformación: si no viene, no se toca (antes quedaba en null
     // y cambiar el responsable borraba las observaciones).
     observacionesInternas: textoOpc(4000).optional(),
