@@ -5,6 +5,8 @@
  */
 export const MODULOS = [
   { id: 'dashboard', nombre: 'Dashboard' },
+  // Indicadores (reunión del 18/11/2026): módulo aparte, de serie solo Dirección y Administración.
+  { id: 'indicadores', nombre: 'Indicadores' },
   // CRM básico (18/11/2026): interesados antes de la solicitud.
   { id: 'crm', nombre: 'Captación (CRM)' },
   { id: 'alumnado', nombre: 'Alumnado' },
@@ -60,7 +62,7 @@ export const ROLES_INICIALES = [
     descripcion: 'Cobros, facturación y comunicaciones de pagos.',
     esSuperadmin: false,
     orden: 3,
-    permisos: [...todo('cobros', 'comunicaciones'), ...ver('dashboard', 'alumnado', 'configuracion')],
+    permisos: [...todo('cobros', 'comunicaciones'), ...ver('dashboard', 'indicadores', 'alumnado', 'configuracion')],
   },
   {
     codigo: 'COMERCIAL',

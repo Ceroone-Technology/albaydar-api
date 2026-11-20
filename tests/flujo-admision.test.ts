@@ -1803,3 +1803,68 @@ describe('CRM básico: interesados (18/11/2026)', () => {
     expect((await request(app).patch(`/api/interesados/${id}`).set(crm()).send({ notas: 'x' })).body.error.code).toBe('INTERESADO_CONVERTIDO');
   });
 });
+
+describe('Formulario público «Pide información» (19/11/2026)', () => {
+  it('alta sin asesor con bienvenida y el origen del enlace; repetido no duplica; validación y trampa', async () => {
+    const [gs] = await db.select().from(ciclos).where(eq(ciclos.familia, 'CICLOS_PRIVADOS_GS'));
+    const base = { nombre: 'Lucía Web Prueba', email: 'lucia.web@example.com', telefono: '611 222 333', familia: 'CICLOS_PRIVADOS_GS', cicloId: gs!.id, consentimiento: true };
+    const r = await request(app).post('/api/public/interesados').set('Origin', ORIGIN).send({ ...base, origen: 'REDES' });
+    expect(r.status).toBe(201);
+    expect(r.body).toEqual({ recibido: true });
+    await enviarCorreos();
+    expect(ultimoPara('lucia.web@example.com').html).toContain('el equipo de admisión');
+
+    const sin = (await request(app).get('/api/interesados?asesorId=sin&q=Lucía Web').set(auth('comercial'))).body;
+    expect(sin.items).toHaveLength(1);
+    const lead = sin.items[0];
+    expect(lead).toMatchObject({ estado: 'NUEVO', origen: 'REDES', campana: null, asesor: null, consentimientoComunicaciones: true, proximaAccion: 'Llamar antes de 24 h' });
+
+    // Repetido (mismo teléfono): no se duplica, se apunta en su historial y vuelve a tocar llamarle.
+    expect((await request(app).post('/api/public/interesados').set('Origin', ORIGIN).send({ ...base, email: 'otro.correo@example.com' })).status).toBe(201);
+    expect((await request(app).get('/api/interesados?q=Lucía Web').set(auth('comercial'))).body.items).toHaveLength(1);
+    const ficha = (await request(app).get(`/api/interesados/${lead.id}`).set(auth('comercial'))).body;
+    expect(ficha.proximaAccion).toBe('Volvió a pedir información: llamar');
+    expect(ficha.historial[0]).toMatchObject({ tipo: 'NOTA', texto: 'Volvió a pedir información desde el formulario web', autor: null });
+
+    // Sin consentimiento, sin ciclo en ciclos o con el ciclo de otra etapa: 400.
+    const mal = (body: object) => request(app).post('/api/public/interesados').set('Origin', ORIGIN).send({ ...base, email: 'x@example.com', telefono: '622 000 111', ...body });
+    expect((await mal({ consentimiento: false })).status).toBe(400);
+    expect((await mal({ cicloId: null })).status).toBe(400);
+    const [gm] = await db.select().from(ciclos).where(eq(ciclos.familia, 'CICLOS_CONCERTADOS_GM'));
+    expect((await mal({ cicloId: gm!.id })).body.error.code).toBe('CICLO_NO_VALIDO');
+    // Bachillerato no lleva ciclo; la trampa rellena no guarda nada.
+    expect((await mal({ familia: 'BACHILLERATO', cicloId: null, nombre: 'Robot', website: 'http://spam' })).status).toBe(201);
+    expect((await request(app).get('/api/interesados?q=Robot').set(auth('comercial'))).body.items).toHaveLength(0);
+  });
+});
+
+describe('Indicadores (reunión del 18/11/2026)', () => {
+  it('solo Dirección y Administración; ocupación, captación, solicitudes e ingresos del curso', async () => {
+    expect((await request(app).get('/api/indicadores').set(auth('secretaria'))).status).toBe(403);
+    expect((await request(app).get('/api/indicadores').set(auth('comercial'))).status).toBe(403);
+    expect((await request(app).get('/api/indicadores').set(auth('administracion'))).status).toBe(200);
+    expect((await request(app).get('/api/indicadores?cursoEscolar=2027').set(auth('direccion'))).status).toBe(400);
+
+    const r = await request(app).get('/api/indicadores').set(auth('direccion'));
+    expect(r.status).toBe(200);
+    const [via] = await db.select().from(vias).where(eq(vias.id, viaBach));
+    // Sin curso: el del formulario público.
+    expect(r.body.cursoEscolar).toBe(via!.cursoEscolar);
+    expect(r.body.cursosEscolares).toContain(via!.cursoEscolar);
+
+    // Las cifras cuadran con la base.
+    const delCurso = await db.select({ estado: solicitudes.estado, viaId: solicitudes.viaId }).from(solicitudes).innerJoin(vias, eq(vias.id, solicitudes.viaId)).where(eq(vias.cursoEscolar, via!.cursoEscolar));
+    expect(r.body.solicitudes.total).toBe(delCurso.length);
+    const columnas = Object.values(r.body.solicitudes.porColumna as Record<string, number>).reduce((t, n) => t + n, 0);
+    expect(columnas + r.body.solicitudes.noAdmitidas + r.body.solicitudes.descartadas).toBe(delCurso.length);
+    const bach = r.body.ocupacion.find((o: { viaId: string }) => o.viaId === viaBach);
+    expect(bach).toMatchObject({ familia: 'BACHILLERATO', plazas: via!.plazas });
+    expect(bach.ocupadas).toBe(delCurso.filter((s) => s.viaId === viaBach && ['ADMITIDA', 'PLAZA_RESERVADA', 'MATRICULADA'].includes(s.estado)).length);
+    // Captación: los interesados del CRM de este archivo entran en la campaña de su curso.
+    expect(r.body.captacion.total).toBeGreaterThan(0);
+    expect(r.body.captacion.porOrigen.reduce((t: number, o: { total: number }) => t + o.total, 0)).toBe(r.body.captacion.total);
+    // Ingresos: lo cobrado por vía suma el total.
+    expect(r.body.ingresos.porVia.reduce((t: number, x: { cobrado: number }) => t + x.cobrado, 0)).toBe(r.body.ingresos.cobrado);
+    expect(r.body.ingresos.porMes.reduce((t: number, x: { cobrado: number }) => t + x.cobrado, 0)).toBe(r.body.ingresos.cobrado);
+  });
+});
