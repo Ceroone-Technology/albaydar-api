@@ -968,13 +968,22 @@ Etapas 1 y 2 del embudo de captación del centro (documento «Embudo de captaci�
 
 | Método | Ruta | Permiso | Qué hace |
 |---|---|---|---|
-| GET | `/interesados` | crm.ver | `?estado=&origen=&asesorId=&q=&vencidas=true&page=&pageSize=` → `{ items, page, pageSize, total, porEstado, vencidas }`. Orden: próxima acción más temprana primero (sin ella, al principio). `vencida`: abierto (nuevo, contactado o nutrición) con la próxima acción para antes de hoy o sin ella |
+| GET | `/interesados` | crm.ver | `?estado=&origen=&asesorId=&q=&vencidas=true&page=&pageSize=` (`asesorId=sin`: los que no tienen asesor, p. ej. los del formulario público) → `{ items, page, pageSize, total, porEstado, vencidas }`. Orden: próxima acción más temprana primero (sin ella, al principio). `vencida`: abierto (nuevo, contactado o nutrición) con la próxima acción para antes de hoy o sin ella |
 | GET | `/interesados/asesores` | crm.ver | Personal activo con `crm.editar` (o Dirección) |
 | GET | `/interesados/:id` | crm.ver | Ficha con `historial` (alta, edición, llamada, nota, estado, correo, solicitud) |
 | POST | `/interesados` | crm.editar | `{ nombre, telefono?, email?, familia?, cicloId?, origen, campana?, consentimientoComunicaciones, asesorId?, notas?, enviarBienvenida = true, forzar = false }`. Hace falta teléfono o correo. 409 `INTERESADO_DUPLICADO` (mismo correo o teléfono, salvo perdidos; `details: { id, nombre, estado }`) salvo `forzar`. Nace con la próxima acción «Llamar antes de 24 h» para mañana y el asesor que da el alta. Con correo, envía `BIENVENIDA_INTERESADO` → 201 con la ficha y `bienvenidaEnviada` |
 | PATCH | `/interesados/:id` | crm.editar | Datos de nivel 1 y 2, `puntuacion` (A/B/C), `asesorId`, `proximaAccion`, `proximaAccionEl`, `estado` (`NUEVO`, `CONTACTADO`, `NUTRICION`, `PERDIDO`; perdido exige `motivoPerdida`: 400 `MOTIVO_OBLIGATORIO`). El ciclo debe ser del estudio (`CICLO_NO_VALIDO`). Uno que pasó a solicitud: 409 `INTERESADO_CONVERTIDO` |
 | POST | `/interesados/:id/seguimiento` | crm.editar | `{ tipo: 'LLAMADA' \| 'NOTA', resultado?: 'CONTESTA' \| 'NO_CONTESTA', texto?, proximaAccion?, proximaAccionEl? }`. No contesta suma un intento; contesta pasa un nuevo (o en nutrición) a `CONTACTADO` |
 | POST | `/solicitudes` con `interesadoId` | solicitudes.editar | Alta de la solicitud desde el interesado: en la misma transacción pasa a `SOLICITUD` y queda enlazado (409 `INTERESADO_CONVERTIDO` si ya lo estaba; la solicitud no se crea) |
+| POST | `/public/interesados` | — (público) | Formulario «Pide información» (19/11/2026), el destino de las campañas y los QR: `{ nombre, email, telefono, familia, cicloId?, consentimiento: true, origen = 'WEB', website? }` (sin campaña). En las vías de ciclos, el ciclo es obligatorio y de esa etapa (`CICLO_NO_VALIDO`). Responde siempre 201 `{ recibido: true }`. Nuevo: interesado `NUEVO` **sin asesor**, «Llamar antes de 24 h» para mañana y `BIENVENIDA_INTERESADO` (con `asesor` = «el equipo de admisión»). Si ya hay uno abierto o convertido con ese correo o teléfono, no se duplica: nota «Volvió a pedir información desde el formulario web» y, si sigue abierto, próxima acción «Volvió a pedir información: llamar» para mañana. Con `website` relleno (trampa), no guarda nada. Límite: 30 por hora e IP |
+
+## Indicadores (reunión del 18/11/2026)
+
+Módulo aparte con el permiso `indicadores.ver` (de serie: Dirección, y Administración en lectura; la migración 0020 los añade a los roles existentes). Todo es de un curso escolar; importes en céntimos.
+
+| Método | Ruta | Permiso | Qué hace |
+|---|---|---|---|
+| GET | `/indicadores` | indicadores.ver | `?cursoEscolar=2027-2028` (sin él, el de las vías del formulario público; si no hay, el último con vías) → `{ cursoEscolar, cursosEscolares, ocupacion, captacion, solicitudes, ingresos }`. **ocupacion**: por vía del curso, `plazas`, `ocupadas` (solicitudes admitidas, con plaza reservada o matriculadas, como la comprobación de plazas) y `alumnas` del curso por estado (`reserva`, `enProceso`, `matriculadas`; sin bajas). **captacion**: interesados dados de alta en la campaña del curso (del 1/9 al 31/8 anteriores: la de 2027-2028 va de `2026-09-01` a `2027-09-01`, sin incluir), `porEstado`, `porOrigen` (con `convertidos`), `perdidosPorMotivo` y `conversion` (% que pasó a solicitud). **solicitudes**: las de las vías del curso, `porColumna` (columnas del pipeline), `noAdmitidas`, `enEspera`, `descartadas`, `admitidas`, `tasaAdmision` (admitidas / (admitidas + no admitidas), %) y `porVia`. **ingresos**: cobros sin anular de las reservas del curso, `cobrado`, `pendiente` (reservas pendientes o vencidas), `reservasAbiertas`, `porMes` (`AAAA-MM`, por la fecha del pago) y `porVia` |
 
 ## Rutas del front que enlazan los correos
 

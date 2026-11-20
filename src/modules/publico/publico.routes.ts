@@ -6,6 +6,7 @@ import { unFichero } from '../../middleware/subida';
 import { v, validate } from '../../middleware/validate';
 import { viasPublicas } from '../catalogo/catalogo.routes';
 import * as citacion from '../citacion/citacion.service';
+import { altaPublica, altaPublicaBody } from '../crm/crm.service';
 import * as documentosSrv from '../documentos/documentos.service';
 import { matriculaPublicaRouter } from '../matricula/matricula.routes';
 import * as solicitudesSrv from '../solicitudes/solicitudes.service';
@@ -21,6 +22,9 @@ export const publicoRouter = Router();
 
 const mensajeLimite = { error: { code: 'DEMASIADAS_PETICIONES', message: 'Demasiadas peticiones. Inténtalo de nuevo en unos minutos.' } };
 const limiteEnvio = rateLimit({ windowMs: 60 * 60_000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false, message: mensajeLimite });
+// El formulario «Pide información» se rellena también en ferias con el QR, varias personas desde
+// la misma wifi: un límite algo más holgado que el de las solicitudes.
+const limiteInteresados = rateLimit({ windowMs: 60 * 60_000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false, message: mensajeLimite });
 const limiteEnlace = rateLimit({ windowMs: 15 * 60_000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false, message: mensajeLimite });
 
 // Los enlaces personales no deben quedar en cachés intermedias ni en el Referer.
@@ -38,6 +42,15 @@ publicoRouter.get('/vias', async (_req, res) => {
 });
 
 /** Formulario público de captación. */
+/**
+ * Formulario «Pide información» (19/11/2026): el destino de las campañas y los QR. Crea el
+ * interesado en Captación (o lo apunta en el que ya había) y responde siempre 201 `{ recibido }`.
+ */
+publicoRouter.post('/interesados', limiteInteresados, validate({ body: altaPublicaBody }), async (req, res) => {
+  await altaPublica(v<typeof altaPublicaBody>(req, 'body'));
+  res.status(201).json({ recibido: true });
+});
+
 publicoRouter.post('/solicitudes', limiteEnvio, validate({ body: solicitudPublicaBody }), async (req, res) => {
   const body = v<typeof solicitudPublicaBody>(req, 'body');
   res.status(201).json(await solicitudesSrv.crearDesdeWeb(body, req.ip));

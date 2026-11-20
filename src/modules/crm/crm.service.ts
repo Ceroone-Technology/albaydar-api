@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, ilike, inArray, lt, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, inArray, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { enviarEvento } from '../../correo/enviar';
 import {
@@ -104,7 +104,8 @@ export const seguimientoBody = z
 export const listarQuery = z.object({
   estado: z.enum(estadoInteresadoEnum.enumValues).optional(),
   origen: z.enum(origenInteresadoEnum.enumValues).optional(),
-  asesorId: z.string().uuid().optional(),
+  /** Un asesor o `sin` (los que aún no tienen: llegan del formulario público). */
+  asesorId: z.string().uuid().or(z.literal('sin')).optional(),
   q: z.string().trim().max(120).optional(),
   /** Solo los abiertos con la próxima acción vencida (o sin ella). */
   vencidas: z
@@ -190,7 +191,8 @@ function filtros(q: z.infer<typeof listarQuery>, conEstado = true): SQL | undefi
   const c: SQL[] = [];
   if (conEstado && q.estado) c.push(eq(interesados.estado, q.estado));
   if (q.origen) c.push(eq(interesados.origen, q.origen));
-  if (q.asesorId) c.push(eq(interesados.asesorId, q.asesorId));
+  if (q.asesorId === 'sin') c.push(isNull(interesados.asesorId));
+  else if (q.asesorId) c.push(eq(interesados.asesorId, q.asesorId));
   if (q.q) {
     const like = `%${q.q}%`;
     c.push(or(ilike(interesados.nombre, like), ilike(interesados.email, like), ilike(interesados.telefono, like))!);
@@ -338,6 +340,96 @@ export async function crear(d: z.infer<typeof crearBody>, usuarioId: string) {
       if (bienvenidaEnviada) await evento(tx, i!.id, 'CORREO', usuarioId, 'Bienvenida: te llamamos en menos de 24 horas');
     }
     return { id: i!.id, bienvenidaEnviada };
+  });
+}
+
+// ── Formulario público «Pide información» (19/11/2026) ──────────────────────
+
+/**
+ * El mini formulario al que llevan las campañas de redes y los códigos QR: nombre, correo,
+ * teléfono y estudio, más el consentimiento. El enlace trae el origen (`?origen=redes`, o el
+ * `utm_source` de la plataforma de anuncios); sin él, «Web». Sin campaña (decidido el 19/11/2026).
+ */
+export const altaPublicaBody = z
+  .object({
+    nombre: z.string().trim().min(2, 'Escribe tu nombre.').max(160),
+    email,
+    telefono,
+    familia: z.enum(familiaViaEnum.enumValues),
+    cicloId: z.string().uuid().optional().nullable(),
+    consentimiento: z.literal(true, { message: 'Hace falta tu consentimiento para que te contactemos.' }),
+    origen: z.enum(origenInteresadoEnum.enumValues).default('WEB'),
+    /** Trampa para robots: un campo oculto que una persona deja vacío. */
+    website: z.string().max(500).optional(),
+  })
+  .refine((d) => d.familia === 'BACHILLERATO' || d.cicloId, { message: 'Elige el ciclo.', path: ['cicloId'] });
+
+/** Quien llega por el formulario no tiene aún asesor: la bienvenida firma el equipo. */
+const ASESOR_SIN_ASIGNAR = 'el equipo de admisión';
+
+/**
+ * Alta desde el formulario público. Siempre responde lo mismo (no revela si el correo ya estaba):
+ *  - Nuevo: interesado «Nuevo» sin asesor (el reparto es abierto, acuerdo del 18/11/2026), con
+ *    «Llamar antes de 24 h» para mañana y el correo de bienvenida.
+ *  - Ya estaba abierto o pasó a solicitud (mismo correo o teléfono): no se duplica; se apunta en
+ *    su historial y, si sigue abierto, la próxima acción pasa a «Volvió a pedir información» para mañana.
+ *  - La trampa para robots rellena: no se guarda nada.
+ */
+export async function altaPublica(d: z.infer<typeof altaPublicaBody>) {
+  if (d.website) return { nuevo: false };
+  const familia = d.familia;
+  const cicloId = familia === 'BACHILLERATO' ? null : (d.cicloId ?? null);
+  return db.transaction(async (tx) => {
+    await comprobarCiclo(tx, familia, cicloId);
+    const [otro] = await tx
+      .select({ id: interesados.id, estado: interesados.estado })
+      .from(interesados)
+      .where(and(or(eq(interesados.email, d.email), eq(interesados.telefono, d.telefono)), sql`${interesados.estado} <> 'PERDIDO'`))
+      .orderBy(desc(interesados.createdAt))
+      .limit(1);
+
+    if (otro) {
+      const abierto = (ESTADOS_ABIERTOS as readonly string[]).includes(otro.estado);
+      if (abierto) {
+        await tx
+          .update(interesados)
+          .set({ proximaAccion: 'Volvió a pedir información: llamar', proximaAccionEl: diaSiguiente(hoy()), updatedAt: new Date() })
+          .where(eq(interesados.id, otro.id));
+      }
+      await evento(tx, otro.id, 'NOTA', null, 'Volvió a pedir información desde el formulario web', {
+        origen: d.origen,
+        nombre: d.nombre,
+        email: d.email,
+        telefono: d.telefono,
+      });
+      return { nuevo: false };
+    }
+
+    const [i] = await tx
+      .insert(interesados)
+      .values({
+        nombre: d.nombre,
+        telefono: d.telefono,
+        email: d.email,
+        familia,
+        cicloId,
+        origen: d.origen,
+        consentimientoComunicaciones: true,
+        asesorId: null,
+        proximaAccion: 'Llamar antes de 24 h',
+        proximaAccionEl: diaSiguiente(hoy()),
+        creadoPorId: null,
+      })
+      .returning();
+    await evento(tx, i!.id, 'ALTA', null, 'Desde el formulario «Pide información»', { origen: d.origen, formulario: true });
+
+    const { ciclo } = await cargar(tx, i!.id);
+    const enviada = await enviarEvento(tx, 'BIENVENIDA_INTERESADO', {
+      para: d.email,
+      vars: { nombre: d.nombre.split(/\s+/)[0] ?? d.nombre, estudio: estudio(familia, ciclo) ?? 'nuestros estudios', asesor: ASESOR_SIN_ASIGNAR },
+    });
+    if (enviada) await evento(tx, i!.id, 'CORREO', null, 'Bienvenida: te llamamos en menos de 24 horas');
+    return { nuevo: true };
   });
 }
 
