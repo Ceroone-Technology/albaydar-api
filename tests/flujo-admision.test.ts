@@ -1868,3 +1868,67 @@ describe('Indicadores (reunión del 18/11/2026)', () => {
     expect(r.body.ingresos.porMes.reduce((t: number, x: { cobrado: number }) => t + x.cobrado, 0)).toBe(r.body.ingresos.cobrado);
   });
 });
+
+describe('Notificaciones masivas (20/11/2026)', () => {
+  it('destinatarios por curso, un correo por dirección, histórico, expediente y permisos', async () => {
+    const dni = (n: number) => `${n}${'TRWAGMYFPDXBNJZSQVHLCKE'[n % 23]}`;
+    const alta = (o: Record<string, unknown>) =>
+      request(app).post('/api/alumnado').set(auth()).send({
+        fechaNacimiento: '2009-03-03', cursoEscolar: '2030-2031', estado: 'MATRICULADA', familia: 'BACHILLERATO', curso: 1, ...o,
+      });
+    // Dos hermanas en 1º con la misma madre; una alumna de 2º; una de 1º sin correo en la familia.
+    const a1 = await alta({ nombre: 'Ana', apellidos: 'Noti Uno', documento: dni(71000001), email: 'ana.noti@example.com',
+      contactos: [{ parentesco: 'Madre', nombre: 'Madre Noti', telefono: '+34 600 100 100', email: 'madre.noti@example.com', principal: true }] });
+    const a2 = await alta({ nombre: 'Bea', apellidos: 'Noti Uno', documento: dni(71000002),
+      contactos: [{ parentesco: 'Madre', nombre: 'Madre Noti', telefono: '+34 600 100 100', email: 'madre.noti@example.com', principal: true },
+        { parentesco: 'Padre', nombre: 'Padre Noti', telefono: '+34 600 200 200', email: 'padre.noti@example.com' }] });
+    const a3 = await alta({ nombre: 'Cris', apellidos: 'Noti Dos', documento: dni(71000003), curso: 2,
+      contactos: [{ parentesco: 'Tutor', nombre: 'Tutor Noti', telefono: '+34 600 300 300', email: 'tutor.noti@example.com', principal: true }] });
+    const a4 = await alta({ nombre: 'Dani', apellidos: 'Noti Sin', documento: dni(71000004),
+      contactos: [{ parentesco: 'Madre', nombre: 'Sin Correo', telefono: '+34 600 400 400', principal: true }] });
+    for (const r of [a1, a2, a3, a4]) expect(r.status).toBe(201);
+
+    const op = (await request(app).get('/api/comunicaciones/notificaciones/opciones').set(auth())).body;
+    expect(op.cursosEscolares.find((c: { cursoEscolar: string }) => c.cursoEscolar === '2030-2031').grupos).toEqual(
+      expect.arrayContaining([expect.objectContaining({ familia: 'BACHILLERATO', curso: 1, alumnas: 3 }), expect.objectContaining({ familia: 'BACHILLERATO', curso: 2, alumnas: 1 })]),
+    );
+
+    const sel = { cursoEscolar: '2030-2031', grupos: [{ familia: 'BACHILLERATO', curso: 1 }] };
+    const fam = (await request(app).post('/api/comunicaciones/notificaciones/destinatarios').set(auth()).send({ ...sel, destinatarios: 'FAMILIAS' })).body;
+    // La madre de las dos hermanas cuenta una vez; Dani no tiene correo; 2º no entra.
+    expect(fam.totales).toEqual({ alumnas: 3, correos: 2, sinCorreo: 1, telefonos: 3 });
+    const ambos = (await request(app).post('/api/comunicaciones/notificaciones/destinatarios').set(auth()).send({ ...sel, destinatarios: 'AMBOS' })).body;
+    expect(ambos.totales.correos).toBe(3);
+
+    // Comercial solo ve Comunicaciones si se le da: de serie, no.
+    expect((await request(app).post('/api/comunicaciones/notificaciones').set(auth('comercial')).send({ ...sel, destinatarios: 'FAMILIAS', asunto: 'x', mensaje: 'x' })).status).toBe(403);
+
+    buzon.length = 0;
+    const r = await request(app).post('/api/comunicaciones/notificaciones').set(auth()).send({
+      ...sel, destinatarios: 'AMBOS', asunto: '1º de Bachillerato: no hay clase el viernes',
+      mensaje: 'Os informamos de que el viernes 4 no hay clase en 1º de Bachillerato.\n\nMás información: https://www.albaydar.org', excluir: [a2.body.id],
+    });
+    expect(r.status).toBe(201);
+    // Sin Bea: Ana, la madre (de Ana) y nadie de Dani.
+    expect(r.body).toMatchObject({ alumnas: 2, correos: 2, destinatarios: 'AMBOS', grupos: [{ familia: 'BACHILLERATO', curso: 1, ciclo: null, etiqueta: 'Bachillerato' }] });
+    await enviarCorreos();
+    const para = buzon.map((m) => m.to).sort();
+    expect(para).toEqual(['ana.noti@example.com', 'madre.noti@example.com']);
+    const m = ultimoPara('madre.noti@example.com');
+    expect(m.subject).toBe('1º de Bachillerato: no hay clase el viernes');
+    expect(m.html).toContain('<a href="https://www.albaydar.org">');
+    expect(m.html).not.toContain('ana.noti@example.com');
+
+    const lista = (await request(app).get('/api/comunicaciones/notificaciones').set(auth())).body;
+    expect(lista.items[0]).toMatchObject({ id: r.body.id, enviadas: 2, pendientes: 0, errores: 0, enviadaPor: expect.any(String) });
+    const envios = (await request(app).get('/api/comunicaciones/envios?evento=NOTIFICACION').set(auth())).body;
+    expect(envios.items[0].eventoNombre).toBe('Notificación');
+    const ficha = (await request(app).get(`/api/alumnado/${a1.body.id}`).set(auth())).body;
+    expect(ficha.historial[0]).toMatchObject({ titulo: 'Notificación enviada', tipo: 'CORREO' });
+
+    // Sin nadie con correo: 400.
+    const sin = await request(app).post('/api/comunicaciones/notificaciones').set(auth()).send({ ...sel, destinatarios: 'FAMILIAS', asunto: 'x', mensaje: 'x', excluir: [a1.body.id, a2.body.id] });
+    expect(sin.body.error.code).toBe('SIN_DESTINATARIOS');
+    expect((await request(app).post('/api/comunicaciones/notificaciones').set(auth()).send({ ...sel, grupos: [], destinatarios: 'FAMILIAS', asunto: 'x', mensaje: 'x' })).status).toBe(400);
+  });
+});

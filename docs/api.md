@@ -934,6 +934,18 @@ Reglas:
 
 Al arrancar, una plantilla de una fase que ya está construida y que sigue en borrador **sin haberse editado nunca** se sustituye por la predeterminada actual y se activa. Si el centro ya la ha tocado, no se cambia.
 
+## Notificaciones masivas (20/11/2026)
+
+Avisos por correo al alumnado de unos cursos o a sus familias (Comunicaciones › Notificaciones). Cada destinatario recibe su propio correo, nunca con los demás en copia, por la cola de siempre (`plantilla = 'NOTIFICACION'`, `notificacionId`). Queda en el historial del expediente (`NOTIFICACION`, «Notificación enviada»). WhatsApp no se envía desde la API: la vista previa da los teléfonos de las familias.
+
+| Método | Ruta | Permiso | Qué hace |
+|---|---|---|---|
+| GET | `/comunicaciones/notificaciones/opciones` | comunicaciones.ver | `{ actual: '2026-2027', cursosEscolares: [{ cursoEscolar, grupos: [{ familia, etiqueta, curso, alumnas, ciclos: [{ nombre, alumnas }] }] }] }`. Solo alumnado que no está de baja. `actual` es el curso escolar en marcha (de septiembre a agosto, hora del centro) |
+| POST | `/comunicaciones/notificaciones/destinatarios` | comunicaciones.ver | `{ cursoEscolar, grupos: [{ familia, curso, ciclo? }], destinatarios: 'FAMILIAS' \| 'ALUMNADO' \| 'AMBOS' }` → `{ alumnas: [{ id, expediente, nombre, familia, curso, estudios, correos: [{ email, nombre, parentesco }], telefonos: [...] }], totales: { alumnas, correos, sinCorreo, telefonos } }`. `ciclo` filtra por `alumnas.estudios`. Una dirección compartida por dos hermanas cuenta una vez |
+| POST | `/comunicaciones/notificaciones` | comunicaciones.editar | Lo anterior más `{ asunto, mensaje (texto plano, ≤ 5000), excluir: [alumnaId] }` → 201 con la notificación. El mensaje se escapa; los párrafos van separados por línea en blanco y los enlaces `http(s)` se convierten. Firma «Secretaría · centro». 400 `SIN_DESTINATARIOS` (nadie con correo) o `DEMASIADOS_DESTINATARIOS` (más de 1500) |
+| GET | `/comunicaciones/notificaciones` | comunicaciones.ver | `?page=&pageSize=` → `{ items: [{ id, asunto, mensaje, destinatarios, cursoEscolar, grupos (con etiqueta), alumnas, correos, enviadas, pendientes, errores, enviadaPor, enviadaEn }], page, pageSize, total }` |
+| GET | `/comunicaciones/notificaciones/:id` | comunicaciones.ver | Una notificación, con el estado de sus correos |
+
 ## Exportaciones (CSV para Excel)
 
 Cada listado tiene su descarga con **los mismos filtros y permisos**, sin paginar (`page` y `pageSize` se ignoran; tope de 10 000 filas). Responden `text/csv; charset=utf-8` con `Content-Disposition: attachment; filename="<nombre>-AAAA-MM-DD.csv"` (expuesta por CORS) y `Cache-Control: no-store`.

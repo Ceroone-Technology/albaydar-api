@@ -137,7 +137,10 @@ export const origenAlumnaEnum = pgEnum('origen_alumna', ['ADMISION', 'MANUAL', '
  */
 export const resultadoCursoEnum = pgEnum('resultado_curso', ['PROMOCIONA', 'REPITE', 'TITULA']);
 
-export const tipoEventoAlumnaEnum = pgEnum('tipo_evento_alumna', ['ALTA', 'EDICION', 'ESTADO', 'BAJA', 'REACTIVADA', 'NOTA']);
+export const tipoEventoAlumnaEnum = pgEnum('tipo_evento_alumna', ['ALTA', 'EDICION', 'ESTADO', 'BAJA', 'REACTIVADA', 'NOTA', 'NOTIFICACION']);
+
+/** A quién va una notificación masiva (Comunicaciones › Notificaciones, 20/11/2026). */
+export const destinatariosNotificacionEnum = pgEnum('destinatarios_notificacion', ['FAMILIAS', 'ALUMNADO', 'AMBOS']);
 
 /** Matrícula digital (fase 04): ver docs/matricula.md. */
 export const estadoMatriculaEnum = pgEnum('estado_matricula', [
@@ -744,10 +747,35 @@ export const correosSalientes = pgTable(
     reclamadoEn: ts('reclamado_en'),
     enviadoEn: ts('enviado_en'),
     solicitudId: uuid('solicitud_id').references(() => solicitudes.id, { onDelete: 'set null' }),
+    /** Notificación masiva de la que sale (Comunicaciones › Notificaciones). */
+    notificacionId: uuid('notificacion_id').references(() => notificaciones.id, { onDelete: 'set null' }),
     createdAt: creado(),
   },
-  (t) => [index('correos_estado_programado_idx').on(t.estado, t.programadoPara)],
+  (t) => [
+    index('correos_estado_programado_idx').on(t.estado, t.programadoPara),
+    index('correos_notificacion_idx').on(t.notificacionId),
+  ],
 );
+
+/**
+ * Aviso masivo por correo al alumnado de unos cursos o a sus familias (20/11/2026): «1º de
+ * Bachillerato no tiene clase el viernes». Cada destinatario recibe su propio correo (nunca
+ * todos en copia); los correos van por la cola de siempre con `notificacionId`.
+ */
+export const notificaciones = pgTable('notificaciones', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  asunto: text('asunto').notNull(),
+  /** Texto plano: se escapa y los saltos de línea pasan a párrafos. */
+  mensaje: text('mensaje').notNull(),
+  destinatarios: destinatariosNotificacionEnum('destinatarios').notNull(),
+  cursoEscolar: text('curso_escolar').notNull(),
+  /** Cursos elegidos: familia, curso (1 o 2) y, en ciclos, el ciclo (null = todos). */
+  grupos: jsonb('grupos').$type<{ familia: string; curso: number; ciclo: string | null }[]>().notNull(),
+  alumnas: integer('alumnas').notNull(),
+  correos: integer('correos').notNull(),
+  enviadaPorId: uuid('enviada_por_id').references(() => usuarios.id),
+  createdAt: creado(),
+});
 
 /** Contador transaccional para códigos legibles (B-2026-0001, R-2026-0001) sin carreras. */
 export const secuencias = pgTable('secuencias', {

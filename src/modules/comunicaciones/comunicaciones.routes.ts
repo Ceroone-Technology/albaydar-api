@@ -11,6 +11,7 @@ import { VARS_COMUNES } from '../../correo/enviar';
 import { EVENTOS, evento } from '../../correo/eventos';
 import { encolarCorreo, getTransporter } from '../../correo/outbox';
 import { renderizar, sanear, variablesDesconocidas, varsDeEjemplo } from '../../correo/plantillas';
+import * as notificacionesSrv from './notificaciones.service';
 
 const idParam = z.object({ id: z.string().uuid() });
 const claves = EVENTOS.map((e) => e.clave) as [string, ...string[]];
@@ -222,7 +223,10 @@ comunicacionesRouter.get('/envios', ver, validate({ query: enviosQuery }), async
     db.select({ n: count() }).from(correosSalientes).where(where),
   ]);
   res.json({
-    items: filas.map((f) => ({ ...f, eventoNombre: f.evento === 'PRUEBA' ? 'Prueba' : (evento(f.evento)?.nombre ?? f.evento) })),
+    items: filas.map((f) => ({
+      ...f,
+      eventoNombre: f.evento === 'PRUEBA' ? 'Prueba' : f.evento === 'NOTIFICACION' ? 'Notificación' : (evento(f.evento)?.nombre ?? f.evento),
+    })),
     page: q.page,
     pageSize: q.pageSize,
     total: total?.n ?? 0,
@@ -261,4 +265,30 @@ comunicacionesRouter.get('/smtp/estado', requirePermiso('configuracion.ver'), as
   } catch (e) {
     res.json({ ok: false, servidor: `${env.SMTP_HOST}:${env.SMTP_PORT}`, error: (e as Error).message });
   }
+});
+
+// ── Notificaciones masivas (20/11/2026) ─────────────────────────────────────
+
+/** Cursos con alumnado por curso escolar (y el curso escolar en marcha), para los selectores. */
+comunicacionesRouter.get('/notificaciones/opciones', ver, async (_req, res) => {
+  res.json(await notificacionesSrv.opciones());
+});
+
+/** Vista previa de los destinatarios: alumnas con sus correos y teléfonos, y los totales. */
+comunicacionesRouter.post('/notificaciones/destinatarios', ver, validate({ body: notificacionesSrv.seleccionBody }), async (req, res) => {
+  res.json(await notificacionesSrv.seleccion(v<typeof notificacionesSrv.seleccionBody>(req, 'body')));
+});
+
+/** Enviar por correo: un correo por dirección, a la cola. 400 SIN_DESTINATARIOS / DEMASIADOS_DESTINATARIOS. */
+comunicacionesRouter.post('/notificaciones', editar, validate({ body: notificacionesSrv.envioBody }), async (req, res) => {
+  const id = await notificacionesSrv.enviar(v<typeof notificacionesSrv.envioBody>(req, 'body'), req.user!.id);
+  res.status(201).json(await notificacionesSrv.detalle(id));
+});
+
+comunicacionesRouter.get('/notificaciones', ver, validate({ query: notificacionesSrv.listadoQuery }), async (req, res) => {
+  res.json(await notificacionesSrv.listar(v<typeof notificacionesSrv.listadoQuery>(req, 'query')));
+});
+
+comunicacionesRouter.get('/notificaciones/:id', ver, validate({ params: idParam }), async (req, res) => {
+  res.json(await notificacionesSrv.detalle(v<typeof idParam>(req, 'params').id));
 });
