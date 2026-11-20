@@ -279,6 +279,7 @@ const TITULO_EVENTO: Record<(typeof alumnaEventos.$inferSelect)['tipo'], string>
   BAJA: 'Baja',
   REACTIVADA: 'Expediente reactivado',
   NOTA: 'Nota interna',
+  NOTIFICACION: 'Notificación enviada',
 };
 
 /**
@@ -296,7 +297,7 @@ async function historial(a: Alumna): Promise<ItemHistorial[]> {
     items.push({
       id: e.id,
       fecha: e.createdAt,
-      tipo: e.tipo === 'NOTA' ? 'NOTA' : 'REGISTRO',
+      tipo: e.tipo === 'NOTA' ? 'NOTA' : e.tipo === 'NOTIFICACION' ? 'CORREO' : 'REGISTRO',
       titulo: TITULO_EVENTO[e.tipo],
       descripcion: e.texto,
       autor: autor ?? (e.usuarioId ? null : 'Sistema'),

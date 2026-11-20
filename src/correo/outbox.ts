@@ -22,7 +22,16 @@ export interface Adjunto {
  */
 export async function encolarCorreo(
   tx: Tx,
-  o: { plantilla: string; plantillaId?: string | null; para: string; correo: Correo; solicitudId?: string; adjuntos?: Adjunto[]; programadoPara?: Date },
+  o: {
+    plantilla: string;
+    plantillaId?: string | null;
+    para: string;
+    correo: Correo;
+    solicitudId?: string;
+    notificacionId?: string;
+    adjuntos?: Adjunto[];
+    programadoPara?: Date;
+  },
 ) {
   await tx.insert(correosSalientes).values({
     plantilla: o.plantilla,
@@ -32,6 +41,7 @@ export async function encolarCorreo(
     html: o.correo.html,
     texto: o.correo.texto,
     solicitudId: o.solicitudId,
+    notificacionId: o.notificacionId,
     // En la cola siempre en base64.
     adjuntos: o.adjuntos?.map(({ base64, ...a }) => ({ ...a, content: base64 ? a.content : Buffer.from(a.content).toString('base64') })),
     programadoPara: o.programadoPara ?? new Date(),

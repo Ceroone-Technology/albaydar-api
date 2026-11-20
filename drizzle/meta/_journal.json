@@ -148,6 +148,13 @@
       "when": 1795147768337,
       "tag": "0020_indicadores",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795151259237,
+      "tag": "0021_notificaciones",
+      "breakpoints": true
     }
   ]
 }
