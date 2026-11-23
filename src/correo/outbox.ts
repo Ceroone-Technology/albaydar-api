@@ -1,5 +1,5 @@
 import nodemailer, { type Transporter } from 'nodemailer';
-import { and, eq, inArray, lte, sql } from 'drizzle-orm';
+import { and, asc, count, eq, gte, inArray, lte, ne, sql } from 'drizzle-orm';
 import { env } from '../config/env';
 import { correosSalientes } from '../db/schema';
 import { db, type Tx } from '../lib/db';
@@ -66,18 +66,63 @@ export const setTransporter = (t: Transporter | null) => {
   transporter = t;
 };
 
+/** Ritmo de envío (0 = sin límite). Por defecto, el de la configuración (MAIL_MAX_POR_*). */
+export interface LimitesEnvio {
+  porSegundo: number;
+  porDia: number;
+}
+
+const limitesDeEnv = (): LimitesEnvio => ({ porSegundo: env.MAIL_MAX_POR_SEGUNDO, porDia: env.MAIL_MAX_POR_DIA });
+
+/** Las notificaciones masivas no gastan el último 20 % del cupo diario: queda para los correos del flujo. */
+const CUPO_NOTIFICACIONES = 0.8;
+/** El planificador lanza la cola cada 15 s: con ritmo, no se reclama más de lo que cabe en ese turno. */
+const SEGUNDOS_POR_TURNO = 14;
+const PLANTILLA_NOTIFICACION = 'NOTIFICACION';
+
+/** Hora del último envío (en este proceso), para respetar el ritmo también entre turnos. */
+let ultimoEnvio = 0;
+const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /**
  * Envía un lote de correos pendientes. Reclama filas con FOR UPDATE SKIP LOCKED,
  * así que se pueden ejecutar varias instancias de la API sin enviar duplicados.
+ *
+ * Ritmo (despliegue en AWS, 23/11/2026): con límites, deja entre envíos el intervalo que marca
+ * `porSegundo` y no pasa de `porDia` en las últimas 24 h (ventana móvil, como SES); lo que no
+ * cabe se queda PENDIENTE para el turno siguiente. Los correos del flujo (citaciones, matrícula,
+ * pagos…) salen antes que las notificaciones masivas, que además se paran al 80 % del cupo.
  */
-export async function procesarOutbox(lote = 20): Promise<{ enviados: number; fallidos: number }> {
+export async function procesarOutbox(lote = 20, limites: LimitesEnvio = limitesDeEnv()): Promise<{ enviados: number; fallidos: number }> {
+  let max = lote;
+  let sinNotificaciones = false;
+  if (limites.porDia > 0) {
+    const [r] = await db
+      .select({ n: count() })
+      .from(correosSalientes)
+      .where(gte(correosSalientes.enviadoEn, new Date(Date.now() - 86_400_000)));
+    const enviados24h = r?.n ?? 0;
+    const cupo = limites.porDia - enviados24h;
+    if (cupo <= 0) return { enviados: 0, fallidos: 0 };
+    max = Math.min(max, cupo);
+    sinNotificaciones = enviados24h >= Math.floor(limites.porDia * CUPO_NOTIFICACIONES);
+  }
+  if (limites.porSegundo > 0) max = Math.min(max, Math.max(1, Math.floor(limites.porSegundo * SEGUNDOS_POR_TURNO)));
+
   const reclamados = await db.transaction(async (tx) => {
     const filas = await tx
       .select({ id: correosSalientes.id })
       .from(correosSalientes)
-      .where(and(eq(correosSalientes.estado, 'PENDIENTE'), lte(correosSalientes.programadoPara, new Date())))
-      .orderBy(correosSalientes.programadoPara, correosSalientes.createdAt)
-      .limit(lote)
+      .where(
+        and(
+          eq(correosSalientes.estado, 'PENDIENTE'),
+          lte(correosSalientes.programadoPara, new Date()),
+          sinNotificaciones ? ne(correosSalientes.plantilla, PLANTILLA_NOTIFICACION) : undefined,
+        ),
+      )
+      // Primero los del flujo; las notificaciones masivas, detrás.
+      .orderBy(asc(sql`${correosSalientes.plantilla} = ${PLANTILLA_NOTIFICACION}`), correosSalientes.programadoPara, correosSalientes.createdAt)
+      .limit(max)
       .for('update', { skipLocked: true });
     if (!filas.length) return [];
     const actualizadas = await tx
@@ -93,7 +138,13 @@ export async function procesarOutbox(lote = 20): Promise<{ enviados: number; fal
 
   let enviados = 0;
   let fallidos = 0;
+  const intervalo = limites.porSegundo > 0 ? 1000 / limites.porSegundo : 0;
   for (const c of reclamados) {
+    if (intervalo) {
+      const espera = ultimoEnvio + intervalo - Date.now();
+      if (espera > 0) await dormir(espera);
+      ultimoEnvio = Date.now();
+    }
     try {
       // Modo demostración: todo va a un único buzón y el asunto dice a quién iba.
       const desvio = env.MAIL_DESVIO;
