@@ -4,7 +4,8 @@
 #
 #    deploy/crear-secretos.sh beta|produccion
 #
-#  Genera valores aleatorios para los secretos que no vienen de fuera y los guarda
+#  Genera valores aleatorios para los secretos que no vienen de fuera (JWT, base de datos,
+#  Dirección inicial y la cabecera secreta de CloudFront) y los guarda
 #  como SecureString en /albaydar/<entorno>/. No sobrescribe los que ya existen
 #  (para rotar uno, bórralo antes). No imprime ningún valor. Requiere la AWS CLI
 #  con permisos de SSM (ssm:PutParameter). El resto de parámetros: deploy/README.md.
@@ -37,5 +38,7 @@ echo "Secretos de $ENTORNO en /albaydar/$ENTORNO/ ($REGION):"
 crear JWT_ACCESS_SECRET "$(aleatorio 64)"
 crear POSTGRES_PASSWORD "$(aleatorio 32)"
 crear SEED_ADMIN_PASSWORD "$(aleatorio 20)"
+# El mismo valor lo pone CloudFront en la cabecera X-Origin-Verify (stack de CDK).
+crear CLOUDFRONT_ORIGIN_SECRET "$(aleatorio 48)"
 echo "La contraseña inicial de Dirección se consulta (y se cambia tras el primer acceso) con:"
 echo "  aws ssm get-parameter --region $REGION --with-decryption --name /albaydar/$ENTORNO/SEED_ADMIN_PASSWORD --query Parameter.Value --output text"

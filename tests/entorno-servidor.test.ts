@@ -25,6 +25,7 @@ const SERVIDOR_OK = {
   STORAGE: 's3',
   S3_BUCKET: 'albaydar-beta-uploads',
   PUBLIC_APP_URL: 'https://dxxxx.cloudfront.net',
+  CLOUDFRONT_ORIGIN_SECRET: 'Kd8Jq2LmV9pX4tR7wZ1bN6cF3hY0sG5e',
 };
 
 describe('Arranque en un servidor (ENTORNO=beta|produccion, 22/11/2026)', () => {
@@ -43,9 +44,10 @@ describe('Arranque en un servidor (ENTORNO=beta|produccion, 22/11/2026)', () => 
       MAIL_DESVIO: '',
       STORAGE: 'disco',
       PUBLIC_APP_URL: 'http://dxxxx.cloudfront.net',
+      CLOUDFRONT_ORIGIN_SECRET: 'corto',
     });
     expect(r.codigo).toBe(1);
-    for (const campo of ['JWT_ACCESS_SECRET', 'DATABASE_URL', 'COOKIE_SECURE', 'TRUST_PROXY', 'SMTP_HOST', 'MAIL_DESVIO', 'STORAGE', 'PUBLIC_APP_URL']) {
+    for (const campo of ['JWT_ACCESS_SECRET', 'DATABASE_URL', 'COOKIE_SECURE', 'TRUST_PROXY', 'SMTP_HOST', 'MAIL_DESVIO', 'STORAGE', 'PUBLIC_APP_URL', 'CLOUDFRONT_ORIGIN_SECRET']) {
       expect(r.salida).toContain(campo);
     }
   });

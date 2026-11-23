@@ -19,6 +19,7 @@ Patrón EC2 de Subvfy: una EC2 con Docker (API y PostgreSQL), CloudFront delante
 | `JWT_ACCESS_SECRET` | `crear-secretos.sh` (64 caracteres) |
 | `POSTGRES_PASSWORD` | `crear-secretos.sh` (32). El compose arma `DATABASE_URL` con ella |
 | `SEED_ADMIN_PASSWORD` | `crear-secretos.sh` (20). Contraseña inicial de Dirección: se cambia tras el primer acceso |
+| `CLOUDFRONT_ORIGIN_SECRET` | `crear-secretos.sh` (48). CloudFront lo envía en la cabecera `X-Origin-Verify` y la API rechaza (403) lo que no lo traiga, salvo `/health` |
 | `SMTP_USER`, `SMTP_PASS` | Credenciales SMTP de SES (usuario IAM de envío) |
 | `SEED_DEMO_PASSWORD` | Solo si se siembra la demo (`SEED_DEMO=true`). Al menos 12 caracteres |
 
@@ -34,6 +35,7 @@ Patrón EC2 de Subvfy: una EC2 con Docker (API y PostgreSQL), CloudFront delante
 | `MAIL_SECRETARIA`, `MAIL_ADMINISTRACION`, `MAIL_REPLY_TO` | Correos del centro |
 | `MAIL_DESVIO` | **Obligatorio en beta**: todos los correos van a esta dirección (verificada en SES mientras esté en sandbox) |
 | `SEED_ADMIN_EMAIL` | Correo del usuario de Dirección inicial |
+| `MAIL_MAX_POR_SEGUNDO`, `MAIL_MAX_POR_DIA` | Ritmo de la cola. Con SES en sandbox, `1` y `200`; cuando salga del sandbox, los de la cuenta. Lo que no cabe espera en la cola; las notificaciones masivas van detrás de los correos del flujo y no gastan el último 20 % del cupo diario |
 
 **Fijos en el `docker-compose` del servidor** (no van en SSM): `ENTORNO`, `NODE_ENV=production`, `STORAGE=s3`, `TRUST_PROXY=true`, `COOKIE_SECURE=true` y `AWS_REGION`.
 
@@ -41,7 +43,7 @@ Patrón EC2 de Subvfy: una EC2 con Docker (API y PostgreSQL), CloudFront delante
 
 Con `ENTORNO=beta` o `produccion`, la API **no arranca** (y dice por qué) si:
 - el `JWT_ACCESS_SECRET` es el de ejemplo del Docker local, o la contraseña de la base de datos tiene menos de 16 caracteres;
-- falta `COOKIE_SECURE` o `TRUST_PROXY`;
+- falta `COOKIE_SECURE` o `TRUST_PROXY`, o el `CLOUDFRONT_ORIGIN_SECRET` (al menos 32 caracteres);
 - el correo apunta a Mailpit, los ficheros no van a S3 o `PUBLIC_APP_URL` no es https;
 - en beta, falta `MAIL_DESVIO`.
 

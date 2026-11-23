@@ -74,6 +74,19 @@ const schema = z.object({
   WORKERS_ENABLED: bool,
 
   /**
+   * Secreto que CloudFront añade en la cabecera X-Origin-Verify al reenviar /api/* al servidor.
+   * Con él, la API rechaza lo que no venga de NUESTRA distribución (el grupo de seguridad
+   * admite a cualquier CloudFront). Sin él (local), no se comprueba.
+   */
+  CLOUDFRONT_ORIGIN_SECRET: z.string().optional().transform((v) => v || undefined),
+  /**
+   * Ritmo de la cola de correo (0 = sin límite, como en local). SES en sandbox: 1 por segundo
+   * y 200 en 24 h. Lo que no cabe espera en la cola; las notificaciones masivas van detrás de
+   * los correos del flujo y no gastan el último 20 % del cupo diario.
+   */
+  MAIL_MAX_POR_SEGUNDO: z.coerce.number().min(0).default(0),
+  MAIL_MAX_POR_DIA: z.coerce.number().int().min(0).default(0),
+  /**
    * Dónde se guardan los ficheros (documentos, comprobantes, PDF de la matrícula):
    * 'disco' (UPLOADS_DIR, en local) o 's3' (S3_BUCKET, en AWS). Credenciales de S3: las
    * del entorno (rol de la instancia en AWS; perfil o variables AWS_* en local).
@@ -107,6 +120,9 @@ const schema = z.object({
     if (e.ENTORNO === 'beta' && !e.MAIL_DESVIO) error('MAIL_DESVIO', 'En beta todos los correos tienen que ir a una dirección de desvío');
     if (e.STORAGE !== 's3') error('STORAGE', 'En un servidor los ficheros van a S3');
     if (e.PUBLIC_APP_URL.startsWith('http://')) error('PUBLIC_APP_URL', 'Tiene que ser https');
+    if (!e.CLOUDFRONT_ORIGIN_SECRET || e.CLOUDFRONT_ORIGIN_SECRET.length < 32) {
+      error('CLOUDFRONT_ORIGIN_SECRET', 'Hace falta el secreto de la cabecera de CloudFront (al menos 32 caracteres)');
+    }
   });
 
 const parsed = schema.safeParse(process.env);

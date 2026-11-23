@@ -2,6 +2,7 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express, { Router } from 'express';
 import helmet from 'helmet';
+import { soloDesdeCloudFront } from './middleware/origen';
 import { pinoHttp } from 'pino-http';
 import { sql } from 'drizzle-orm';
 import { env } from './config/env';
@@ -31,6 +32,8 @@ export function crearApp() {
   if (env.TRUST_PROXY) app.set('trust proxy', 1);
 
   app.use(helmet());
+  // En AWS: solo lo que llega por nuestra distribución de CloudFront (cabecera secreta).
+  if (env.CLOUDFRONT_ORIGIN_SECRET) app.use(soloDesdeCloudFront(env.CLOUDFRONT_ORIGIN_SECRET));
   app.use(
     cors({
       origin: env.CORS_ORIGINS,
