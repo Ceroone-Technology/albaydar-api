@@ -5,6 +5,10 @@
  *  - Solo en desarrollo o con SEED_DEMO=true: usuarios de ejemplo, vías y
  *    las solicitudes de la bandeja del mockup.
  * Es idempotente: se puede ejecutar varias veces.
+ *
+ * En un servidor (ENTORNO=beta|produccion, 22/11/2026) no se crea ningún usuario con una
+ * contraseña conocida: SEED_ADMIN_PASSWORD es obligatoria y fuerte, y los usuarios de demo
+ * (SEED_DEMO=true) solo con SEED_DEMO_PASSWORD, también fuerte. En local todo sigue igual.
  */
 import 'dotenv/config';
 import { eq, sql } from 'drizzle-orm';
@@ -13,6 +17,7 @@ import { db, pool } from '../lib/db';
 import { hashPassword } from '../modules/auth/auth.service';
 import { alumnaContactos, alumnaEventos, alumnas, ciclos, familias, solicitudes, usuarios, vias } from './schema';
 import { sembrarBase } from './datos-base';
+import { contrasenaSemilla } from './semilla-contrasenas';
 import { asegurarPlazasCiclo, plazasCicloDelCentro, siguienteCodigo, siguienteValor, registrarEvento } from '../modules/solicitudes/comun';
 import { formatoExpediente } from '../modules/alumnado/dominio';
 import { fijarResponsables } from '../modules/solicitudes/responsables';
@@ -70,9 +75,13 @@ async function alumnadoDemo(usuarioId: string) {
 
 async function main() {
   console.log('Sembrando datos…');
+  const adminPass = contrasenaSemilla('SEED_ADMIN_PASSWORD', process.env.SEED_ADMIN_PASSWORD, 'CambiaEsto-2026!');
+  // Antes de tocar la BD: en un servidor, sin contraseña de demo segura no se siembra la demo.
+  // La demo se siembra en desarrollo o con SEED_DEMO=true (abajo): en los dos casos, con contraseña validada.
+  const creaDemo = env.NODE_ENV !== 'production' || process.env.SEED_DEMO === 'true';
+  const demoPassServidor = creaDemo ? contrasenaSemilla('SEED_DEMO_PASSWORD', process.env.SEED_DEMO_PASSWORD, 'Albaydar-2026') : null;
   await sembrarBase(db);
   console.log('  roles, plantillas de correo y horario de la agenda');
-  const adminPass = process.env.SEED_ADMIN_PASSWORD ?? 'CambiaEsto-2026!';
   await usuario(process.env.SEED_ADMIN_EMAIL ?? 'admin@albaydar.org', 'Dirección (administrador)', ['DIRECCION'], adminPass);
 
   // En producción solo se crean los datos base, salvo que se pida explícitamente la demo
@@ -83,7 +92,7 @@ async function main() {
   }
 
   // Responsables que aparecen en los chips de la bandeja del mockup.
-  const demoPass = 'Albaydar-2026';
+  const demoPass = demoPassServidor ?? 'Albaydar-2026';
   const maria = await usuario('maria.reyes@albaydar.org', 'María Reyes', ['SECRETARIA'], demoPass);
   await usuario('juan.diaz@albaydar.org', 'Juan Díaz', ['SECRETARIA'], demoPass);
   await usuario('dolores.ruiz@albaydar.org', 'Dolores Ruiz', ['SECRETARIA'], demoPass);
@@ -151,7 +160,9 @@ async function main() {
       });
     }
   }
-  console.log(`Listo. Usuarios de demo: contraseña "${demoPass}". Dirección (superadmin): ${process.env.SEED_ADMIN_EMAIL ?? 'admin@albaydar.org'}.`);
+  // En un servidor no se escribe la contraseña en los logs.
+  const pista = env.ENTORNO === 'local' ? `contraseña "${demoPass}"` : 'contraseña de SEED_DEMO_PASSWORD';
+  console.log(`Listo. Usuarios de demo: ${pista}. Dirección (superadmin): ${process.env.SEED_ADMIN_EMAIL ?? 'admin@albaydar.org'}.`);
 }
 
 main()

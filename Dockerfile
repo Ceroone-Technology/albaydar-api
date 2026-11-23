@@ -20,7 +20,9 @@ COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json ./
 COPY --chown=node:node drizzle ./drizzle
 COPY --chown=node:node docker/entrypoint.sh /usr/local/bin/albaydar-entrypoint
-RUN chmod +x /usr/local/bin/albaydar-entrypoint && mkdir -p /app/storage/uploads && chown -R node:node /app/storage
+# su-exec: el entrypoint cede la carpeta de ficheros y se relanza como «node» (sin root).
+RUN apk add --no-cache su-exec \
+ && chmod +x /usr/local/bin/albaydar-entrypoint && mkdir -p /app/storage/uploads && chown -R node:node /app/storage
 # Arranca como root solo para ajustar los permisos de la carpeta de ficheros
 # (montada desde tu equipo); el servidor pasa enseguida al usuario sin privilegios "node".
 ENV RUN_AS_USER=node
