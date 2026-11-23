@@ -1,0 +1,106 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Albaydar · servidor en AWS (EC2 t4g.micro, 1 GB, ARM64) · patrón de Subvfy
+#
+#    cd /opt/albaydar
+#    ./cargar-secretos.sh beta            # SSM → /opt/albaydar/.env (permisos 600)
+#    docker compose -f docker-compose.prod.yml up -d
+#
+#  - CloudFront termina el HTTPS y reenvía /api/* al puerto 80 de la EC2. El grupo de
+#    seguridad solo admite el tráfico de CloudFront: aquí no hay proxy ni certificados.
+#  - PostgreSQL guarda sus datos en el volumen EBS de datos (/data), que sobrevive a la
+#    instancia y tiene snapshots diarios. No publica ningún puerto.
+#  - Los ficheros subidos van a S3 (STORAGE=s3) con el rol de la instancia: la API no
+#    escribe en disco y su sistema de ficheros es de solo lectura.
+#  - Sin Mailpit: el correo sale por SES. La API no arranca si detecta algo de local
+#    (ENTORNO, deploy/README.md).
+#  - Memoria para 1 GB: PostgreSQL ≤ 320 MB, API ≤ 384 MB; el resto, sistema y swap.
+#  - La imagen de la API no se construye aquí: se carga la que publica el despliegue
+#    (docker load) y se etiqueta como albaydar-api:actual (la anterior, :anterior).
+# ─────────────────────────────────────────────────────────────────────────────
+name: albaydar
+
+x-logs: &logs
+  # Rotación: como mucho 3 × 10 MB por contenedor, para no llenar el disco.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: albaydar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD (cargar-secretos.sh)}
+      POSTGRES_DB: albaydar
+      TZ: Europe/Madrid
+    # Afinado para poca carga y poca memoria (un centro, decenas de usuarios).
+    command:
+      - postgres
+      - -c
+      - max_connections=30
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - effective_cache_size=192MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - log_min_duration_statement=1000
+      - -c
+      - timezone=Europe/Madrid
+    volumes:
+      - ${DATA_DIR:-/data}/postgres:/var/lib/postgresql/data
+    mem_limit: 320m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U albaydar -d albaydar"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    logging: *logs
+
+  api:
+    image: ${API_IMAGE:-albaydar-api:actual}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    # Lo que viene de SSM (secretos y configuración del entorno).
+    env_file: .env
+    # Lo fijo del servidor: no depende de SSM.
+    environment:
+      ENTORNO: ${ENTORNO:?Falta ENTORNO (beta o produccion)}
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://albaydar:${POSTGRES_PASSWORD}@db:5432/albaydar
+      STORAGE: s3
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      TRUST_PROXY: "true"
+      COOKIE_SECURE: "true"
+      COOKIE_SAMESITE: lax
+      WORKERS_ENABLED: "true"
+      RUN_MIGRATIONS: "true"
+      # Datos base y usuario de Dirección (idempotente). La demo, solo si se pide en SSM
+      # con SEED_DEMO=true y SEED_DEMO_PASSWORD.
+      RUN_SEED: "true"
+      NODE_OPTIONS: --max-old-space-size=256
+    # Sin root desde el principio: migraciones, semilla y servidor como «node».
+    user: node
+    ports:
+      - "${API_PORT:-80}:3000"
+    mem_limit: 384m
+    # La API no escribe en disco: ficheros a S3 y logs a stdout.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/storage
+    security_opt:
+      - no-new-privileges:true
+    logging: *logs

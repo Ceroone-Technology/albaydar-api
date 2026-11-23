@@ -9,3 +9,4 @@ coverage
 *.log
 tests
 docs
+deploy
