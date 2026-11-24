@@ -71,3 +71,23 @@ docker compose -f docker-compose.prod.yml up -d
 - Sin `ENTORNO` o sin `POSTGRES_PASSWORD` el compose no arranca. La API comprueba el resto al arrancar (sección anterior).
 
 Ensayado en local el 23/11/2026 (Mac ARM64, como la EC2 t4g), con una configuración de beta falsa y un S3 de prueba.
+
+## Publicar una versión
+
+```bash
+# API (desde la raíz del repo de la API): imagen ARM64 → S3 «releases» → la EC2 la instala por Session Manager
+AWS_PROFILE=albaydar deploy/publicar-api.sh beta
+
+# Front (desde la raíz del repo del front): ng build → S3 «front» → invalidación de CloudFront
+AWS_PROFILE=albaydar deploy/publicar-front.sh beta
+```
+
+- **`publicar-api.sh`:**
+  - construye la imagen con la versión del commit (con `-localHHMMSS` si hay cambios sin guardar);
+  - sube la imagen, el compose y los scripts a `releases/api/<versión>/`;
+  - manda a la EC2 que ejecute `instalar-en-servidor.sh` y espera el resultado.
+- **`instalar-en-servidor.sh`** (lo ejecuta la EC2):
+  - carga la imagen como `albaydar-api:actual` y deja la anterior como `:anterior`;
+  - vuelca los secretos de SSM y hace `docker compose up -d`;
+  - si `/health` no responde en unos 90 s, **vuelve a la versión anterior** y termina con error.
+- **El bucket, la distribución y el servidor** salen de las salidas del stack `Albaydar-<entorno>`. Para consultarlas: `aws cloudformation describe-stacks --stack-name Albaydar-beta`.
