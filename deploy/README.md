@@ -19,7 +19,7 @@ Patrón EC2 de Subvfy: una EC2 con Docker (API y PostgreSQL), CloudFront delante
 | `JWT_ACCESS_SECRET` | `crear-secretos.sh` (64 caracteres) |
 | `POSTGRES_PASSWORD` | `crear-secretos.sh` (32). El compose arma `DATABASE_URL` con ella |
 | `SEED_ADMIN_PASSWORD` | `crear-secretos.sh` (20). Contraseña inicial de Dirección: se cambia tras el primer acceso |
-| `CLOUDFRONT_ORIGIN_SECRET` | `crear-secretos.sh` (48). CloudFront lo envía en la cabecera `X-Origin-Verify` y la API rechaza (403) lo que no lo traiga, salvo `/health` |
+| `CLOUDFRONT_ORIGIN_SECRET` | `crear-secretos.sh` (48), **como `String`**, porque el stack de CDK lo lee para CloudFront y CloudFormation no admite ahí un `SecureString`. CloudFront lo envía en la cabecera `X-Origin-Verify` y la API rechaza (403) lo que no lo traiga, salvo `/health` |
 | `SMTP_USER`, `SMTP_PASS` | Credenciales SMTP de SES (usuario IAM de envío) |
 | `SEED_DEMO_PASSWORD` | Solo si se siembra la demo (`SEED_DEMO=true`). Al menos 12 caracteres |
 
@@ -71,3 +71,23 @@ docker compose -f docker-compose.prod.yml up -d
 - Sin `ENTORNO` o sin `POSTGRES_PASSWORD` el compose no arranca. La API comprueba el resto al arrancar (sección anterior).
 
 Ensayado en local el 23/11/2026 (Mac ARM64, como la EC2 t4g), con una configuración de beta falsa y un S3 de prueba.
+
+## Publicar una versión
+
+```bash
+# API (desde la raíz del repo de la API): imagen ARM64 → S3 «releases» → la EC2 la instala por Session Manager
+AWS_PROFILE=albaydar deploy/publicar-api.sh beta
+
+# Front (desde la raíz del repo del front): ng build → S3 «front» → invalidación de CloudFront
+AWS_PROFILE=albaydar deploy/publicar-front.sh beta
+```
+
+- **`publicar-api.sh`:**
+  - construye la imagen con la versión del commit (con `-localHHMMSS` si hay cambios sin guardar);
+  - sube la imagen, el compose y los scripts a `releases/api/<versión>/`;
+  - manda a la EC2 que ejecute `instalar-en-servidor.sh` y espera el resultado.
+- **`instalar-en-servidor.sh`** (lo ejecuta la EC2):
+  - carga la imagen como `albaydar-api:actual` y deja la anterior como `:anterior`;
+  - vuelca los secretos de SSM y hace `docker compose up -d`;
+  - si `/health` no responde en unos 90 s, **vuelve a la versión anterior** y termina con error.
+- **El bucket, la distribución y el servidor** salen de las salidas del stack `Albaydar-<entorno>`. Para consultarlas: `aws cloudformation describe-stacks --stack-name Albaydar-beta`.

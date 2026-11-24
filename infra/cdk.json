@@ -1,0 +1,7 @@
+{
+  "app": "npx tsx bin/albaydar.ts",
+  "context": {
+    "@aws-cdk/aws-ec2:restrictDefaultSecurityGroup": true,
+    "@aws-cdk/core:target-partitions": ["aws"]
+  }
+}
