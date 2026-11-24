@@ -19,7 +19,7 @@ Patrón EC2 de Subvfy: una EC2 con Docker (API y PostgreSQL), CloudFront delante
 | `JWT_ACCESS_SECRET` | `crear-secretos.sh` (64 caracteres) |
 | `POSTGRES_PASSWORD` | `crear-secretos.sh` (32). El compose arma `DATABASE_URL` con ella |
 | `SEED_ADMIN_PASSWORD` | `crear-secretos.sh` (20). Contraseña inicial de Dirección: se cambia tras el primer acceso |
-| `CLOUDFRONT_ORIGIN_SECRET` | `crear-secretos.sh` (48). CloudFront lo envía en la cabecera `X-Origin-Verify` y la API rechaza (403) lo que no lo traiga, salvo `/health` |
+| `CLOUDFRONT_ORIGIN_SECRET` | `crear-secretos.sh` (48), **como `String`**, porque el stack de CDK lo lee para CloudFront y CloudFormation no admite ahí un `SecureString`. CloudFront lo envía en la cabecera `X-Origin-Verify` y la API rechaza (403) lo que no lo traiga, salvo `/health` |
 | `SMTP_USER`, `SMTP_PASS` | Credenciales SMTP de SES (usuario IAM de envío) |
 | `SEED_DEMO_PASSWORD` | Solo si se siembra la demo (`SEED_DEMO=true`). Al menos 12 caracteres |
 
